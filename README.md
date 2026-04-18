@@ -1,221 +1,361 @@
-# Blackreach
+# BlackCrawl
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v5.0.0--beta.1-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
-[![Tests](https://img.shields.io/badge/tests-2%2C904_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-9f6ff3?style=flat-square&labelColor=07061a)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-v1.0.0-4ade80?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/BlackCrawl)
+[![Tests](https://img.shields.io/badge/tests-114_passing-4ade80?style=flat-square&labelColor=07061a)]
 
-**Autonomous browser agent. Give it a goal, it handles the rest.**
+**Autonomous web scraping API. Firecrawl-compatible interface, stealth-first, self-hosted.**
 
-![Blackreach Demo](assets/demo.gif)
-
-```bash
-blackreach run "download all Linear A inscription tables from sigla.phis.me"
-```
-
-Every autonomous web agent I tried worked on the demo site and fell apart on anything real. Cloudflare caught it in seconds. JavaScript-rendered content was invisible to it. Rate limit responses came back as 200 OK and the agent saved garbage, reported success, and moved on.
-
-Blackreach is built for actual research tasks. Overnight runs. Academic databases. Sites that actively resist automation. 2,904 tests because agents that fail silently are worse than agents that don't run at all.
-
----
-
-## How it works
-
-Blackreach uses a **DOM walker** instead of raw HTML. A typical page is 50k–500k tokens of noise. The DOM walker extracts visible text, interactive elements, navigation landmarks, and ARIA roles. A 200k token page becomes a 2k token observation the LLM can actually reason about.
-
-```
-Thought: I need the inscription table on this page
-Action: navigate("https://sigla.phis.me/")
-Observation: Page loaded. Nav: [About, Database, Signs].
-  Main: table, 847 rows, columns [ID, Site, Text, Image].
-  Interactive: pagination controls, export button.
-Thought: extract all rows and handle pagination
-Action: extract_table(selector=".inscription-table", paginate=True)
-```
-
-The loop: **Observe** (DOM walker extracts page state) → **Think** (LLM reasons about next action) → **Act** (Playwright executes it) → repeat until done.
-
----
-
-## Features
-
-- **DOM Walker** — Live element extraction assigns numeric IDs to every interactive element. The LLM clicks `[15]`, not a CSS selector.
-- **Stealth Playwright** — Patches `navigator.webdriver`, viewport signatures, input timing, and CDP artifacts before any page loads.
-- **Session Resume** — Tasks auto-save on interrupt. Pick up exactly where you left off.
-- **Smart Deduplication** — URL + hash checking. Never downloads the same file twice.
-- **Stuck Detection** — Loop detection with automatic strategy switching and source failover.
-- **Cross-Session Memory** — SQLite-backed. Remembers what worked per domain.
-- **Multi-Provider** — Ollama (local), OpenAI, Anthropic, Google, xAI.
-
----
-
-## Installation
+Built on [Blackreach](https://github.com/Null-Phnix/Blackreach)'s DOM walker, stealth stack, and mental model system. No Redis, no Supabase — just Python, Playwright, and SQLite.
 
 ```bash
-pip install blackreach
-```
-
-**With specific providers:**
-```bash
-pip install "blackreach[openai]"
-pip install "blackreach[anthropic]"
-pip install "blackreach[all]"
-```
-
-**From source:**
-```bash
-git clone https://github.com/Null-Phnix/Blackreach
-cd Blackreach
-pip install -e .
-```
-
-**Install the browser (required):**
-```bash
+pip install blackcrawl
 playwright install chromium
+blackcrawl serve
+```
+
+```python
+import httpx
+
+# Scrape a page
+resp = httpx.post("http://localhost:7432/v1/scrape", json={
+    "url": "https://example.com",
+    "formats": ["markdown", "html", "links"]
+})
+
+# Crawl a site
+resp = httpx.post("http://localhost:7432/v1/crawl", json={
+    "url": "https://docs.python.org",
+    "maxDepth": 2,
+    "limit": 50
+})
+
+# Map all URLs
+resp = httpx.post("http://localhost:7432/v1/map", json={
+    "url": "https://example.com"
+})
+
+# Extract structured data
+resp = httpx.post("http://localhost:7432/v1/extract", json={
+    "urls": ["https://example.com"],
+    "prompt": "Extract the main heading and all paragraphs",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "heading": {"type": "string"},
+            "paragraphs": {"type": "array", "items": {"type": "string"}}
+        }
+    }
+})
+
+# Search and scrape
+resp = httpx.post("http://localhost:7432/v1/search", json={
+    "query": "Python async tutorial"
+})
 ```
 
 ---
 
-## Quick start
+## Why BlackCrawl?
 
-First run walks you through setup:
-```bash
-blackreach
+Every popular web scraping API has fundamental problems:
+
+| Problem | Firecrawl | Jina Reader | BlackCrawl |
+|---------|-----------|-------------|------------|
+| Anti-bot detection | Cloud-only, paid tier | Basic | Built-in stealth (webdriver patches, fingerprint spoofing, behavioral humanization) |
+| JS-rendered content | Playwright | Basic | Playwright + StarSearch (15 JS injection modules, 80+ fingerprint profiles) |
+| Crawl reliability | Hangs silently | No crawling | Stuck detection, error recovery, rate limit resilience from 3k+ real-world test failures |
+| Content quality | Readability + turndown | Readability | DOM walker (ARIA roles, landmarks, interactive element IDs — 200k token pages → 2k token observations) |
+| Structured extraction | LLM throw at text | None | Mental model-assisted extraction with belief tracking and retry logic |
+| Self-hosted features | Scrape + crawl only (extract/search are cloud-only) | Single pages | Every endpoint, fully self-hosted |
+| Infrastructure | Node.js + Redis + Supabase | None | Python + SQLite — one process, one DB file |
+
+## API Reference
+
+All endpoints are Firecrawl-compatible. If it works with Firecrawl's API, it works with BlackCrawl.
+
+### POST /v1/scrape
+
+Scrape a single URL. Returns content in requested formats.
+
+```json
+{
+  "url": "https://example.com",
+  "formats": ["markdown", "html", "rawHtml", "screenshot", "links"],
+  "onlyMainContent": true,
+  "timeout": 30000,
+  "waitFor": 2000,
+  "actions": [
+    {"type": "click", "selector": "#accept-cookies"},
+    {"type": "wait", "amount": 1000}
+  ]
+}
 ```
 
-Then:
-```bash
-# Run a task
-blackreach run "find and download papers about attention mechanisms from arxiv"
-
-# Headless
-blackreach run --headless "download landscape wallpapers from unsplash"
-
-# Specific provider/model
-blackreach run -p anthropic -m claude-3-5-sonnet "download the pytorch README"
-
-# Resume interrupted session
-blackreach sessions
-blackreach run --resume 42
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "markdown": "# Example Domain\n\nThis domain is for use in illustrative examples...",
+    "html": "<main><h1>Example Domain</h1>...</main>",
+    "metadata": {"url": "https://example.com", "title": "Example Domain", "language": "en"}
+  }
+}
 ```
+
+### POST /v1/crawl
+
+Crawl a site recursively. Returns a job ID for polling.
+
+```json
+{
+  "url": "https://docs.python.org",
+  "maxDepth": 3,
+  "limit": 100,
+  "allowBackwardCrawling": false,
+  "allowExternalLinks": false,
+  "includePaths": ["/3/"],
+  "excludePaths": ["/3/library/"],
+  "scrapeOptions": {
+    "formats": ["markdown"],
+    "onlyMainContent": true
+  }
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "/v1/crawl/550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+Poll: `GET /v1/crawl/{id}` for status and results.
+
+### POST /v1/map
+
+Fast URL discovery. Returns all links without full content extraction.
+
+```json
+{
+  "url": "https://example.com",
+  "search": "api",
+  "includeSubdomains": false,
+  "limit": 5000
+}
+```
+
+### POST /v1/extract
+
+LLM-powered structured data extraction from URLs.
+
+```json
+{
+  "urls": ["https://news.ycombinator.com"],
+  "prompt": "Extract the top 5 story titles and their point counts",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "stories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {"type": "string"},
+            "points": {"type": "integer"}
+          }
+        }
+      }
+    }
+  },
+  "mentalModel": true
+}
+```
+
+BlackCrawl extension: `mentalModel: true` enables belief tracking across extraction attempts. The LLM builds beliefs about page structure and uses them to improve retry accuracy.
+
+### POST /v1/search
+
+Web search with automatic result scraping. Falls back through Bing → DuckDuckGo → Brave.
+
+```json
+{
+  "query": "Python async tutorial",
+  "searchOptions": {"limit": 5},
+  "scrapeOptions": {"formats": ["markdown"]},
+  "fallbackChain": true
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "markdown": "# Python Async IO...",
+      "metadata": {"title": "Async IO in Python", "url": "https://...", "snippet": "..."}
+    }
+  ]
+}
+```
+
+### Other Endpoints
+
+- `GET /health` — Health check
+- `GET /v1/jobs` — List all jobs
+- `DELETE /v1/jobs/{id}` — Delete a job
+- `DELETE /v1/crawl/{id}` — Cancel a crawl
 
 ---
 
-## Commands
+## CLI
 
-| Command | Description |
-|---------|-------------|
-| `blackreach` | Interactive mode |
-| `blackreach run "goal"` | Run agent with goal |
-| `blackreach run --resume ID` | Resume paused session |
-| `blackreach sessions` | List resumable sessions |
-| `blackreach config` | Configure settings and API keys |
-| `blackreach models` | List available models |
-| `blackreach stats` | Show performance metrics |
-| `blackreach doctor` | Check system requirements |
-| `blackreach health` | Check content source availability |
-| `blackreach downloads` | Show download history |
-
-**Interactive slash commands:**
-
-| Command | Description |
-|---------|-------------|
-| `/model` `/m` | Switch model mid-session |
-| `/provider` `/p` | Switch provider |
-| `/plan "goal"` | Preview a plan without running |
-| `/resume ID` | Resume a session |
-| `/sessions` | List resumable sessions |
-| `/status` `/s` | Show current config |
-| `/quit` `/q` | Exit |
-
----
-
-## Supported providers
-
-| Provider | Type | Models |
-|----------|------|--------|
-| **Ollama** | Local | qwen2.5:7b, llama3.2:3b, mistral:7b |
-| **Anthropic** | Cloud | claude-sonnet-4-6, claude-haiku-4-5 |
-| **OpenAI** | Cloud | gpt-4o, gpt-4o-mini |
-| **Google** | Cloud | gemini-2.5-pro, gemini-2.5-flash |
-| **xAI** | Cloud | grok-2, grok-2-mini |
-
-**Running fully local with Ollama:**
 ```bash
-# Install Ollama: https://ollama.ai
-ollama pull qwen2.5:7b
-ollama serve
-blackreach  # select Ollama on first run
+# Start API server
+blackcrawl serve --port 8080
+
+# Scrape a page
+blackcrawl scrape https://example.com -f markdown -o output.json
+
+# Crawl a site
+blackcrawl crawl https://docs.python.org --depth 2 --limit 50 -o crawl.json
+
+# Map URLs
+blackcrawl map https://example.com --search api -o urls.json
+
+# Search
+blackcrawl search "Python async tutorial" --limit 5
+
+# Health check
+blackcrawl doctor
 ```
 
 ---
 
 ## Configuration
 
-Config file: `~/.blackreach/config.yaml`
+### Environment Variables
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
-export GOOGLE_API_KEY="..."
-export XAI_API_KEY="xai-..."
+BLACKCRAWL_BROWSER_BACKEND=playwright   # or "starsearch"
+BLACKCRAWL_HEADLESS=true
+BLACKCRAWL_STEALTH=true                 # Enable anti-detection patches
+BLACKCRAWL_MAX_DEPTH=3
+BLACKCRAWL_MAX_PAGES=100
+BLACKCRAWL_LLM_PROVIDER=openai         # openai, anthropic, google, ollama
+BLACKCRAWL_LLM_MODEL=gpt-4o-mini       # Or leave empty for provider defaults
+BLACKCRAWL_API_KEY=your-secret-key      # Optional Bearer token auth
+BLACKCRAWL_PORT=7432
+BLACKCRAWL_DATA_DIR=~/.blackcrawl
+BLACKCRAWL_LOG_LEVEL=INFO
 ```
 
-Or use `blackreach config` for interactive setup.
+### Config File
+
+```yaml
+browser:
+  backend: playwright  # or starsearch
+  headless: true
+  stealth_mode: true
+  viewport_width: 1920
+  viewport_height: 1080
+
+crawl:
+  max_depth: 3
+  max_pages: 100
+  concurrency: 5
+  delay_between_requests: 1.0
+
+extract:
+  llm_provider: openai
+  mental_model_enabled: true
+  confidence_threshold: 0.7
+
+server:
+  host: 0.0.0.0
+  port: 7432
+  api_key: null
+  job_ttl: 3600
+```
 
 ---
 
 ## Architecture
 
 ```
-blackreach/
-├── agent.py          # ReAct loop coordinator
-├── browser.py        # Playwright control + stealth patches
-├── dom_walker.py     # Live DOM extraction, [N] ID assignment
-├── llm.py            # Multi-provider LLM integration
-├── memory.py         # Session memory + SQLite persistence
-├── detection.py      # CAPTCHA, login, paywall detection
-├── stuck_detector.py # Loop detection and recovery
-├── error_recovery.py # Error categorization and recovery
-├── resilience.py     # Retry logic, circuit breaker
-├── knowledge.py      # Content source knowledge base
-├── config.py         # Configuration management
-├── logging.py        # Structured session logging
-├── ui.py             # Rich terminal UI
-└── cli.py            # CLI entry point
+Request → FastAPI → [Scrape|Crawl|Map|Extract|Search]
+                          │
+                    BrowserManager (Playwright + Stealth)
+                          │
+                   ┌──────┼──────┐
+                   │      │      │
+               DOM Walker  │   StarSearch
+               (content    │   (Rust daemon,
+                extraction) │    80+ fingerprints)
+                          │
+                    JobStore (SQLite)
+                    (async job queue)
 ```
 
+**Key design decisions:**
+
+1. **Python + FastAPI** — not Node.js. Simpler deployment, fewer dependencies.
+2. **SQLite, not Redis/Supabase** — one file, zero infra. Jobs, state, everything.
+3. **Stealth-first** — webdriver patches, viewport spoofing, behavioral humanization baked in. Not a paid add-on.
+4. **DOM Walker** — not raw HTML parsing. Semantic extraction with ARIA roles and interactive element IDs.
+5. **Mental model extraction** — belief tracking across LLM retries. Not just throw LLM at text and hope.
+6. **Firecrawl-compatible API** — drop-in replacement. Same endpoints, same request/response format.
+
 ---
 
-## Why 2,904 tests
+## Differences from Firecrawl
 
-Every test came from a real failure. Rate limits returning 200 OK. Tables rendered by JavaScript two seconds after page load. Session tokens expiring mid-task. CAPTCHAs on page 3 but not pages 1 or 2. Login walls that only trigger from non-residential IPs.
-
-2,904 tests means 2,904 things the world tried and got caught. When it runs at 3am downloading data, it needs to fail loud. Not silent.
+| Feature | Firecrawl (self-hosted) | BlackCrawl |
+|---------|------------------------|------------|
+| Scrape | Yes | Yes |
+| Crawl | Yes | Yes |
+| Map | Yes | Yes |
+| Extract | Cloud only | **Yes — self-hosted** |
+| Search | Cloud only | **Yes — self-hosted** |
+| Anti-bot | Cloud only | **Yes — built in** |
+| Infrastructure | Node + Redis + Postgres | Python + SQLite |
+| LLM extraction | OpenAI only | **OpenAI, Anthropic, Google, Ollama** |
+| Mental model | No | **Yes — belief tracking + retry** |
+| Stuck detection | No | **Yes — from 3k+ real-world failures** |
 
 ---
 
-## Troubleshooting
+## Installation
 
 ```bash
-blackreach doctor    # check system requirements
+pip install blackcrawl
+playwright install chromium
 ```
 
-**Browser not found:** `playwright install chromium`
+**With LLM extraction:**
+```bash
+pip install "blackcrawl[openai]"      # or anthropic, google, all
+```
 
-**Bot detection (403/418 errors):**
-- Run without `--headless`
-- Try a different browser: `blackreach run -b firefox "goal"`
-- Some sites require residential IPs regardless of stealth settings
-
-**Session resume fails:** `blackreach sessions` to check if session still exists
+**From source:**
+```bash
+git clone https://github.com/Null-Phnix/BlackCrawl
+cd BlackCrawl
+pip install -e ".[dev]"
+playwright install chromium
+```
 
 ---
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT — use it however you want. No Elastic License restrictions, no cloud-only features.
 
 ---
 
-Built by [phnix](https://phnix.dev). Issues and PRs welcome.
+Built with fury by [Phnix](https://github.com/Null-Phnix). Powered by [Blackreach](https://github.com/Null-Phnix/Blackreach)'s stealth engine.

@@ -1,0 +1,151 @@
+"""
+BlackCrawl Configuration
+
+Loaded from environment variables or config file.
+No Redis, no Supabase — just SQLite and environment.
+"""
+
+import os
+from dataclasses import dataclass, field
+from typing import Optional
+from pathlib import Path
+
+
+@dataclass
+class BrowserConfig:
+    """Browser backend configuration."""
+    backend: str = "playwright"  # "playwright" or "starsearch"
+    headless: bool = True
+    starsearch_socket: Optional[str] = None  # auto-detect if None
+    viewport_width: int = 1920
+    viewport_height: int = 1080
+    navigation_timeout: int = 30000  # ms
+    wait_for_timeout: int = 5000  # ms
+    stealth_mode: bool = True
+    user_agent: Optional[str] = None
+
+
+@dataclass
+class CrawlConfig:
+    """Crawl behavior configuration."""
+    max_depth: int = 3
+    max_pages: int = 100
+    concurrency: int = 5
+    delay_between_requests: float = 1.0  # seconds
+    respect_robots_txt: bool = True
+    follow_sitemaps: bool = True
+    allow_external_links: bool = False
+    allow_backward_crawling: bool = False
+    deduplicate_urls: bool = True
+
+
+@dataclass
+class ExtractConfig:
+    """Extraction configuration."""
+    llm_provider: str = "openai"  # "openai", "anthropic", "google", "ollama"
+    llm_model: Optional[str] = None  # auto-pick per provider
+    max_retries: int = 3
+    mental_model_enabled: bool = True
+    confidence_threshold: float = 0.7
+
+
+@dataclass
+class ServerConfig:
+    """API server configuration."""
+    host: str = "0.0.0.0"
+    port: int = 7432
+    api_key: Optional[str] = None  # Bearer token auth (optional)
+    job_ttl: int = 3600  # seconds to keep completed jobs
+    max_concurrent_jobs: int = 10
+    request_timeout: int = 300  # seconds
+
+
+@dataclass
+class BlackCrawlConfig:
+    """Master configuration."""
+    browser: BrowserConfig = field(default_factory=BrowserConfig)
+    crawl: CrawlConfig = field(default_factory=CrawlConfig)
+    extract: ExtractConfig = field(default_factory=ExtractConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
+    data_dir: str = os.path.expanduser("~/.blackcrawl")
+    db_path: str = ""  # derived from data_dir if empty
+    log_level: str = "INFO"
+
+    def __post_init__(self):
+        if not self.db_path:
+            self.db_path = os.path.join(self.data_dir, "blackcrawl.db")
+        os.makedirs(self.data_dir, exist_ok=True)
+
+
+def load_config(config_path: Optional[str] = None) -> BlackCrawlConfig:
+    """Load configuration from file and environment variables."""
+    import yaml
+
+    config = BlackCrawlConfig()
+
+    # Load from file if provided
+    if config_path and os.path.exists(config_path):
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+        _merge_config(config, data)
+
+    # Environment variable overrides
+    _apply_env(config)
+
+    return config
+
+
+def _merge_config(config: BlackCrawlConfig, data: dict):
+    """Merge dict data into config object."""
+    if "browser" in data:
+        for k, v in data["browser"].items():
+            if hasattr(config.browser, k):
+                setattr(config.browser, k, v)
+    if "crawl" in data:
+        for k, v in data["crawl"].items():
+            if hasattr(config.crawl, k):
+                setattr(config.crawl, k, v)
+    if "extract" in data:
+        for k, v in data["extract"].items():
+            if hasattr(config.extract, k):
+                setattr(config.extract, k, v)
+    if "server" in data:
+        for k, v in data["server"].items():
+            if hasattr(config.server, k):
+                setattr(config.server, k, v)
+    if "data_dir" in data:
+        config.data_dir = data["data_dir"]
+    if "log_level" in data:
+        config.log_level = data["log_level"]
+
+
+def _apply_env(config: BlackCrawlConfig):
+    """Apply environment variable overrides."""
+    env_map = {
+        "BLACKCRAWL_BROWSER_BACKEND": ("browser", "backend"),
+        "BLACKCRAWL_HEADLESS": ("browser", "headless"),
+        "BLACKCRAWL_STEALTH": ("browser", "stealth_mode"),
+        "BLACKCRAWL_MAX_DEPTH": ("crawl", "max_depth"),
+        "BLACKCRAWL_MAX_PAGES": ("crawl", "max_pages"),
+        "BLACKCRAWL_CONCURRENCY": ("crawl", "concurrency"),
+        "BLACKCRAWL_LLM_PROVIDER": ("extract", "llm_provider"),
+        "BLACKCRAWL_LLM_MODEL": ("extract", "llm_model"),
+        "BLACKCRAWL_MENTAL_MODEL": ("extract", "mental_model_enabled"),
+        "BLACKCRAWL_API_KEY": ("server", "api_key"),
+        "BLACKCRAWL_PORT": ("server", "port"),
+        "BLACKCRAWL_DATA_DIR": (None, "data_dir"),
+        "BLACKCRAWL_LOG_LEVEL": (None, "log_level"),
+    }
+    for env_var, (section, attr) in env_map.items():
+        val = os.environ.get(env_var)
+        if val is not None:
+            target = getattr(config, section) if section else config
+            current = getattr(target, attr)
+            # Type coerce
+            if isinstance(current, bool):
+                val = val.lower() in ("true", "1", "yes")
+            elif isinstance(current, int):
+                val = int(val)
+            elif isinstance(current, float):
+                val = float(val)
+            setattr(target, attr, val)
