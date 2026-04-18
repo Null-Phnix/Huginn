@@ -1,5 +1,5 @@
 """
-BlackCrawl Searcher — Web search with automated scraping.
+Huginn Searcher — Web search with automated scraping.
 
 The /v1/search endpoint engine. Uses Blackreach's fallback search chain
 (Bing -> DuckDuckGo -> Brave) with automatic result scraping.

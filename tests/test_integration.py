@@ -1,5 +1,5 @@
 """
-End-to-end integration test — BlackCrawl API with real browser.
+End-to-end integration test — Huginn API with real browser.
 
 Tests actual scraping against a real site (example.com).
 Requires Playwright chromium to be installed.
@@ -10,10 +10,10 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from blackcrawl.config import BlackCrawlConfig
-from blackcrawl.browser import BrowserManager
-from blackcrawl.scraper import Scraper
-from blackcrawl.models import OutputFormat
+from huginn.config import HuginnConfig
+from huginn.browser import BrowserManager
+from huginn.scraper import Scraper
+from huginn.models import OutputFormat
 
 
 @pytest.fixture
@@ -94,14 +94,14 @@ class TestLiveAPI:
     @pytest.mark.network
     async def test_api_scrape(self):
         """Should serve scrape endpoint via API with the app lifecycle."""
-        from blackcrawl.api import create_app
-        config = BlackCrawlConfig()
+        from huginn.api import create_app
+        config = HuginnConfig()
         app = create_app(config)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # Start the app's lifespan to initialize browser
             async with app.router.lifespan_context(app):
-                resp = await client.post("/v1/scrape", json={
+                resp = await client.post("/v1/probe", json={
                     "url": "https://example.com",
                     "formats": ["markdown"],
                     "timeout": 15000,
@@ -115,13 +115,13 @@ class TestLiveAPI:
     @pytest.mark.network
     async def test_api_map(self):
         """Should serve map endpoint via API with lifecycle."""
-        from blackcrawl.api import create_app
-        config = BlackCrawlConfig()
+        from huginn.api import create_app
+        config = HuginnConfig()
         app = create_app(config)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             async with app.router.lifespan_context(app):
-                resp = await client.post("/v1/map", json={
+                resp = await client.post("/v1/chart", json={
                     "url": "https://example.com",
                     "limit": 100,
                 })

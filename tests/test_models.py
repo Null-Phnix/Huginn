@@ -1,11 +1,11 @@
 """
-Tests for BlackCrawl Models — Pydantic schemas validation.
+Tests for Huginn Models — Pydantic schemas validation.
 """
 
 import pytest
 from pydantic import ValidationError
 
-from blackcrawl.models import (
+from huginn.models import (
     Action,
     ActionType,
     CrawlRequest,
@@ -141,7 +141,7 @@ class TestCrawlModels:
 
     def test_crawl_start_response(self):
         """Should model crawl start response."""
-        resp = CrawlStartResponse(success=True, id="abc-123", url="/v1/crawl/abc-123")
+        resp = CrawlStartResponse(success=True, id="abc-123", url="/v1/sweep/abc-123")
         assert resp.success is True
         assert resp.id == "abc-123"
 
@@ -212,18 +212,18 @@ class TestSearchModels:
         assert len(resp.data) == 1
 
 
-class TestModelAliases:
-    """Test that camelCase aliases work properly."""
+class TestModelFields:
+    """Test that model fields accept snake_case input."""
 
     def test_scrape_request_aliases(self):
         req = ScrapeRequest(
             url="https://example.com",
             **{
-                "waitFor": 5000,
-                "onlyMainContent": False,
-                "includeTags": ["article"],
-                "excludeTags": [".ads"],
-                "stealthMode": False,
+                "wait_for": 5000,
+                "only_main_content": False,
+                "include_tags": ["article"],
+                "exclude_tags": [".ads"],
+                "stealth_mode": False,
             }
         )
         assert req.wait_for == 5000
@@ -235,11 +235,11 @@ class TestModelAliases:
         req = CrawlRequest(
             url="https://example.com",
             **{
-                "maxDepth": 5,
-                "allowBackwardCrawling": True,
-                "allowExternalLinks": False,
-                "includePaths": ["/docs/"],
-                "excludePaths": ["/admin/"],
+                "max_depth": 5,
+                "allow_backward_crawling": True,
+                "allow_external_links": False,
+                "include_paths": ["/docs/"],
+                "exclude_paths": ["/admin/"],
             }
         )
         assert req.max_depth == 5

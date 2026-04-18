@@ -1,5 +1,5 @@
 """
-BlackCrawl Scraper — Single page content extraction.
+Huginn Scraper — Single page content extraction.
 
 The /v1/scrape endpoint engine. Uses BrowserManager to load a page,
 execute optional actions, then extract content in requested formats.
@@ -51,7 +51,7 @@ class Scraper:
             page.set_default_timeout(timeout)
             success = await self.browser.navigate(page, url)
             if not success:
-                return ScrapeData(metadata={"url": url, "statusCode": 500, "error": "Navigation failed"})
+                return ScrapeData(metadata={"url": url, "status_code": 500, "error": "Navigation failed"})
 
             # Wait for specific selector or time
             if wait_for:
@@ -73,7 +73,7 @@ class Scraper:
                 "title": content.get("title", ""),
                 "description": content.get("description", ""),
                 "language": content.get("language", "en"),
-                "statusCode": status_code,
+                "status_code": status_code,
             })
 
             # Extract in requested formats
@@ -105,11 +105,11 @@ class Scraper:
 
         except asyncio.TimeoutError:
             logger.error(f"Scrape timed out for {url}")
-            return ScrapeData(metadata={"url": url, "error": "Request timed out", "statusCode": 408})
+            return ScrapeData(metadata={"url": url, "error": "Request timed out", "status_code": 408})
         except Exception as e:
             logger.error(f"Scrape failed for {url}: {e}")
             status = self.browser.last_status_code if self.browser.last_status_code else 500
-            return ScrapeData(metadata={"url": url, "error": str(e), "statusCode": status})
+            return ScrapeData(metadata={"url": url, "error": str(e), "status_code": status})
         finally:
             try:
                 await context.close()

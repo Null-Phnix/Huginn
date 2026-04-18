@@ -1,10 +1,10 @@
 """
-Tests for BlackCrawl Searcher — Search engine configuration, result parsing.
+Tests for Huginn Searcher — Search engine configuration, result parsing.
 """
 
 import pytest
 
-from blackcrawl.searcher import Searcher, SEARCH_ENGINES
+from huginn.searcher import Searcher, SEARCH_ENGINES
 
 
 class TestSearchEngineConfig:

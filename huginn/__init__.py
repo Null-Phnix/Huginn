@@ -1,8 +1,8 @@
 """
-BlackCrawl - Autonomous web scraping and crawling API.
+Huginn — Odin's raven. Flies out, brings back knowledge.
 
-A Firecrawl-compatible API built on Blackreach's stealth browser engine,
-DOM walker, and mental model system. Better than Firecrawl because:
+Autonomous web scraping and crawling API. Built on Blackreach's
+stealth browser engine, DOM walker, and mental model system.
 
 - StarSearch Rust daemon for anti-detection (15 JS modules, 80+ fingerprints)
 - Semantic DOM walker instead of raw HTML parsing

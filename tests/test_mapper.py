@@ -1,12 +1,12 @@
 """
-Tests for BlackCrawl Mapper — Sitemap parsing, URL discovery.
+Tests for Huginn Mapper — Sitemap parsing, URL discovery.
 """
 
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 import pytest
 
-from blackcrawl.mapper import Mapper
+from huginn.mapper import Mapper
 
 
 class TestSitemapParsing:

@@ -1,5 +1,5 @@
 """
-BlackCrawl CLI — Command line interface.
+Huginn CLI — Command line interface.
 """
 
 import argparse
@@ -9,14 +9,14 @@ import logging
 import sys
 from typing import Optional
 
-from .config import BlackCrawlConfig, load_config
+from .config import HuginnConfig, load_config
 
 
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        prog="blackcrawl",
-        description="BlackCrawl — Autonomous web scraping API",
+        prog="huginn",
+        description="Huginn — Autonomous web scraping API",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -31,14 +31,14 @@ def main():
     serve_parser.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
     # scrape
-    scrape_parser = subparsers.add_parser("scrape", help="Scrape a single URL")
+    scrape_parser = subparsers.add_parser("probe", help="Probe a single URL")
     scrape_parser.add_argument("url", help="URL to scrape")
-    scrape_parser.add_argument("--format", "-f", default="markdown", choices=["markdown", "html", "rawHtml", "links"])
+    scrape_parser.add_argument("--format", "-f", default="markdown", choices=["markdown", "html", "raw_html", "links"])
     scrape_parser.add_argument("--output", "-o", default=None, help="Output file (default: stdout)")
     scrape_parser.add_argument("--timeout", type=int, default=30000)
 
     # crawl
-    crawl_parser = subparsers.add_parser("crawl", help="Crawl a site")
+    crawl_parser = subparsers.add_parser("sweep", help="Sweep a site")
     crawl_parser.add_argument("url", help="Starting URL")
     crawl_parser.add_argument("--depth", type=int, default=3)
     crawl_parser.add_argument("--limit", type=int, default=100)
@@ -46,14 +46,14 @@ def main():
     crawl_parser.add_argument("--concurrency", type=int, default=5)
 
     # map
-    map_parser = subparsers.add_parser("map", help="Map site URLs")
+    map_parser = subparsers.add_parser("chart", help="Chart site URLs")
     map_parser.add_argument("url", help="URL to map")
     map_parser.add_argument("--search", default=None, help="Filter URLs containing this")
     map_parser.add_argument("--limit", type=int, default=5000)
     map_parser.add_argument("--output", "-o", default=None)
 
     # search
-    search_parser = subparsers.add_parser("search", help="Web search")
+    search_parser = subparsers.add_parser("seek", help="Seek the web")
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument("--limit", type=int, default=5)
     search_parser.add_argument("--output", "-o", default=None)
@@ -69,14 +69,14 @@ def main():
 
     if args.command == "serve":
         _cmd_serve(args)
-    elif args.command == "scrape":
-        asyncio.run(_cmd_scrape(args))
-    elif args.command == "crawl":
-        asyncio.run(_cmd_crawl(args))
-    elif args.command == "map":
-        asyncio.run(_cmd_map(args))
-    elif args.command == "search":
-        asyncio.run(_cmd_search(args))
+    elif args.command == "probe":
+        asyncio.run(_cmd_probe(args))
+    elif args.command == "sweep":
+        asyncio.run(_cmd_sweep(args))
+    elif args.command == "chart":
+        asyncio.run(_cmd_chart(args))
+    elif args.command == "seek":
+        asyncio.run(_cmd_seek(args))
     elif args.command == "doctor":
         asyncio.run(_cmd_doctor(args))
 
@@ -105,7 +105,7 @@ def _cmd_serve(args):
     uvicorn.run(app, host=config.server.host, port=config.server.port, log_level=config.log_level.lower())
 
 
-async def _cmd_scrape(args):
+async def _cmd_probe(args):
     """CLI scrape command."""
     from .browser import BrowserManager
     from .scraper import Scraper
@@ -119,7 +119,7 @@ async def _cmd_scrape(args):
         fmt_map = {
             "markdown": OutputFormat.MARKDOWN,
             "html": OutputFormat.HTML,
-            "rawHtml": OutputFormat.RAW_HTML,
+            "raw_html": OutputFormat.RAW_HTML,
             "links": OutputFormat.LINKS,
         }
 
@@ -129,7 +129,7 @@ async def _cmd_scrape(args):
             timeout=args.timeout,
         )
 
-        result = data.model_dump(by_alias=True, exclude_none=True)
+        result = data.model_dump(exclude_none=True)
         output = json.dumps(result, indent=2, ensure_ascii=False)
 
         if args.output:
@@ -143,7 +143,7 @@ async def _cmd_scrape(args):
         await browser.stop()
 
 
-async def _cmd_crawl(args):
+async def _cmd_sweep(args):
     """CLI crawl command."""
     from .browser import BrowserManager
     from .crawler import Crawler
@@ -190,7 +190,7 @@ async def _cmd_crawl(args):
         await browser.stop()
 
 
-async def _cmd_map(args):
+async def _cmd_chart(args):
     """CLI map command."""
     from .browser import BrowserManager
     from .mapper import Mapper
@@ -218,7 +218,7 @@ async def _cmd_map(args):
         await browser.stop()
 
 
-async def _cmd_search(args):
+async def _cmd_seek(args):
     """CLI search command."""
     from .browser import BrowserManager
     from .searcher import Searcher
@@ -260,7 +260,7 @@ async def _cmd_search(args):
 
 async def _cmd_doctor(args):
     """Check system health."""
-    print("BlackCrawl Doctor")
+    print("Huginn Doctor")
     print("=" * 40)
 
     # Check Python version

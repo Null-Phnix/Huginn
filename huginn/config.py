@@ -1,5 +1,5 @@
 """
-BlackCrawl Configuration
+Huginn Configuration
 
 Loaded from environment variables or config file.
 No Redis, no Supabase — just SQLite and environment.
@@ -70,20 +70,20 @@ class ServerConfig:
 
 
 @dataclass
-class BlackCrawlConfig:
+class HuginnConfig:
     """Master configuration."""
     browser: BrowserConfig = field(default_factory=BrowserConfig)
     crawl: CrawlConfig = field(default_factory=CrawlConfig)
     extract: ExtractConfig = field(default_factory=ExtractConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
-    data_dir: str = os.path.expanduser("~/.blackcrawl")
+    data_dir: str = os.path.expanduser("~/.huginn")
     db_path: str = ""  # derived from data_dir if empty
     log_level: str = "INFO"
 
     def __post_init__(self):
         if not self.db_path:
-            self.db_path = os.path.join(self.data_dir, "blackcrawl.db")
+            self.db_path = os.path.join(self.data_dir, "huginn.db")
         # NOTE: Directory creation deferred to runtime (ensure_data_dir).
         # __post_init__ should not have side effects like makedirs.
 
@@ -92,9 +92,9 @@ class BlackCrawlConfig:
         os.makedirs(self.data_dir, exist_ok=True)
 
 
-def load_config(config_path: Optional[str] = None) -> BlackCrawlConfig:
+def load_config(config_path: Optional[str] = None) -> HuginnConfig:
     """Load configuration from file and environment variables."""
-    config = BlackCrawlConfig()
+    config = HuginnConfig()
 
     # Load from file if provided
     if config_path and os.path.exists(config_path):
@@ -112,7 +112,7 @@ def load_config(config_path: Optional[str] = None) -> BlackCrawlConfig:
     return config
 
 
-def _merge_config(config: BlackCrawlConfig, data: dict):
+def _merge_config(config: HuginnConfig, data: dict):
     """Merge dict data into config object."""
     if "browser" in data:
         for k, v in data["browser"].items():
@@ -140,26 +140,26 @@ def _merge_config(config: BlackCrawlConfig, data: dict):
         config.log_level = data["log_level"]
 
 
-def _apply_env(config: BlackCrawlConfig):
+def _apply_env(config: HuginnConfig):
     """Apply environment variable overrides."""
     env_map = {
-        "BLACKCRAWL_BROWSER_BACKEND": ("browser", "backend"),
-        "BLACKCRAWL_HEADLESS": ("browser", "headless"),
-        "BLACKCRAWL_STEALTH": ("browser", "stealth_mode"),
-        "BLACKCRAWL_MAX_DEPTH": ("crawl", "max_depth"),
-        "BLACKCRAWL_MAX_PAGES": ("crawl", "max_pages"),
-        "BLACKCRAWL_CONCURRENCY": ("crawl", "concurrency"),
-        "BLACKCRAWL_LLM_PROVIDER": ("extract", "llm_provider"),
-        "BLACKCRAWL_LLM_MODEL": ("extract", "llm_model"),
-        "BLACKCRAWL_MENTAL_MODEL": ("extract", "mental_model_enabled"),
-        "BLACKCRAWL_API_KEY": ("server", "api_key"),
-        "BLACKCRAWL_PORT": ("server", "port"),
-        "BLACKCRAWL_RATE_LIMIT": ("server", "rate_limit"),
-        "BLACKCRAWL_DATA_DIR": (None, "data_dir"),
-        "BLACKCRAWL_LOG_LEVEL": (None, "log_level"),
-        "BLACKCRAWL_PROXY_SERVER": ("proxy", "server"),
-        "BLACKCRAWL_PROXY_USERNAME": ("proxy", "username"),
-        "BLACKCRAWL_PROXY_PASSWORD": ("proxy", "password"),
+        "HUGINN_BROWSER_BACKEND": ("browser", "backend"),
+        "HUGINN_HEADLESS": ("browser", "headless"),
+        "HUGINN_STEALTH": ("browser", "stealth_mode"),
+        "HUGINN_MAX_DEPTH": ("crawl", "max_depth"),
+        "HUGINN_MAX_PAGES": ("crawl", "max_pages"),
+        "HUGINN_CONCURRENCY": ("crawl", "concurrency"),
+        "HUGINN_LLM_PROVIDER": ("extract", "llm_provider"),
+        "HUGINN_LLM_MODEL": ("extract", "llm_model"),
+        "HUGINN_MENTAL_MODEL": ("extract", "mental_model_enabled"),
+        "HUGINN_API_KEY": ("server", "api_key"),
+        "HUGINN_PORT": ("server", "port"),
+        "HUGINN_RATE_LIMIT": ("server", "rate_limit"),
+        "HUGINN_DATA_DIR": (None, "data_dir"),
+        "HUGINN_LOG_LEVEL": (None, "log_level"),
+        "HUGINN_PROXY_SERVER": ("proxy", "server"),
+        "HUGINN_PROXY_USERNAME": ("proxy", "username"),
+        "HUGINN_PROXY_PASSWORD": ("proxy", "password"),
     }
     for env_var, (section, attr) in env_map.items():
         val = os.environ.get(env_var)

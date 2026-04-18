@@ -1,8 +1,8 @@
-# BlackCrawl
+# Huginn
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-9f6ff3?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-v1.0.0-4ade80?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/BlackCrawl)
+[![Version](https://img.shields.io/badge/version-v1.0.0-4ade80?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
 [![Tests](https://img.shields.io/badge/tests-114_passing-4ade80?style=flat-square&labelColor=07061a)]
 
 **Autonomous web scraping API. Firecrawl-compatible interface, stealth-first, self-hosted.**
@@ -57,11 +57,11 @@ resp = httpx.post("http://localhost:7432/v1/search", json={
 
 ---
 
-## Why BlackCrawl?
+## Why Huginn?
 
 Every popular web scraping API has fundamental problems:
 
-| Problem | Firecrawl | Jina Reader | BlackCrawl |
+| Problem | Firecrawl | Jina Reader | Huginn |
 |---------|-----------|-------------|------------|
 | Anti-bot detection | Cloud-only, paid tier | Basic | Built-in stealth (webdriver patches, fingerprint spoofing, behavioral humanization) |
 | JS-rendered content | Playwright | Basic | Playwright + StarSearch (15 JS injection modules, 80+ fingerprint profiles) |
@@ -73,7 +73,7 @@ Every popular web scraping API has fundamental problems:
 
 ## API Reference
 
-All endpoints are Firecrawl-compatible. If it works with Firecrawl's API, it works with BlackCrawl.
+All endpoints are Firecrawl-compatible. If it works with Firecrawl's API, it works with Huginn.
 
 ### POST /v1/scrape
 
@@ -82,7 +82,7 @@ Scrape a single URL. Returns content in requested formats.
 ```json
 {
   "url": "https://example.com",
-  "formats": ["markdown", "html", "rawHtml", "screenshot", "links"],
+  "formats": ["markdown", "html", "raw_html", "screenshot", "links"],
   "onlyMainContent": true,
   "timeout": 30000,
   "waitFor": 2000,
@@ -176,7 +176,7 @@ LLM-powered structured data extraction from URLs.
 }
 ```
 
-BlackCrawl extension: `mentalModel: true` enables belief tracking across extraction attempts. The LLM builds beliefs about page structure and uses them to improve retry accuracy.
+Huginn extension: `mentalModel: true` enables belief tracking across extraction attempts. The LLM builds beliefs about page structure and uses them to improve retry accuracy.
 
 ### POST /v1/search
 
@@ -242,17 +242,17 @@ blackcrawl doctor
 ### Environment Variables
 
 ```bash
-BLACKCRAWL_BROWSER_BACKEND=playwright   # or "starsearch"
-BLACKCRAWL_HEADLESS=true
-BLACKCRAWL_STEALTH=true                 # Enable anti-detection patches
-BLACKCRAWL_MAX_DEPTH=3
-BLACKCRAWL_MAX_PAGES=100
-BLACKCRAWL_LLM_PROVIDER=openai         # openai, anthropic, google, ollama
-BLACKCRAWL_LLM_MODEL=gpt-4o-mini       # Or leave empty for provider defaults
-BLACKCRAWL_API_KEY=your-secret-key      # Optional Bearer token auth
-BLACKCRAWL_PORT=7432
-BLACKCRAWL_DATA_DIR=~/.blackcrawl
-BLACKCRAWL_LOG_LEVEL=INFO
+HUGINN_BROWSER_BACKEND=playwright   # or "starsearch"
+HUGINN_HEADLESS=true
+HUGINN_STEALTH=true                 # Enable anti-detection patches
+HUGINN_MAX_DEPTH=3
+HUGINN_MAX_PAGES=100
+HUGINN_LLM_PROVIDER=openai         # openai, anthropic, google, ollama
+HUGINN_LLM_MODEL=gpt-4o-mini       # Or leave empty for provider defaults
+HUGINN_API_KEY=your-secret-key      # Optional Bearer token auth
+HUGINN_PORT=7432
+HUGINN_DATA_DIR=~/.blackcrawl
+HUGINN_LOG_LEVEL=INFO
 ```
 
 ### Config File
@@ -315,7 +315,7 @@ Request → FastAPI → [Scrape|Crawl|Map|Extract|Search]
 
 ## Differences from Firecrawl
 
-| Feature | Firecrawl (self-hosted) | BlackCrawl |
+| Feature | Firecrawl (self-hosted) | Huginn |
 |---------|------------------------|------------|
 | Scrape | Yes | Yes |
 | Crawl | Yes | Yes |
@@ -344,8 +344,8 @@ pip install "blackcrawl[openai]"      # or anthropic, google, all
 
 **From source:**
 ```bash
-git clone https://github.com/Null-Phnix/BlackCrawl
-cd BlackCrawl
+git clone https://github.com/Null-Phnix/Huginn
+cd Huginn
 pip install -e ".[dev]"
 playwright install chromium
 ```

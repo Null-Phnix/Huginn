@@ -1,5 +1,5 @@
 """
-BlackCrawl Crawler — Recursive site crawling with BFS.
+Huginn Crawler — Recursive site crawling with BFS.
 
 The /v1/crawl endpoint engine. Manages concurrent page scraping,
 URL deduplication, depth limits, and path filtering.

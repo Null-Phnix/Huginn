@@ -1,5 +1,5 @@
 """
-BlackCrawl Browser Manager
+Huginn Browser Manager
 
 Wraps Playwright (and optionally StarSearch) with stealth patches,
 DOM walker integration, and content extraction.

@@ -1,14 +1,14 @@
 """
-BlackCrawl API — Firecrawl-compatible web scraping service.
+Huginn API — Firecrawl-compatible web scraping service.
 
 Autonomous, stealth-first, self-hosted.
 Built on StarSearch + Blackreach's DOM walker + mental model.
 
 Run:
-    blackcrawl serve                    # Start with defaults
-    blackcrawl serve --port 8080        # Custom port
-    blackcrawl serve --config path     # Custom config
-    uvicorn blackcrawl.api:app         # Direct uvicorn
+    huginn serve                    # Start with defaults
+    huginn serve --port 8080        # Custom port
+    huginn serve --config path     # Custom config
+    uvicorn huginn.api:app         # Direct uvicorn
 """
 
 import asyncio
@@ -25,12 +25,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.responses import StreamingResponse
 
-from .config import BlackCrawlConfig, load_config
+from .config import HuginnConfig, load_config
 from .models import (
     Action,
-    BatchScrapeRequest,
-    BatchScrapeResponse,
-    BatchScrapeResultItem,
+    FlockRequest,
+    FlockResponse,
+    FlockResultItem,
     CrawlRequest,
     CrawlStartResponse,
     CrawlStatusResponse,
@@ -76,7 +76,7 @@ def sse_event(event: str, data: dict) -> str:
 
 limiter = Limiter(key_func=get_remote_address)
 
-def build_proxy_dict(config: BlackCrawlConfig) -> Optional[dict]:
+def build_proxy_dict(config: HuginnConfig) -> Optional[dict]:
     """Build proxy dict from config for Playwright context."""
     if not config.proxy.server:
         return None
@@ -90,7 +90,7 @@ def build_proxy_dict(config: BlackCrawlConfig) -> Optional[dict]:
 
 # ─── Global State ─────────────────────────────────────────────────────────────
 
-_config: Optional[BlackCrawlConfig] = None
+_config: Optional[HuginnConfig] = None
 _browser: Optional[BrowserManager] = None
 _job_store: Optional[JobStore] = None
 _crawl_tasks: dict = {}  # job_id -> asyncio.Task
@@ -116,26 +116,26 @@ async def lifespan(app: FastAPI):
     _browser = BrowserManager(config=_config.browser)
     await _browser.start()
 
-    logger.info(f"BlackCrawl started on {_config.server.host}:{_config.server.port}")
+    logger.info(f"Huginn started on {_config.server.host}:{_config.server.port}")
     logger.info(f"Browser: backend={_browser.backend}, headless={_config.browser.headless}, stealth={_config.browser.stealth_mode}")
 
     yield
 
     # Cleanup
-    logger.info("Shutting down BlackCrawl...")
+    logger.info("Shutting down Huginn...")
     for task in _crawl_tasks.values():
         task.cancel()
     await _browser.stop()
     await _job_store.close()
 
 
-def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
+def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     """Create and configure the FastAPI application."""
     if config is None:
-        config = BlackCrawlConfig()
+        config = HuginnConfig()
 
     app = FastAPI(
-        title="BlackCrawl",
+        title="Huginn",
         description="Autonomous web scraping API — Firecrawl-compatible, stealth-first, self-hosted",
         version="1.0.0",
         lifespan=lifespan,
@@ -176,7 +176,7 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
     # ─--- Scrape ────────────────────────────────────────────────────────────
 
-    @app.post("/v1/scrape", response_model=ScrapeResponse)
+    @app.post("/v1/probe", response_model=ScrapeResponse)
     @limiter.limit("100/minute")
     async def scrape(request: Request, req: ScrapeRequest, auth=Depends(verify_api_key)):
         """Scrape a single URL and return content in requested formats."""
@@ -193,7 +193,7 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
                 formats=formats,
                 headers=req.headers,
                 wait_for=req.wait_for,
-                actions=[a.model_dump(by_alias=True) for a in req.actions] if req.actions else None,
+                actions=[a.model_dump() for a in req.actions] if req.actions else None,
                 include_tags=req.include_tags,
                 exclude_tags=req.exclude_tags,
                 only_main_content=req.only_main_content,
@@ -207,8 +207,8 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
     # ─--- Crawl ─────────────────────────────────────────────────────────────
 
-    @app.post("/v1/crawl")
-    async def start_crawl(req: CrawlRequest, auth=Depends(verify_api_key)):
+    @app.post("/v1/sweep")
+    async def start_sweep(req: CrawlRequest, auth=Depends(verify_api_key)):
         """Start an async crawl job. Returns job ID for polling, or SSE stream if stream=True."""
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
@@ -229,8 +229,8 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
         # Create job
         job_id = await _job_store.create_job(
-            "crawl",
-            req.model_dump(by_alias=True, exclude_none=True),
+            "sweep",
+            req.model_dump(exclude_none=True),
             ttl=config.server.job_ttl,
         )
 
@@ -238,11 +238,11 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
         task = asyncio.create_task(_run_crawl(job_id, req))
         _crawl_tasks[job_id] = task
 
-        return CrawlStartResponse(success=True, id=job_id, url=f"/v1/crawl/{job_id}")
+        return CrawlStartResponse(success=True, id=job_id, url=f"/v1/sweep/{job_id}")
 
-    @app.get("/v1/crawl/{job_id}", response_model=CrawlStatusResponse)
+    @app.get("/v1/sweep/{job_id}", response_model=CrawlStatusResponse)
     @limiter.limit("100/minute")
-    async def get_crawl_status(request: Request, job_id: str, auth=Depends(verify_api_key)):
+    async def get_sweep_status(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Get crawl job status and results."""
         if not _job_store:
             raise HTTPException(status_code=503, detail="Job store not initialized")
@@ -276,7 +276,7 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
             error=job.get("error"),
         )
 
-    @app.delete("/v1/crawl/{job_id}")
+    @app.delete("/v1/sweep/{job_id}")
     @limiter.limit("100/minute")
     async def cancel_crawl(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Cancel a running crawl job."""
@@ -289,16 +289,16 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
     # ─--- Map ──────────────────────────────────────────────────────────────
 
-    @app.post("/v1/map", response_model=MapResponse)
+    @app.post("/v1/chart", response_model=MapResponse)
     @limiter.limit("60/minute")
-    async def map_site(request: Request, req: MapRequest, auth=Depends(verify_api_key)):
+    async def chart_site(request: Request, req: MapRequest, auth=Depends(verify_api_key)):
         """Fast URL discovery — returns all links without full content extraction."""
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
 
         mapper = Mapper(_browser)
         try:
-            links = await mapper.map_site(
+            links = await mapper.chart_site(
                 url=req.url,
                 search=req.search,
                 include_subdomains=req.include_subdomains,
@@ -311,7 +311,7 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
     # ─--- Extract ───────────────────────────────────────────────────────────
 
-    @app.post("/v1/extract")
+    @app.post("/v1/distill")
     async def start_extract(req: ExtractRequest, auth=Depends(verify_api_key)):
         """Start an async extraction job. Returns job ID for polling, or SSE stream if stream=True."""
         if not _browser:
@@ -333,7 +333,7 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
         job_id = await _job_store.create_job(
             "extract",
-            req.model_dump(by_alias=True, exclude_none=True),
+            req.model_dump(exclude_none=True),
             ttl=config.server.job_ttl,
         )
 
@@ -342,9 +342,9 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
         return ExtractStartResponse(success=True, id=job_id)
 
-    @app.get("/v1/extract/{job_id}", response_model=ExtractStatusResponse)
+    @app.get("/v1/distill/{job_id}", response_model=ExtractStatusResponse)
     @limiter.limit("100/minute")
-    async def get_extract_status(request: Request, job_id: str, auth=Depends(verify_api_key)):
+    async def get_distill_status(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Get extraction job status and results."""
         if not _job_store:
             raise HTTPException(status_code=503, detail="Job store not initialized")
@@ -367,7 +367,7 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
     # ─--- Search ────────────────────────────────────────────────────────────
 
-    @app.post("/v1/search", response_model=SearchResponse)
+    @app.post("/v1/seek", response_model=SearchResponse)
     @limiter.limit("30/minute")
     async def search(request: Request, req: SearchRequest, auth=Depends(verify_api_key)):
         """Search the web and scrape results."""
@@ -420,9 +420,9 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
 
     # ─--- Batch Scrape ──────────────────────────────────────────────────────────
 
-    @app.post("/v1/batch/scrape", response_model=BatchScrapeResponse)
+    @app.post("/v1/flock", response_model=FlockResponse)
     @limiter.limit("10/minute")
-    async def batch_scrape(request: Request, req: BatchScrapeRequest, auth=Depends(verify_api_key)):
+    async def flock_scrape(request: Request, req: FlockRequest, auth=Depends(verify_api_key)):
         """Scrape multiple URLs concurrently."""
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
@@ -430,9 +430,9 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
         proxy_dict = build_proxy_dict(config)
         scraper = Scraper(_browser)
         sem = asyncio.Semaphore(5)
-        results: List[BatchScrapeResultItem] = []
+        results: List[FlockResultItem] = []
 
-        async def scrape_one(url: str) -> BatchScrapeResultItem:
+        async def scrape_one(url: str) -> FlockResultItem:
             async with sem:
                 try:
                     data = await scraper.scrape(
@@ -444,22 +444,22 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
                         timeout=req.timeout,
                         proxy=proxy_dict,
                     )
-                    return BatchScrapeResultItem(url=url, success=True, data=data)
+                    return FlockResultItem(url=url, success=True, data=data)
                 except Exception as e:
                     logger.error(f"Batch scrape failed for {url}: {e}")
-                    return BatchScrapeResultItem(url=url, success=False, error=str(e))
+                    return FlockResultItem(url=url, success=False, error=str(e))
 
         tasks = [scrape_one(url) for url in req.urls]
         items = await asyncio.gather(*tasks, return_exceptions=True)
 
         for item in items:
-            if isinstance(item, BatchScrapeResultItem):
+            if isinstance(item, FlockResultItem):
                 results.append(item)
             elif isinstance(item, Exception):
-                results.append(BatchScrapeResultItem(url="unknown", success=False, error=str(item)))
+                results.append(FlockResultItem(url="unknown", success=False, error=str(item)))
 
         success_count = sum(1 for r in results if r.success)
-        return BatchScrapeResponse(
+        return FlockResponse(
             success=success_count > 0,
             data=results,
         )
@@ -500,7 +500,7 @@ async def _run_crawl(job_id: str, req: CrawlRequest):
         # Store results
         pages_data = []
         for page in result.pages:
-            pages_data.append(page.model_dump(by_alias=True, exclude_none=True))
+            pages_data.append(page.model_dump(exclude_none=True))
 
         await _job_store.update_job(
             job_id,
@@ -612,7 +612,7 @@ async def _stream_crawl(req: CrawlRequest):
                     continue
 
             if event_type == "document":
-                page_dict = event_data.model_dump(by_alias=True, exclude_none=True)
+                page_dict = event_data.model_dump(exclude_none=True)
                 yield sse_event("document", {"type": "document", "data": page_dict})
             elif event_type == "done":
                 result_obj = event_data
@@ -711,12 +711,12 @@ async def _stream_extract(req: ExtractRequest):
 
 # ─── Default app instance ────────────────────────────────────────────────────
 
-# Create a default app instance so `uvicorn blackcrawl.api:app` works.
-# For custom config, use create_app(config) or the CLI: `blackcrawl serve`
+# Create a default app instance so `uvicorn huginn.api:app` works.
+# For custom config, use create_app(config) or the CLI: `huginn serve`
 app = create_app()
 
 
-def get_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
+def get_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     """Get or create the FastAPI app instance."""
     global app
     if config is not None:

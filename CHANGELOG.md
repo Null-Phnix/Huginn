@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to BlackCrawl are documented here.
+All notable changes to Huginn are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### What Changed
 
-BlackCrawl is a new project — a Firecrawl-compatible web scraping API built on
+Huginn is a new project — a Firecrawl-compatible web scraping API built on
 Blackreach's stealth browser engine. This is the initial release.
 
 ### Added
@@ -28,7 +28,7 @@ Blackreach's stealth browser engine. This is the initial release.
 - **Challenge detection** — Cloudflare, DDoS-Guard auto-wait
 - **Sitemap parsing** — robots.txt + sitemap.xml discovery for fast mapping
 - **Path filtering** — include/exclude glob patterns for crawl scope control
-- **Optional auth** — Bearer token API key (set `BLACKCRAWL_API_KEY`)
+- **Optional auth** — Bearer token API key (set `HUGINN_API_KEY`)
 - **Docker-ready** — single process, single DB file
 
 ### What This Is Built On

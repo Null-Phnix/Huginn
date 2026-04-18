@@ -1,10 +1,10 @@
 """
-Tests for BlackCrawl Crawler — URL normalization, path filtering, BFS logic.
+Tests for Huginn Crawler — URL normalization, path filtering, BFS logic.
 """
 
 import pytest
 
-from blackcrawl.crawler import Crawler, CrawlResult
+from huginn.crawler import Crawler, CrawlResult
 
 
 class TestURLNormalization:

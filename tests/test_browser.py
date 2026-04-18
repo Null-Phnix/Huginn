@@ -1,5 +1,5 @@
 """
-Tests for BlackCrawl Browser Manager — Unit tests for pure logic.
+Tests for Huginn Browser Manager — Unit tests for pure logic.
 Browser-dependent tests are in integration tests.
 """
 
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from blackcrawl.browser import BrowserManager, STEALTH_INIT_JS
+from huginn.browser import BrowserManager, STEALTH_INIT_JS
 
 
 class TestBrowserManager:
@@ -59,6 +59,6 @@ class TestBrowserConstants:
     """Test browser behavior constants."""
 
     def test_challenge_wait(self):
-        from blackcrawl.browser import CHALLENGE_WAIT_SECONDS, MAX_CHALLENGE_RETRIES
+        from huginn.browser import CHALLENGE_WAIT_SECONDS, MAX_CHALLENGE_RETRIES
         assert CHALLENGE_WAIT_SECONDS > 0
         assert MAX_CHALLENGE_RETRIES > 0

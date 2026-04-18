@@ -1,7 +1,7 @@
 """
-BlackCrawl API Models — Pydantic v2 schemas for all endpoints.
+Huginn API Models — Pydantic v2 schemas for all endpoints.
 
-Firecrawl-compatible interface with BlackCrawl extensions.
+Firecrawl-compatible interface with Huginn extensions.
 """
 
 from datetime import datetime
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 class OutputFormat(str, Enum):
     MARKDOWN = "markdown"
     HTML = "html"
-    RAW_HTML = "rawHtml"
+    RAW_HTML = "raw_html"
     SCREENSHOT = "screenshot"
     LINKS = "links"
     METADATA = "metadata"
@@ -64,22 +64,20 @@ class Location(BaseModel):
 
 class ExtractOptions(BaseModel):
     """LLM extraction options."""
-    model_config = {"populate_by_name": True}
 
     prompt: Optional[str] = None
-    schema_: Optional[Dict[str, Any]] = Field(None, alias="schema")
-    system_prompt: Optional[str] = Field(None, alias="systemPrompt")
+    schema_: Optional[Dict[str, Any]] = Field(None)
+    system_prompt: Optional[str] = Field(None)
 
 
 class ScrapeOptions(BaseModel):
     """Options passed to scrape during crawl."""
-    model_config = {"populate_by_name": True}
 
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
-    only_main_content: bool = Field(True, alias="onlyMainContent")
-    include_tags: Optional[List[str]] = Field(None, alias="includeTags")
-    exclude_tags: Optional[List[str]] = Field(None, alias="excludeTags")
-    wait_for: Optional[int] = Field(None, alias="waitFor")
+    only_main_content: bool = Field(True)
+    include_tags: Optional[List[str]] = Field(None)
+    exclude_tags: Optional[List[str]] = Field(None)
+    wait_for: Optional[int] = Field(None)
     timeout: int = 30000
     headers: Optional[Dict[str, str]] = None
     actions: Optional[List[Action]] = None
@@ -89,31 +87,29 @@ class ScrapeOptions(BaseModel):
 
 class ScrapeRequest(BaseModel):
     """POST /v1/scrape request body."""
-    model_config = {"populate_by_name": True}
 
     url: str
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     headers: Optional[Dict[str, str]] = None
-    wait_for: Optional[int] = Field(None, alias="waitFor")
+    wait_for: Optional[int] = Field(None)
     actions: Optional[List[Action]] = None
     extract: Optional[ExtractOptions] = None
-    include_tags: Optional[List[str]] = Field(None, alias="includeTags")
-    exclude_tags: Optional[List[str]] = Field(None, alias="excludeTags")
-    only_main_content: bool = Field(True, alias="onlyMainContent")
+    include_tags: Optional[List[str]] = Field(None)
+    exclude_tags: Optional[List[str]] = Field(None)
+    only_main_content: bool = Field(True)
     timeout: int = 30000
     proxy: Optional[ProxyMode] = None
     location: Optional[Location] = None
-    # BlackCrawl extensions
-    stealth_mode: bool = Field(True, alias="stealthMode")
+    # Huginn extensions
+    stealth_mode: bool = Field(True)
 
 
 class ScrapeData(BaseModel):
     """Scrape result data."""
-    model_config = {"populate_by_name": True}
 
     markdown: Optional[str] = None
     html: Optional[str] = None
-    raw_html: Optional[str] = Field(None, alias="rawHtml")
+    raw_html: Optional[str] = Field(None)
     screenshot: Optional[str] = None  # base64
     links: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -131,17 +127,16 @@ class ScrapeResponse(BaseModel):
 
 class CrawlRequest(BaseModel):
     """POST /v1/crawl request body."""
-    model_config = {"populate_by_name": True}
 
     url: str
-    max_depth: Optional[int] = Field(None, alias="maxDepth")
+    max_depth: Optional[int] = Field(None)
     limit: Optional[int] = None  # max pages
-    allow_backward_crawling: bool = Field(False, alias="allowBackwardCrawling")
-    allow_external_links: bool = Field(False, alias="allowExternalLinks")
-    include_paths: Optional[List[str]] = Field(None, alias="includePaths")
-    exclude_paths: Optional[List[str]] = Field(None, alias="excludePaths")
-    scrape_options: Optional[ScrapeOptions] = Field(None, alias="scrapeOptions")
-    stream: bool = Field(False, alias="stream")
+    allow_backward_crawling: bool = Field(False)
+    allow_external_links: bool = Field(False)
+    include_paths: Optional[List[str]] = Field(None)
+    exclude_paths: Optional[List[str]] = Field(None)
+    scrape_options: Optional[ScrapeOptions] = Field(None)
+    stream: bool = Field(False)
 
 
 class CrawlStartResponse(BaseModel):
@@ -154,13 +149,12 @@ class CrawlStartResponse(BaseModel):
 
 class CrawlStatusResponse(BaseModel):
     """GET /v1/crawl/{id} response."""
-    model_config = {"populate_by_name": True}
 
     success: bool
     status: JobStatus
     completed: int = 0
     total: Optional[int] = None
-    expires_at: Optional[datetime] = Field(None, alias="expiresAt")
+    expires_at: Optional[datetime] = Field(None)
     data: Optional[List[ScrapeData]] = None
     error: Optional[str] = None
 
@@ -169,11 +163,10 @@ class CrawlStatusResponse(BaseModel):
 
 class MapRequest(BaseModel):
     """POST /v1/map request body."""
-    model_config = {"populate_by_name": True}
 
     url: str
     search: Optional[str] = None
-    include_subdomains: bool = Field(False, alias="includeSubdomains")
+    include_subdomains: bool = Field(False)
     limit: int = 5000
 
 
@@ -188,16 +181,15 @@ class MapResponse(BaseModel):
 
 class ExtractRequest(BaseModel):
     """POST /v1/extract request body."""
-    model_config = {"populate_by_name": True}
 
     urls: List[str] = Field(default_factory=list)
     prompt: Optional[str] = None
-    schema_: Optional[Dict[str, Any]] = Field(None, alias="schema")
-    system_prompt: Optional[str] = Field(None, alias="systemPrompt")
-    # BlackCrawl extensions
-    mental_model: bool = Field(True, alias="mentalModel")
+    schema_: Optional[Dict[str, Any]] = Field(None)
+    system_prompt: Optional[str] = Field(None)
+    # Huginn extensions
+    mental_model: bool = Field(True)
     max_retries: int = 3
-    stream: bool = Field(False, alias="stream")
+    stream: bool = Field(False)
 
     @field_validator("urls")
     @classmethod
@@ -241,7 +233,6 @@ class StreamExtractResponse(BaseModel):
 
 class SearchOptions(BaseModel):
     """Search-specific options."""
-    model_config = {"populate_by_name": True}
 
     limit: int = 5
     tbs: Optional[str] = None  # time range
@@ -251,13 +242,12 @@ class SearchOptions(BaseModel):
 
 class SearchRequest(BaseModel):
     """POST /v1/search request body."""
-    model_config = {"populate_by_name": True}
 
     query: str
-    search_options: Optional[SearchOptions] = Field(None, alias="searchOptions")
-    scrape_options: Optional[ScrapeOptions] = Field(None, alias="scrapeOptions")
-    # BlackCrawl extension
-    fallback_chain: bool = Field(True, alias="fallbackChain")  # Bing->DDG->Brave
+    search_options: Optional[SearchOptions] = Field(None)
+    scrape_options: Optional[ScrapeOptions] = Field(None)
+    # Huginn extension
+    fallback_chain: bool = Field(True)  # Bing->DDG->Brave
 
 
 class SearchResultItem(BaseModel):
@@ -277,21 +267,20 @@ class SearchResponse(BaseModel):
 
 # ─── Batch Scrape Endpoint ─────────────────────────────────────────────────────
 
-class BatchScrapeRequest(BaseModel):
+class FlockRequest(BaseModel):
     """POST /v1/batch/scrape request body."""
-    model_config = {"populate_by_name": True}
 
     urls: List[str] = Field(..., min_length=1, max_length=50)
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
-    only_main_content: bool = Field(True, alias="onlyMainContent")
-    include_tags: Optional[List[str]] = Field(None, alias="includeTags")
-    exclude_tags: Optional[List[str]] = Field(None, alias="excludeTags")
+    only_main_content: bool = Field(True)
+    include_tags: Optional[List[str]] = Field(None)
+    exclude_tags: Optional[List[str]] = Field(None)
     timeout: int = 30000
 
 
 
 
-class BatchScrapeResultItem(BaseModel):
+class FlockResultItem(BaseModel):
     """Single result in a batch scrape response."""
     url: str
     success: bool
@@ -299,10 +288,10 @@ class BatchScrapeResultItem(BaseModel):
     error: Optional[str] = None
 
 
-class BatchScrapeResponse(BaseModel):
+class FlockResponse(BaseModel):
     """POST /v1/batch/scrape response."""
     success: bool
-    data: List[BatchScrapeResultItem] = Field(default_factory=list)
+    data: List[FlockResultItem] = Field(default_factory=list)
     error: Optional[str] = None
 
 

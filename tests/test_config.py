@@ -1,5 +1,5 @@
 """
-Tests for BlackCrawl configuration module.
+Tests for Huginn configuration module.
 """
 
 import os
@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from blackcrawl.config import (
-    BlackCrawlConfig,
+from huginn.config import (
+    HuginnConfig,
     BrowserConfig,
     CrawlConfig,
     ExtractConfig,
@@ -18,12 +18,12 @@ from blackcrawl.config import (
 )
 
 
-class TestBlackCrawlConfig:
-    """Test BlackCrawlConfig defaults and creation."""
+class TestHuginnConfig:
+    """Test HuginnConfig defaults and creation."""
 
     def test_default_config(self):
         """Config should have sensible defaults."""
-        config = BlackCrawlConfig()
+        config = HuginnConfig()
         assert config.browser.backend == "playwright"
         assert config.browser.headless is True
         assert config.browser.stealth_mode is True
@@ -38,7 +38,7 @@ class TestBlackCrawlConfig:
 
     def test_custom_config(self):
         """Config should accept custom values."""
-        config = BlackCrawlConfig(
+        config = HuginnConfig(
             browser=BrowserConfig(headless=False, stealth_mode=False),
             crawl=CrawlConfig(max_depth=5, max_pages=200),
             server=ServerConfig(port=8080, api_key="test123"),
@@ -52,13 +52,13 @@ class TestBlackCrawlConfig:
 
     def test_post_init_creates_db_path(self):
         """db_path should be derived from data_dir if not set."""
-        config = BlackCrawlConfig(data_dir="/tmp/test_bc")
-        assert config.db_path == "/tmp/test_bc/blackcrawl.db"
+        config = HuginnConfig(data_dir="/tmp/test_bc")
+        assert config.db_path == "/tmp/test_bc/huginn.db"
 
     def test_ensure_data_dir_creates_directory(self, tmp_path):
         """ensure_data_dir() should create data_dir if it doesn't exist."""
         data_dir = str(tmp_path / "new_dir")
-        config = BlackCrawlConfig(data_dir=data_dir)
+        config = HuginnConfig(data_dir=data_dir)
         assert not os.path.isdir(data_dir)  # __post_init__ no longer creates dirs
         config.ensure_data_dir()
         assert os.path.isdir(data_dir)
@@ -89,15 +89,15 @@ class TestLoadConfig:
     def test_load_from_nonexistent_file(self):
         """Should return defaults for nonexistent file."""
         config = load_config("/nonexistent/config.yaml")
-        assert isinstance(config, BlackCrawlConfig)
+        assert isinstance(config, HuginnConfig)
 
     def test_env_var_overrides(self):
         """Environment variables should override config."""
         with patch.dict(os.environ, {
-            "BLACKCRAWL_PORT": "9999",
-            "BLACKCRAWL_HEADLESS": "false",
-            "BLACKCRAWL_MAX_DEPTH": "7",
-            "BLACKCRAWL_LLM_PROVIDER": "anthropic",
+            "HUGINN_PORT": "9999",
+            "HUGINN_HEADLESS": "false",
+            "HUGINN_MAX_DEPTH": "7",
+            "HUGINN_LLM_PROVIDER": "anthropic",
         }):
             config = load_config()
             assert config.server.port == 9999

@@ -1,5 +1,5 @@
 """
-Tests for BlackCrawl API — FastAPI endpoint tests.
+Tests for Huginn API — FastAPI endpoint tests.
 
 Uses httpx AsyncClient with FastAPI's TestClient for in-process testing.
 No real browser needed — browser operations are mocked.
@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from blackcrawl.config import BlackCrawlConfig
-from blackcrawl.models import ScrapeData, OutputFormat
+from huginn.config import HuginnConfig
+from huginn.models import ScrapeData, OutputFormat
 
 
 class TestHealthEndpoint:
@@ -21,8 +21,8 @@ class TestHealthEndpoint:
 
     @pytest.mark.asyncio
     async def test_health_check(self):
-        from blackcrawl.api import create_app
-        config = BlackCrawlConfig()
+        from huginn.api import create_app
+        config = HuginnConfig()
         app = create_app(config)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -39,7 +39,7 @@ class TestScrapeEndpoint:
     @pytest.mark.asyncio
     async def test_scrape_request_model(self):
         """ScrapeRequest should parse correctly with all fields."""
-        from blackcrawl.models import ScrapeRequest
+        from huginn.models import ScrapeRequest
         req = ScrapeRequest(
             url="https://example.com",
             formats=["markdown", "html"],
@@ -53,12 +53,12 @@ class TestScrapeEndpoint:
     @pytest.mark.asyncio
     async def test_scrape_with_alias_fields(self):
         """Should accept camelCase API fields."""
-        from blackcrawl.models import ScrapeRequest
+        from huginn.models import ScrapeRequest
         req = ScrapeRequest(
             **{
                 "url": "https://example.com",
-                "waitFor": 5000,
-                "onlyMainContent": False,
+                "wait_for": 5000,
+                "only_main_content": False,
             }
         )
         assert req.wait_for == 5000
@@ -70,7 +70,7 @@ class TestCrawlEndpoint:
 
     @pytest.mark.asyncio
     async def test_crawl_request_model(self):
-        from blackcrawl.models import CrawlRequest
+        from huginn.models import CrawlRequest
         req = CrawlRequest(url="https://example.com", max_depth=5, limit=50)
         assert req.url == "https://example.com"
         assert req.max_depth == 5
@@ -78,7 +78,7 @@ class TestCrawlEndpoint:
 
     @pytest.mark.asyncio
     async def test_crawl_request_with_scrape_options(self):
-        from blackcrawl.models import CrawlRequest, ScrapeOptions
+        from huginn.models import CrawlRequest, ScrapeOptions
         req = CrawlRequest(
             url="https://example.com",
             scrape_options=ScrapeOptions(
@@ -95,7 +95,7 @@ class TestMapEndpoint:
 
     @pytest.mark.asyncio
     async def test_map_request_model(self):
-        from blackcrawl.models import MapRequest
+        from huginn.models import MapRequest
         req = MapRequest(url="https://example.com", search="api", limit=100)
         assert req.url == "https://example.com"
         assert req.search == "api"
@@ -103,7 +103,7 @@ class TestMapEndpoint:
 
     @pytest.mark.asyncio
     async def test_map_response_model(self):
-        from blackcrawl.models import MapResponse
+        from huginn.models import MapResponse
         resp = MapResponse(success=True, links=["https://example.com/a", "https://example.com/b"])
         assert resp.success is True
         assert len(resp.links) == 2
@@ -114,7 +114,7 @@ class TestExtractEndpoint:
 
     @pytest.mark.asyncio
     async def test_extract_request_model(self):
-        from blackcrawl.models import ExtractRequest
+        from huginn.models import ExtractRequest
         req = ExtractRequest(
             urls=["https://example.com"],
             prompt="Extract the main content",
@@ -132,7 +132,7 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_request_model(self):
-        from blackcrawl.models import SearchRequest, SearchOptions
+        from huginn.models import SearchRequest, SearchOptions
         req = SearchRequest(
             query="test query",
             search_options=SearchOptions(limit=10),
@@ -149,7 +149,7 @@ class TestJobEndpoints:
     @pytest.mark.asyncio
     async def test_job_info_model(self):
         from datetime import datetime
-        from blackcrawl.models import JobInfo, JobStatus
+        from huginn.models import JobInfo, JobStatus
         info = JobInfo(
             id="test-123",
             type="crawl",
@@ -167,15 +167,15 @@ class TestAPICreation:
     """Test FastAPI app creation and configuration."""
 
     def test_create_app_default(self):
-        from blackcrawl.api import create_app
-        config = BlackCrawlConfig()
+        from huginn.api import create_app
+        config = HuginnConfig()
         app = create_app(config)
         assert app is not None
-        assert app.title == "BlackCrawl"
+        assert app.title == "Huginn"
 
     def test_create_app_custom_config(self):
-        from blackcrawl.api import create_app
-        config = BlackCrawlConfig()
+        from huginn.api import create_app
+        config = HuginnConfig()
         config.server.port = 9999
         config.server.api_key = "test-key"
         app = create_app(config)
@@ -183,14 +183,14 @@ class TestAPICreation:
         assert app.state.config.server.api_key == "test-key"
 
     def test_app_has_all_routes(self):
-        from blackcrawl.api import create_app
-        app = create_app(BlackCrawlConfig())
+        from huginn.api import create_app
+        app = create_app(HuginnConfig())
         routes = [r.path for r in app.routes]
         assert "/health" in routes
-        assert "/v1/scrape" in routes
-        assert "/v1/crawl" in routes
-        assert "/v1/crawl/{job_id}" in routes
-        assert "/v1/map" in routes
-        assert "/v1/extract" in routes
-        assert "/v1/extract/{job_id}" in routes
-        assert "/v1/search" in routes
+        assert "/v1/probe" in routes
+        assert "/v1/sweep" in routes
+        assert "/v1/sweep/{job_id}" in routes
+        assert "/v1/chart" in routes
+        assert "/v1/distill" in routes
+        assert "/v1/distill/{job_id}" in routes
+        assert "/v1/seek" in routes

@@ -1,11 +1,11 @@
 """
-Tests for BlackCrawl Extractor — LLM prompt building, JSON parsing, schema validation.
+Tests for Huginn Extractor — LLM prompt building, JSON parsing, schema validation.
 """
 
 import json
 import pytest
 
-from blackcrawl.extractor import Extractor, ExtractionResult
+from huginn.extractor import Extractor, ExtractionResult
 
 
 class TestPromptBuilding:

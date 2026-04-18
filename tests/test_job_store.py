@@ -1,5 +1,5 @@
 """
-Tests for BlackCrawl Job Store.
+Tests for Huginn Job Store.
 """
 
 import asyncio
@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from blackcrawl.job_store import JobStore
+from huginn.job_store import JobStore
 
 
 @pytest.fixture

@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "blackcrawl"
+name = "huginn"
 version = "1.0.0"
-description = "Autonomous web scraping and crawling API — Firecrawl-compatible, stealth-first, self-hosted"
+description = "Huginn — Odin's raven. Autonomous web scraping, crawling, and extraction API. Stealth-first, self-hosted."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -13,7 +13,7 @@ authors = [
     {name = "Phnix"}
 ]
 keywords = [
-    "scrape", "crawl", "spider", "api", "stealth",
+    "huginn", "scrape", "crawl", "spider", "api", "stealth",
     "browser", "automation", "agent", "llm", "web",
 ]
 classifiers = [
@@ -62,18 +62,18 @@ dev = [
 ]
 
 [project.scripts]
-blackcrawl = "blackcrawl.cli:main"
+huginn = "huginn.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/Null-Phnix/BlackCrawl"
-Repository = "https://github.com/Null-Phnix/BlackCrawl"
+Homepage = "https://github.com/Null-Phnix/Huginn"
+Repository = "https://github.com/Null-Phnix/Huginn"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["blackcrawl*"]
+include = ["huginn*"]
 
 [tool.setuptools.package-data]
-blackcrawl = ["prompts/*.txt"]
+huginn = ["prompts/*.txt"]
 
 [tool.black]
 line-length = 100

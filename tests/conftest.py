@@ -1,4 +1,4 @@
-"""Test fixtures and shared utilities for BlackCrawl tests."""
+"""Test fixtures and shared utilities for Huginn tests."""
 
 import asyncio
 import os
@@ -18,7 +18,7 @@ def temp_dir():
 @pytest.fixture
 def temp_db(temp_dir):
     """Path to a temporary SQLite database."""
-    return os.path.join(temp_dir, "test_blackcrawl.db")
+    return os.path.join(temp_dir, "test_huginn.db")
 
 
 @pytest.fixture

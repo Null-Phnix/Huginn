@@ -1,5 +1,5 @@
 """
-BlackCrawl Job Store — SQLite-backed async job queue.
+Huginn Job Store — SQLite-backed async job queue.
 
 No Redis, no Supabase. Just SQLite + asyncio.
 Stores job state, results, and metadata.
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,        -- "crawl" or "extract"
+    type TEXT NOT NULL,        -- "sweep" or "extract"
     status TEXT NOT NULL DEFAULT 'pending',
     request_json TEXT NOT NULL,
     result_json TEXT,

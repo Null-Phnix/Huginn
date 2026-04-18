@@ -1,10 +1,10 @@
 """
-BlackCrawl Extractor — LLM-powered structured data extraction.
+Huginn Extractor — LLM-powered structured data extraction.
 
 The /v1/extract endpoint engine. Uses LLM providers to extract
 structured data from pages based on a JSON schema or prompt.
 
-BlackCrawl extension: Mental model-assisted extraction.
+Huginn extension: Mental model-assisted extraction.
 Instead of throwing LLM at raw text, we build beliefs about page
 structure and use them to guide extraction retries.
 """

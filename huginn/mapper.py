@@ -1,5 +1,5 @@
 """
-BlackCrawl Mapper — Fast URL discovery without full content extraction.
+Huginn Mapper — Fast URL discovery without full content extraction.
 
 The /v1/map endpoint engine. Uses DOM walker's link extraction and
 optional sitemap parsing for rapid site mapping.
