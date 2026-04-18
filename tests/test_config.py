@@ -55,10 +55,12 @@ class TestBlackCrawlConfig:
         config = BlackCrawlConfig(data_dir="/tmp/test_bc")
         assert config.db_path == "/tmp/test_bc/blackcrawl.db"
 
-    def test_post_init_creates_data_dir(self, tmp_path):
-        """Should create data_dir if it doesn't exist."""
+    def test_ensure_data_dir_creates_directory(self, tmp_path):
+        """ensure_data_dir() should create data_dir if it doesn't exist."""
         data_dir = str(tmp_path / "new_dir")
         config = BlackCrawlConfig(data_dir=data_dir)
+        assert not os.path.isdir(data_dir)  # __post_init__ no longer creates dirs
+        config.ensure_data_dir()
         assert os.path.isdir(data_dir)
 
 

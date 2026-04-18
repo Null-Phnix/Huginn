@@ -84,17 +84,24 @@ class BlackCrawlConfig:
     def __post_init__(self):
         if not self.db_path:
             self.db_path = os.path.join(self.data_dir, "blackcrawl.db")
+        # NOTE: Directory creation deferred to runtime (ensure_data_dir).
+        # __post_init__ should not have side effects like makedirs.
+
+    def ensure_data_dir(self):
+        """Create data directory if it does not exist. Call at startup, not import time."""
         os.makedirs(self.data_dir, exist_ok=True)
 
 
 def load_config(config_path: Optional[str] = None) -> BlackCrawlConfig:
     """Load configuration from file and environment variables."""
-    import yaml
-
     config = BlackCrawlConfig()
 
     # Load from file if provided
     if config_path and os.path.exists(config_path):
+        try:
+            import yaml
+        except ImportError:
+            raise ImportError("PyYAML is required to load config files. Install with: pip install pyyaml")
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
         _merge_config(config, data)
@@ -159,11 +166,18 @@ def _apply_env(config: BlackCrawlConfig):
         if val is not None:
             target = getattr(config, section) if section else config
             current = getattr(target, attr)
-            # Type coerce
-            if isinstance(current, bool):
-                val = val.lower() in ("true", "1", "yes")
-            elif isinstance(current, int):
-                val = int(val)
-            elif isinstance(current, float):
-                val = float(val)
+            # Type coerce (safe — log warning on bad values)
+            try:
+                if isinstance(current, bool):
+                    val = val.lower() in ("true", "1", "yes")
+                elif isinstance(current, int):
+                    val = int(val)
+                elif isinstance(current, float):
+                    val = float(val)
+            except (ValueError, AttributeError) as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"Invalid value for {env_var}={os.environ.get(env_var)!r}: {e}"
+                )
+                continue
             setattr(target, attr, val)

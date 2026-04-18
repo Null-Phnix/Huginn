@@ -239,7 +239,7 @@ class Searcher:
                         }
                     )
 
-        tasks = [scrape_one(r) for r in results[:len(results)]]
+        tasks = [scrape_one(r) for r in results]
         items = await asyncio.gather(*tasks, return_exceptions=True)
 
         for item in items:

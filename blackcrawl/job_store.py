@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,9 @@ class JobStore:
 
     async def init(self):
         """Initialize database connection and schema."""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
@@ -60,8 +62,8 @@ class JobStore:
     async def create_job(self, job_type: str, request: dict, ttl: int = 3600) -> str:
         """Create a new job and return its ID."""
         job_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
-        expires = (datetime.utcnow() + timedelta(seconds=ttl)).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        expires = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
         await self._db.execute(
             "INSERT INTO jobs (id, type, status, request_json, created_at, updated_at, expires_at) "
             "VALUES (?, ?, 'pending', ?, ?, ?, ?)",
@@ -90,7 +92,7 @@ class JobStore:
     ):
         """Update job state."""
         sets = ["updated_at = ?"]
-        params = [datetime.utcnow().isoformat()]
+        params = [datetime.now(timezone.utc).isoformat()]
         if status is not None:
             sets.append("status = ?")
             params.append(status)
@@ -129,7 +131,7 @@ class JobStore:
 
     async def cleanup_expired(self):
         """Remove expired jobs."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         cursor = await self._db.execute(
             "DELETE FROM jobs WHERE expires_at < ?", (now,)
         )

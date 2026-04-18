@@ -226,6 +226,7 @@ class BrowserManager:
         self._playwright = None
         self._browser: Optional[Browser] = None
         self._contexts: List[BrowserContext] = []
+        self.last_status_code: int = 0
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -336,11 +337,14 @@ class BrowserManager:
             return await self._starsearch.navigate(url)
 
         # Playwright path
+        self.last_status_code = 0
         try:
             response = await page.goto(url, wait_until=wait_until)
             if not response:
                 logger.warning(f"No response for {url}")
                 return False
+
+            self.last_status_code = response.status
 
             # Handle challenge pages (Cloudflare, etc.)
             if await self._is_challenge_page(page):
@@ -349,6 +353,7 @@ class BrowserManager:
             return response.ok
         except Exception as e:
             logger.error(f"Navigation failed for {url}: {e}")
+            self.last_status_code = 0
             return False
 
     # ── content extraction ─────────────────────────────────────────────────

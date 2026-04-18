@@ -104,6 +104,9 @@ async def lifespan(app: FastAPI):
     _config = app.state.config
     logging.basicConfig(level=getattr(logging, _config.log_level), format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+    # Ensure data directory exists (moved out of __post_init__ to avoid import-time side effects)
+    _config.ensure_data_dir()
+
     # Initialize job store
     _job_store = JobStore(_config.db_path)
     await _job_store.init()
@@ -144,7 +147,6 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -161,7 +163,7 @@ def create_app(config: Optional[BlackCrawlConfig] = None) -> FastAPI:
             return True
         if not authorization:
             raise HTTPException(status_code=401, detail="Missing Authorization header")
-        token = authorization.replace("Bearer ", "")
+        token = authorization.removeprefix("Bearer ").strip()
         if token != config.server.api_key:
             raise HTTPException(status_code=401, detail="Invalid API key")
         return True
@@ -628,7 +630,7 @@ async def _stream_crawl(req: CrawlRequest):
                     "status": "completed",
                     "completed": result_obj.completed,
                     "total": result_obj.total_discovered,
-                    "creditsUsed": 0,
+
                 },
             }
             yield sse_event("done", done_payload)

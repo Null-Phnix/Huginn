@@ -64,8 +64,8 @@ class Scraper:
             # Extract content
             content = await self.browser.extract_content(page)
 
-            # Get response status
-            status_code = 200
+            # Get actual HTTP status from the navigation response
+            status_code = self.browser.last_status_code or 200
             current_url = content.get("url", url)
 
             result = ScrapeData(metadata={
@@ -103,9 +103,13 @@ class Scraper:
 
             return result
 
+        except asyncio.TimeoutError:
+            logger.error(f"Scrape timed out for {url}")
+            return ScrapeData(metadata={"url": url, "error": "Request timed out", "statusCode": 408})
         except Exception as e:
             logger.error(f"Scrape failed for {url}: {e}")
-            return ScrapeData(metadata={"url": url, "error": str(e), "statusCode": 500})
+            status = self.browser.last_status_code if self.browser.last_status_code else 500
+            return ScrapeData(metadata={"url": url, "error": str(e), "statusCode": status})
         finally:
             try:
                 await context.close()

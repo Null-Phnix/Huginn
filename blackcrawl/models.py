@@ -239,25 +239,6 @@ class StreamExtractResponse(BaseModel):
     error: Optional[str] = None
 
 
-
-# ─── SSE Streaming Responses ─────────────────────────────────────────────────
-
-class StreamCrawlResponse(BaseModel):
-    """SSE event payload for crawl document/done events."""
-    type: str  # "document" or "done"
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-
-class StreamExtractResponse(BaseModel):
-    """SSE event payload for extract progress/done events."""
-    type: str  # "progress" or "done"
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-
-# ─── Search Endpoint ──────────────────────────────────────────────────────────
-
 class SearchOptions(BaseModel):
     """Search-specific options."""
     model_config = {"populate_by_name": True}
@@ -307,12 +288,7 @@ class BatchScrapeRequest(BaseModel):
     exclude_tags: Optional[List[str]] = Field(None, alias="excludeTags")
     timeout: int = 30000
 
-    @field_validator("urls")
-    @classmethod
-    def validate_urls_count(cls, v):
-        if len(v) > 50:
-            raise ValueError("Maximum 50 URLs per batch")
-        return v
+
 
 
 class BatchScrapeResultItem(BaseModel):
