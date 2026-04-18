@@ -81,6 +81,7 @@ class ScrapeOptions(BaseModel):
     timeout: int = 30000
     headers: Optional[Dict[str, str]] = None
     actions: Optional[List[Action]] = None
+    max_retries: int = Field(2, ge=0, le=5)
 
 
 # ─── Scrape Endpoint ──────────────────────────────────────────────────────────
@@ -102,6 +103,7 @@ class ScrapeRequest(BaseModel):
     location: Optional[Location] = None
     # Huginn extensions
     stealth_mode: bool = Field(True)
+    max_retries: int = Field(2, ge=0, le=5, description="Max retry attempts on transient errors")
 
 
 class ScrapeData(BaseModel):
