@@ -88,6 +88,7 @@ class ScrapeOptions(BaseModel):
     actions: Optional[List[Action]] = None
     max_retries: int = Field(2, ge=0, le=5)
     scroll: bool = Field(False, description="Auto-scroll page to load dynamic content")
+    render_mode: str = Field("auto", description="Rendering mode: auto, full (browser), light (httpx)")
 
 
 # ─── Scrape Endpoint ──────────────────────────────────────────────────────────
@@ -111,6 +112,7 @@ class ScrapeRequest(BaseModel):
     stealth_mode: bool = Field(True)
     max_retries: int = Field(2, ge=0, le=5, description="Max retry attempts on transient errors")
     scroll: bool = Field(False, description="Auto-scroll page to load dynamic content before extraction")
+    render_mode: str = Field("auto", description="Rendering mode: auto, full (browser), light (httpx)")
 
 
 class ScrapeData(BaseModel):

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from huginn.models import ScrapeData, OutputFormat
+from huginn.scraper import RenderMode, detect_render_mode
 
 
 class TestClassifyError:
@@ -164,3 +165,109 @@ class TestScrapeRequestMaxRetries:
         from huginn.models import ScrapeRequest
         with pytest.raises(pydantic.ValidationError):
             ScrapeRequest(url="https://example.com", max_retries=10)
+
+class TestRenderMode:
+    """Test RenderMode enum and detection logic."""
+
+    def test_render_mode_enum_values(self):
+        assert RenderMode.AUTO == "auto"
+        assert RenderMode.FULL == "full"
+        assert RenderMode.LIGHT == "light"
+
+    def test_detect_static_headers(self):
+        """Static HTML headers should suggest LIGHT rendering."""
+        headers = {
+            "content-type": "text/html",
+            "server": "nginx",
+            "content-length": "45230",
+        }
+        mode = detect_render_mode(url="https://example.com", headers=headers)
+        assert mode == RenderMode.LIGHT
+
+    def test_detect_js_framework_headers(self):
+        """JS framework headers should suggest FULL rendering."""
+        headers = {
+            "content-type": "text/html",
+            "x-nextjs-cache": "hit",
+            "server": "Vercel",
+        }
+        mode = detect_render_mode(url="https://example.com", headers=headers)
+        assert mode == RenderMode.FULL
+
+    def test_detect_vite_headers(self):
+        """Vite dev server suggests JS-heavy page."""
+        headers = {
+            "content-type": "text/html",
+            "x-powered-by": "Express",
+            "server": "Vite",
+        }
+        mode = detect_render_mode(url="https://example.com", headers=headers)
+        assert mode == RenderMode.FULL
+
+    def test_detect_cloudflare_headers(self):
+        """Cloudflare-protected pages likely need full browser."""
+        headers = {
+            "content-type": "text/html",
+            "server": "cloudflare",
+            "cf-ray": "abc123-DFW",
+        }
+        mode = detect_render_mode(url="https://example.com", headers=headers)
+        assert mode == RenderMode.FULL
+
+    def test_detect_small_content_suggests_js(self):
+        """Very small HTML response likely needs JS to render."""
+        headers = {
+            "content-type": "text/html",
+            "content-length": "512",
+        }
+        mode = detect_render_mode(url="https://example.com", headers=headers)
+        assert mode == RenderMode.FULL
+
+    def test_detect_pdf_content_type(self):
+        """PDF content type should bypass rendering."""
+        headers = {
+            "content-type": "application/pdf",
+        }
+        mode = detect_render_mode(url="https://example.com/doc.pdf", headers=headers)
+        assert mode == RenderMode.FULL
+
+    def test_detect_force_full(self):
+        """When render_mode=FULL, always use full rendering."""
+        headers = {"content-type": "text/html", "content-length": "45230"}
+        mode = detect_render_mode(url="https://example.com", headers=headers, force=RenderMode.FULL)
+        assert mode == RenderMode.FULL
+
+    def test_detect_force_light(self):
+        """When render_mode=LIGHT, always use lightweight rendering."""
+        headers = {"content-type": "text/html", "x-nextjs-cache": "hit"}
+        mode = detect_render_mode(url="https://example.com", headers=headers, force=RenderMode.LIGHT)
+        assert mode == RenderMode.LIGHT
+
+    def test_detect_js_url_patterns(self):
+        """URLs that suggest JS apps (SPA routes) should use FULL."""
+        headers = {"content-type": "text/html", "content-length": "32000"}
+        # Hash-based routing suggests SPA
+        mode = detect_render_mode(url="https://app.example.com/#/dashboard", headers=headers)
+        assert mode == RenderMode.FULL
+
+
+class TestLightweightScrape:
+    """Test lightweight scraping path (httpx + markdownify)."""
+
+    def test_render_mode_on_scrape_request(self):
+        """ScrapeRequest should accept render_mode field."""
+        from huginn.models import ScrapeRequest
+        req = ScrapeRequest(url="https://example.com", render_mode="light")
+        assert req.render_mode == "light"
+
+    def test_render_mode_default_auto(self):
+        """Default render_mode should be 'auto'."""
+        from huginn.models import ScrapeRequest
+        req = ScrapeRequest(url="https://example.com")
+        assert req.render_mode == "auto"
+
+    def test_render_mode_on_scrape_options(self):
+        """ScrapeOptions should also accept render_mode."""
+        from huginn.models import ScrapeOptions
+        opts = ScrapeOptions(render_mode="full")
+        assert opts.render_mode == "full"

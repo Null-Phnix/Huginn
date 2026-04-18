@@ -7,13 +7,107 @@ execute optional actions, then extract content in requested formats.
 
 import asyncio
 import logging
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
+
+import httpx
+import markdownify
+from bs4 import BeautifulSoup, Tag
 
 from .browser import BrowserManager, WaitStrategy, parse_wait_for
 from .models import OutputFormat, ScrapeData
 
 logger = logging.getLogger(__name__)
+
+
+class RenderMode(str, Enum):
+    """Rendering mode for page content extraction."""
+    AUTO = "auto"    # Detect automatically
+    FULL = "full"    # Always use full browser (Playwright)
+    LIGHT = "light"  # Always use lightweight (httpx + markdownify)
+
+
+# ── JS framework detection patterns ──────────────────────────────────────────
+
+JS_INDICATOR_HEADERS = {
+    "x-nextjs-cache", "x-nextjs-matched-path",
+    "x-powered-by",  # Often reveals Next.js, Nuxt, etc.
+    "cf-ray",         # Cloudflare
+}
+
+JS_INDICATOR_SERVER = {"cloudflare", "vercel", "netlify", "ampproject"}
+
+JS_INDICATOR_PREFIXES = {"x-vercel", "x-next", "x-nuxt", "x-vite"}
+
+# Very small HTML responses are likely SPA shells
+MIN_CONTENT_FOR_STATIC = 2000  # bytes
+
+
+def detect_render_mode(
+    url: str,
+    headers: Dict[str, str],
+    force: Optional[RenderMode] = None,
+) -> RenderMode:
+    """Detect whether a page needs full browser rendering.
+
+    Uses HTTP response headers and content-length to decide:
+    - Static pages with substantial content → LIGHT
+    - JS-heavy pages (SPA shells, Cloudflare, Next.js) → FULL
+    - Force override if provided
+
+    Args:
+        url: The page URL (used to detect SPA patterns like hash routing).
+        headers: HTTP response headers from the initial request.
+        force: If set, overrides detection and returns this mode directly.
+
+    Returns:
+        RenderMode.LIGHT or RenderMode.FULL
+    """
+    if force is not None:
+        return force
+
+    # Check for JS framework indicators in headers
+    header_keys_lower = {k.lower(): v for k, v in headers.items()}
+
+    # Cloudflare-protected pages need full browser
+    server = header_keys_lower.get("server", "").lower()
+    if any(js_srv in server for js_srv in JS_INDICATOR_SERVER):
+        return RenderMode.FULL
+
+    # Check for JS framework header prefixes
+    for h in headers:
+        h_lower = h.lower()
+        for prefix in JS_INDICATOR_PREFIXES:
+            if h_lower.startswith(prefix):
+                return RenderMode.FULL
+
+    # Check for known JS framework headers
+    for h in headers:
+        if h.lower() in JS_INDICATOR_HEADERS:
+            return RenderMode.FULL
+
+    # Check content-length — very small HTML is likely a SPA shell
+    content_length = header_keys_lower.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) < MIN_CONTENT_FOR_STATIC:
+                return RenderMode.FULL
+        except (ValueError, TypeError):
+            pass
+
+    # Check for non-HTML content types (PDF, etc.) that need full processing
+    content_type = header_keys_lower.get("content-type", "").lower()
+    if content_type and not content_type.startswith("text/html"):
+        # Non-HTML content (PDF, images, etc.) requires full browser to handle
+        return RenderMode.FULL
+
+    # Check URL for SPA hash routing
+    if "/#" in url:
+        return RenderMode.FULL
+
+    # Default: static content, use lightweight
+    return RenderMode.LIGHT
 
 # ── Retry configuration ──────────────────────────────────────────────────────
 
@@ -55,6 +149,7 @@ class Scraper:
         proxy: Optional[Dict[str, str]] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         scroll: bool = False,
+        render_mode: str = "auto",
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -63,6 +158,44 @@ class Scraper:
         """
         if formats is None:
             formats = [OutputFormat.MARKDOWN]
+
+        # ── Lightweight rendering path ────────────────────────────────────
+        # If render_mode is "light" or "auto", try lightweight HTTP fetch first.
+        # Fall back to full browser if content is too thin or if mode is "auto"
+        # and detection suggests JS is needed.
+        mode = RenderMode(render_mode)
+        if mode != RenderMode.FULL:
+            try:
+                # Quick HEAD request to detect JS requirements
+                async with httpx.AsyncClient(timeout=10000, follow_redirects=True) as client:
+                    head_resp = await client.head(
+                        url,
+                        headers={"User-Agent": "Huginn/Bot (+https://huginn.dev/bot)"},
+                    )
+                    head_headers = dict(head_resp.headers)
+
+                detected = detect_render_mode(url, head_headers, force=mode)
+
+                if detected == RenderMode.LIGHT:
+                    result = await self.lightweight_scrape(
+                        url=url,
+                        formats=formats,
+                        only_main_content=only_main_content,
+                        timeout=timeout,
+                        headers=headers,
+                    )
+                    # Check if content is thin — might need JS after all
+                    if result.markdown and len(result.markdown) > 200:
+                        return result
+                    elif not result.markdown:
+                        # Empty result — fall through to full browser
+                        logger.info(f"Lightweight scrape returned empty for {url}, falling back to full browser")
+                    else:
+                        logger.info(f"Lightweight scrape returned thin content ({len(result.markdown)} chars), falling back to full browser")
+            except Exception as e:
+                logger.warning(f"Lightweight scrape failed for {url}: {e}, falling back to full browser")
+        # Fall through to full browser rendering for FULL mode or failed light mode
+        # ── Full browser rendering path ─────────────────────────────────
 
         last_error = None
         for attempt in range(max_retries + 1):
@@ -76,7 +209,10 @@ class Scraper:
                     await context.set_extra_http_headers(headers)
 
                 # Navigate to URL
-                page.set_default_timeout(timeout)
+                # set_default_timeout is sync in Playwright; suppress mock coroutine warning
+                result = page.set_default_timeout(timeout)
+                if asyncio.iscoroutine(result):
+                    await result
                 success = await self.browser.navigate(page, url)
                 if not success:
                     return ScrapeData(metadata={"url": url, "status_code": 500, "error": "Navigation failed"})
@@ -223,5 +359,86 @@ class Scraper:
                     return el.innerHTML;
                 }""", exclude_tags)
                 result.html = filtered_html
+
+        return result
+    async def lightweight_scrape(
+        self,
+        url: str,
+        formats: Optional[List[OutputFormat]] = None,
+        only_main_content: bool = True,
+        timeout: int = 15000,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> ScrapeData:
+        """Lightweight page extraction using httpx + markdownify.
+
+        Skips full browser rendering. Much faster for static pages.
+        Falls back gracefully if content is thin.
+        """
+        if formats is None:
+            formats = [OutputFormat.MARKDOWN]
+
+        request_headers = {
+            "User-Agent": "Huginn/Bot (+https://huginn.dev/bot)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        if headers:
+            request_headers.update(headers)
+
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(url, headers=request_headers)
+            resp.raise_for_status()
+            html_content = resp.text
+
+        # Parse with BeautifulSoup
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        # Extract metadata
+        title = soup.title.string.strip() if soup.title and soup.title.string else ""
+        description_tag = soup.find("meta", attrs={"name": "description"})
+        description = description_tag.get("content", "") if description_tag else ""
+        lang_tag = soup.find("html")
+        language = lang_tag.get("lang", "en") if lang_tag else "en"
+
+        result = ScrapeData(metadata={
+            "url": str(resp.url),
+            "title": title,
+            "description": description,
+            "language": language,
+            "status_code": resp.status_code,
+            "render_mode": "light",
+        })
+
+        # Extract main content
+        main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
+        if main and only_main_content:
+            content_el = main
+        else:
+            content_el = soup.body or soup
+
+        # Remove noise elements
+        for tag in content_el.find_all(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        for tag in content_el.find_all(class_=lambda c: c and any(x in c.lower() for x in ["sidebar", "nav", "ad", "cookie", "popup", "modal"])):
+            tag.decompose()
+
+        # Format outputs
+        for fmt in formats:
+            if fmt == OutputFormat.MARKDOWN:
+                html_str = str(content_el)
+                md = markdownify.markdownify(html_str, heading_style="ATX", bullets="-")
+                # Clean up excessive blank lines
+                import re
+                md = re.sub(r"\n{3,}", "\n\n", md).strip()
+                if len(md) > 500_000:
+                    logger.warning(f"Truncating large markdown content ({len(md)} chars)")
+                    md = md[:500_000]
+                result.markdown = md
+            elif fmt == OutputFormat.HTML:
+                result.html = str(content_el)
+            elif fmt == OutputFormat.RAW_HTML:
+                result.raw_html = html_content
+            elif fmt == OutputFormat.LINKS:
+                result.links = [a.get("href") for a in content_el.find_all("a", href=True)]
 
         return result

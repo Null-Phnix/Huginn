@@ -16,5 +16,6 @@ __author__ = "Phnix"
 
 from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for, ScrollConfig  # noqa: F401
 from .models import ActionType  # noqa: F401
+from .scraper import RenderMode, detect_render_mode  # noqa: F401
 
-__all__ = ["BrowserManager", "StarSearchBackend", "WaitStrategy", "parse_wait_for", "ScrollConfig", "ActionType"]
+__all__ = ["BrowserManager", "StarSearchBackend", "WaitStrategy", "parse_wait_for", "ScrollConfig", "ActionType", "RenderMode", "detect_render_mode"]
