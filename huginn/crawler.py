@@ -6,6 +6,7 @@ URL deduplication, depth limits, and path filtering.
 """
 
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -19,6 +20,16 @@ from .models import OutputFormat, ScrapeData
 from .scraper import Scraper
 
 logger = logging.getLogger(__name__)
+
+
+def content_hash(text: str) -> str:
+    """Hash cleaned text for duplicate detection.
+
+    Normalizes whitespace before hashing so superficially different
+    content (extra spaces, newlines) hashes the same.
+    """
+    cleaned = re.sub(r'\s+', ' ', text).strip().lower()
+    return hashlib.sha256(cleaned.encode('utf-8')).hexdigest()[:16]
 
 
 class CrawlResult:
@@ -53,6 +64,7 @@ class Crawler:
         allow_backward: bool = False,
         include_paths: Optional[List[str]] = None,
         exclude_paths: Optional[List[str]] = None,
+        skip_duplicates: bool = True,
     ):
         self.browser = browser
         self.scraper = Scraper(browser)
@@ -64,11 +76,21 @@ class Crawler:
         self.allow_backward = allow_backward
         self.include_paths = include_paths or []
         self.exclude_paths = exclude_paths or []
+        self.skip_duplicates = skip_duplicates
         self._cancel = False
+        self._seen_hashes: Set[str] = set()
 
     def cancel(self):
         """Signal cancellation."""
         self._cancel = True
+
+    def is_duplicate(self, text: str, seen_hashes: Set[str]) -> bool:
+        """Check if content is a duplicate of a previously seen page."""
+        h = content_hash(text)
+        if h in seen_hashes:
+            return True
+        seen_hashes.add(h)
+        return False
 
     async def crawl(
         self,
@@ -123,6 +145,13 @@ class Crawler:
                         only_main_content=only_main_content,
                         timeout=timeout,
                     )
+
+                    # Skip duplicate content
+                    if self.skip_duplicates and page_data.markdown:
+                        if self.is_duplicate(page_data.markdown, self._seen_hashes):
+                            logger.info(f"Skipping duplicate content: {url}")
+                            result.visited.add(self._normalize_url(url))
+                            return
 
                     # Add page to results
                     result.pages.append(page_data)

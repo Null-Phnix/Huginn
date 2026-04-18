@@ -125,3 +125,55 @@ class TestCrawlerCancellation:
         assert crawler._cancel is False
         crawler.cancel()
         assert crawler._cancel is True
+
+
+class TestContentHashing:
+    """Test content hashing for duplicate detection."""
+
+    def test_content_hash_deterministic(self):
+        from huginn.crawler import content_hash
+        h1 = content_hash("Hello world")
+        h2 = content_hash("Hello world")
+        assert h1 == h2
+
+    def test_content_hash_different_content(self):
+        from huginn.crawler import content_hash
+        h1 = content_hash("Hello world")
+        h2 = content_hash("Goodbye world")
+        assert h1 != h2
+
+    def test_content_hash_normalizes_whitespace(self):
+        from huginn.crawler import content_hash
+        h1 = content_hash("Hello   world\n\nfoo")
+        h2 = content_hash("Hello world\nfoo")
+        assert h1 == h2
+
+    def test_content_hash_case_insensitive(self):
+        from huginn.crawler import content_hash
+        h1 = content_hash("Hello World")
+        h2 = content_hash("hello world")
+        assert h1 == h2
+
+    def test_content_hash_length(self):
+        from huginn.crawler import content_hash
+        h = content_hash("test")
+        assert len(h) == 16  # truncated SHA-256
+
+    def test_is_duplicate_new_content(self):
+        crawler = Crawler(browser=None)
+        seen = set()
+        assert crawler.is_duplicate("new content", seen) is False
+        assert "test" not in seen  # but the hash should be in seen now
+        assert len(seen) == 1
+
+    def test_is_duplicate_seen_content(self):
+        crawler = Crawler(browser=None)
+        seen = set()
+        assert crawler.is_duplicate("duplicate content", seen) is False
+        assert crawler.is_duplicate("duplicate content", seen) is True
+
+    def test_is_duplicate_whitespace_insensitive(self):
+        crawler = Crawler(browser=None)
+        seen = set()
+        assert crawler.is_duplicate("Hello   world", seen) is False
+        assert crawler.is_duplicate("Hello world", seen) is True
