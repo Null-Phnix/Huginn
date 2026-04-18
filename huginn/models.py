@@ -138,6 +138,7 @@ class CrawlRequest(BaseModel):
     include_paths: Optional[List[str]] = Field(None)
     exclude_paths: Optional[List[str]] = Field(None)
     scrape_options: Optional[ScrapeOptions] = Field(None)
+    ignore_robots: bool = Field(False, description="Skip robots.txt checks when True")
     stream: bool = Field(False)
 
 

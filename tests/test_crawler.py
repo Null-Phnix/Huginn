@@ -177,3 +177,96 @@ class TestContentHashing:
         seen = set()
         assert crawler.is_duplicate("Hello   world", seen) is False
         assert crawler.is_duplicate("Hello world", seen) is True
+
+
+class TestRobotsTxt:
+    """Test robots.txt parsing and path checking."""
+
+    def test_parse_disallow_all(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        checker.rules = checker._parse("User-agent: *\nDisallow: /")
+        assert checker.is_allowed("/anything") is False
+
+    def test_parse_disallow_specific_paths(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        checker.rules = checker._parse(
+            "User-agent: *\nDisallow: /admin/\nDisallow: /private/\nAllow: /public/"
+        )
+        assert checker.is_allowed("/admin/settings") is False
+        assert checker.is_allowed("/private/data") is False
+        assert checker.is_allowed("/public/page") is True
+        assert checker.is_allowed("/about") is True
+
+    def test_parse_allow_overrides_disallow(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        checker.rules = checker._parse(
+            "User-agent: *\nDisallow: /admin/\nAllow: /admin/public/"
+        )
+        # More specific allow should override disallow
+        assert checker.is_allowed("/admin/public/stats") is True
+        assert checker.is_allowed("/admin/secret") is False
+
+    def test_parse_no_rules_allows_all(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        checker.rules = checker._parse("# No rules\n")
+        assert checker.is_allowed("/anything") is True
+
+    def test_parse_ignores_comments(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        checker.rules = checker._parse("# This is a comment\nUser-agent: *\n# Another comment\nDisallow: /private/")
+        assert checker.is_allowed("/private/thing") is False
+        assert checker.is_allowed("/public/thing") is True
+
+    def test_rules_not_fetched_allows_all(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        # rules is None by default
+        assert checker.rules is None
+        assert checker.is_allowed("/anything") is True
+
+    def test_fetch_error_allows_all(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        # Empty rules = allow all (simulates fetch error)
+        checker.rules = {"disallow": [], "allow": []}
+        assert checker.is_allowed("/anything") is True
+
+    def test_robots_url_construction(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com/some/path")
+        assert checker.robots_url == "https://example.com/robots.txt"
+
+    def test_robots_url_trailing_slash(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com/")
+        assert checker.robots_url == "https://example.com/robots.txt"
+
+    def test_parse_multiple_agents(self):
+        from huginn.crawler import RobotsChecker
+        checker = RobotsChecker("https://example.com")
+        checker.rules = checker._parse(
+            "User-agent: GoogleBot\nDisallow: /google-only/\nUser-agent: *\nDisallow: /all/"
+        )
+        assert checker.is_allowed("/all/thing") is False
+        assert checker.is_allowed("/google-only/thing") is True  # Only * applies
+        assert checker.is_allowed("/anything") is True
+
+
+class TestCrawlRequestIgnoreRobots:
+    """Test that CrawlRequest has ignore_robots field."""
+
+    def test_default_ignore_robots(self):
+        from huginn.models import CrawlRequest
+        req = CrawlRequest(url="https://example.com")
+        assert hasattr(req, "ignore_robots")
+        assert req.ignore_robots is False
+
+    def test_set_ignore_robots(self):
+        from huginn.models import CrawlRequest
+        req = CrawlRequest(url="https://example.com", ignore_robots=True)
+        assert req.ignore_robots is True

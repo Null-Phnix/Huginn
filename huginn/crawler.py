@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from urllib.parse import urlparse, urljoin
 from pathlib import PurePosixPath
 
+import httpx
+
 from .browser import BrowserManager
 from .models import OutputFormat, ScrapeData
 from .scraper import Scraper
@@ -30,6 +32,88 @@ def content_hash(text: str) -> str:
     """
     cleaned = re.sub(r'\s+', ' ', text).strip().lower()
     return hashlib.sha256(cleaned.encode('utf-8')).hexdigest()[:16]
+
+
+class RobotsChecker:
+    """Check robots.txt for allowed/disallowed paths.
+
+    Parses robots.txt for User-agent: * rules. Supports Disallow
+    and Allow directives with longest-match priority.
+    """
+
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+        parsed = urlparse(self.base_url)
+        self.robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+        self.rules: Optional[Dict[str, List[str]]] = None  # None = not fetched yet
+
+    async def fetch_rules(self) -> None:
+        """Fetch and parse robots.txt from the site."""
+        try:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                resp = await client.get(self.robots_url)
+                if resp.status_code == 200:
+                    self.rules = self._parse(resp.text)
+                else:
+                    # No robots.txt or error = allow all
+                    self.rules = {"disallow": [], "allow": []}
+        except Exception:
+            # On any error, allow all
+            self.rules = {"disallow": [], "allow": []}
+
+    def is_allowed(self, path: str) -> bool:
+        """Check if a path is allowed by robots.txt rules.
+
+        If rules haven't been fetched yet, allows all paths.
+        Uses longest-match: more specific Allow rules override Disallow.
+        """
+        if self.rules is None:
+            return True  # Not fetched yet, allow
+
+        # Find the most specific matching rule
+        best_disallow = ""
+        best_allow = ""
+
+        for pattern in self.rules.get("disallow", []):
+            if path.startswith(pattern) or pattern == "/":
+                if len(pattern) > len(best_disallow):
+                    best_disallow = pattern
+
+        for pattern in self.rules.get("allow", []):
+            if path.startswith(pattern) and len(pattern) > len(best_allow):
+                best_allow = pattern
+
+        # More specific allow wins over less specific disallow
+        if best_allow and len(best_allow) >= len(best_disallow):
+            return True
+        if best_disallow:
+            return False
+        return True
+
+    def _parse(self, robots_text: str) -> Dict[str, List[str]]:
+        """Parse robots.txt for User-agent: * rules."""
+        disallow = []
+        allow = []
+        in_wildcard = False
+
+        for line in robots_text.splitlines():
+            line = line.strip()
+            if line.startswith("#") or not line:
+                continue
+            if line.lower().startswith("user-agent:"):
+                agent = line.split(":", 1)[1].strip()
+                in_wildcard = agent == "*"
+            elif in_wildcard:
+                if line.lower().startswith("disallow:"):
+                    path = line.split(":", 1)[1].strip()
+                    if path:
+                        disallow.append(path)
+                elif line.lower().startswith("allow:"):
+                    path = line.split(":", 1)[1].strip()
+                    if path:
+                        allow.append(path)
+
+        return {"disallow": disallow, "allow": allow}
 
 
 class CrawlResult:
@@ -65,6 +149,7 @@ class Crawler:
         include_paths: Optional[List[str]] = None,
         exclude_paths: Optional[List[str]] = None,
         skip_duplicates: bool = True,
+        ignore_robots: bool = False,
     ):
         self.browser = browser
         self.scraper = Scraper(browser)
@@ -77,6 +162,8 @@ class Crawler:
         self.include_paths = include_paths or []
         self.exclude_paths = exclude_paths or []
         self.skip_duplicates = skip_duplicates
+        self.ignore_robots = ignore_robots
+        self._robots_checker: Optional[RobotsChecker] = None
         self._cancel = False
         self._seen_hashes: Set[str] = set()
 
