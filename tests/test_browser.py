@@ -273,3 +273,149 @@ class TestAutoScroll:
         # which does NOT have "0, 0" — it has "0, ...scrollHeight"
         # The back-to-top is "window.scrollTo(0, 0)" which has "0, 0"
         assert len(top_scrolls) == 0
+
+class TestEnhancedActions:
+    """Test new action types: select, hover, wait_for_selector."""
+
+    def test_action_type_select(self):
+        from huginn.models import ActionType
+        assert ActionType.SELECT == "select"
+
+    def test_action_type_hover(self):
+        from huginn.models import ActionType
+        assert ActionType.HOVER == "hover"
+
+    def test_action_type_wait_for_selector(self):
+        from huginn.models import ActionType
+        assert ActionType.WAIT_FOR_SELECTOR == "wait_for_selector"
+
+    def test_action_model_select(self):
+        from huginn.models import Action, ActionType
+        action = Action(type=ActionType.SELECT, selector="select#country", values=["US"])
+        assert action.type == ActionType.SELECT
+        assert action.selector == "select#country"
+        assert action.values == ["US"]
+
+    def test_action_model_hover(self):
+        from huginn.models import Action, ActionType
+        action = Action(type=ActionType.HOVER, selector="div.menu-item")
+        assert action.type == ActionType.HOVER
+        assert action.selector == "div.menu-item"
+
+    def test_action_model_wait_for_selector(self):
+        from huginn.models import Action, ActionType
+        action = Action(type=ActionType.WAIT_FOR_SELECTOR, selector="div.loaded", timeout=5000)
+        assert action.type == ActionType.WAIT_FOR_SELECTOR
+        assert action.selector == "div.loaded"
+        assert action.timeout == 5000
+
+    @pytest.mark.asyncio
+    async def test_execute_actions_select(self):
+        """Test that select action calls page.select_option."""
+        from huginn.browser import BrowserManager
+        bm = BrowserManager.__new__(BrowserManager)
+        bm._playwright = None
+        bm._browser = None
+        bm._contexts = []
+        bm.config = None
+
+        page = AsyncMock()
+        page.select_option = AsyncMock()
+
+        actions = [{"type": "select", "selector": "select#country", "values": ["US"]}]
+        await bm.execute_actions(page, actions)
+
+        page.select_option.assert_called_once_with("select#country", ["US"])
+
+    @pytest.mark.asyncio
+    async def test_execute_actions_hover(self):
+        """Test that hover action calls page.hover."""
+        from huginn.browser import BrowserManager
+        bm = BrowserManager.__new__(BrowserManager)
+        bm._playwright = None
+        bm._browser = None
+        bm._contexts = []
+        bm.config = None
+
+        page = AsyncMock()
+        page.hover = AsyncMock()
+
+        actions = [{"type": "hover", "selector": "div.menu-item"}]
+        await bm.execute_actions(page, actions)
+
+        page.hover.assert_called_once_with("div.menu-item")
+
+    @pytest.mark.asyncio
+    async def test_execute_actions_wait_for_selector(self):
+        """Test that wait_for_selector action calls page.wait_for_selector."""
+        from huginn.browser import BrowserManager
+        bm = BrowserManager.__new__(BrowserManager)
+        bm._playwright = None
+        bm._browser = None
+        bm._contexts = []
+        bm.config = None
+
+        page = AsyncMock()
+        page.wait_for_selector = AsyncMock()
+
+        actions = [{"type": "wait_for_selector", "selector": "div.loaded", "timeout": 5000}]
+        await bm.execute_actions(page, actions)
+
+        page.wait_for_selector.assert_called_once_with("div.loaded", timeout=5000)
+
+    @pytest.mark.asyncio
+    async def test_execute_actions_wait_for_selector_default_timeout(self):
+        """Test wait_for_selector with no explicit timeout uses default."""
+        from huginn.browser import BrowserManager
+        bm = BrowserManager.__new__(BrowserManager)
+        bm._playwright = None
+        bm._browser = None
+        bm._contexts = []
+        bm.config = None
+
+        page = AsyncMock()
+        page.wait_for_selector = AsyncMock()
+
+        actions = [{"type": "wait_for_selector", "selector": "div.loaded"}]
+        await bm.execute_actions(page, actions)
+
+        # Default timeout should be 10000ms
+        page.wait_for_selector.assert_called_once_with("div.loaded", timeout=10000)
+
+    @pytest.mark.asyncio
+    async def test_execute_actions_select_with_value_string(self):
+        """Test select action with single value string."""
+        from huginn.browser import BrowserManager
+        bm = BrowserManager.__new__(BrowserManager)
+        bm._playwright = None
+        bm._browser = None
+        bm._contexts = []
+        bm.config = None
+
+        page = AsyncMock()
+        page.select_option = AsyncMock()
+
+        actions = [{"type": "select", "selector": "select#lang", "value": "en"}]
+        await bm.execute_actions(page, actions)
+
+        page.select_option.assert_called_once_with("select#lang", "en")
+
+    @pytest.mark.asyncio
+    async def test_execute_actions_hover_fails_gracefully(self):
+        """Test that hover failure doesn't crash the action sequence."""
+        from huginn.browser import BrowserManager
+        bm = BrowserManager.__new__(BrowserManager)
+        bm._playwright = None
+        bm._browser = None
+        bm._contexts = []
+        bm.config = None
+
+        page = AsyncMock()
+        page.hover = AsyncMock(side_effect=Exception("Element not found"))
+
+        # Should not raise, just log warning
+        actions = [{"type": "hover", "selector": "div.nonexistent"}]
+        await bm.execute_actions(page, actions)
+
+        # Hover was attempted even though it failed
+        page.hover.assert_called_once()

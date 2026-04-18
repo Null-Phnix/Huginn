@@ -844,6 +844,26 @@ class BrowserManager:
                 elif action_type == "press":
                     key = action.get("key", "Enter")
                     await page.keyboard.press(key)
+                elif action_type == "select":
+                    selector = action.get("selector", "")
+                    values = action.get("values")
+                    value = action.get("value")
+                    if selector:
+                        if values:
+                            await page.select_option(selector, values)
+                        elif value:
+                            await page.select_option(selector, value)
+                        else:
+                            logger.warning(f"Select action requires values or value: {action}")
+                elif action_type == "hover":
+                    selector = action.get("selector", "")
+                    if selector:
+                        await page.hover(selector)
+                elif action_type == "wait_for_selector":
+                    selector = action.get("selector", "")
+                    timeout_ms = action.get("timeout", 10000)
+                    if selector:
+                        await page.wait_for_selector(selector, timeout=timeout_ms)
                 else:
                     logger.warning(f"Unknown action type: {action_type}")
             except Exception as e:

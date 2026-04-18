@@ -29,6 +29,9 @@ class ActionType(str, Enum):
     SCREENSHOT = "screenshot"
     TYPE = "type"
     PRESS = "press"
+    SELECT = "select"
+    HOVER = "hover"
+    WAIT_FOR_SELECTOR = "wait_for_selector"
 
 
 class JobStatus(str, Enum):
@@ -54,6 +57,8 @@ class Action(BaseModel):
     key: Optional[str] = None
     direction: Optional[str] = "down"  # for scroll
     amount: Optional[int] = None  # pixels for scroll, ms for wait
+    values: Optional[List[str]] = None  # for select (multiple options)
+    timeout: Optional[int] = None  # ms for wait_for_selector
 
 
 class Location(BaseModel):

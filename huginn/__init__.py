@@ -15,5 +15,6 @@ __version__ = "1.0.0"
 __author__ = "Phnix"
 
 from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for, ScrollConfig  # noqa: F401
+from .models import ActionType  # noqa: F401
 
-__all__ = ["BrowserManager", "StarSearchBackend", "WaitStrategy", "parse_wait_for", "ScrollConfig"]
+__all__ = ["BrowserManager", "StarSearchBackend", "WaitStrategy", "parse_wait_for", "ScrollConfig", "ActionType"]
