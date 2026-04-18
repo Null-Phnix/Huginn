@@ -11,10 +11,10 @@ from huginn.models import (
     CrawlRequest,
     CrawlStartResponse,
     CrawlStatusResponse,
-    ExtractRequest,
-    ExtractOptions,
-    ExtractStartResponse,
-    ExtractStatusResponse,
+    DistillRequest,
+    DistillOptions,
+    DistillStartResponse,
+    DistillStatusResponse,
     JobInfo,
     JobStatus,
     Location,
@@ -75,7 +75,7 @@ class TestScrapeModels:
         """Should accept extraction options."""
         req = ScrapeRequest(
             url="https://example.com",
-            extract=ExtractOptions(
+            extract=DistillOptions(
                 prompt="Extract the main article text",
                 schema_={
                     "type": "object",
@@ -176,13 +176,13 @@ class TestExtractModels:
     """Test extract request/response models."""
 
     def test_extract_request_defaults(self):
-        req = ExtractRequest(urls=["https://example.com"])
+        req = DistillRequest(urls=["https://example.com"])
         assert req.urls == ["https://example.com"]
         assert req.mental_model is True
         assert req.max_retries == 3
 
     def test_extract_status_response(self):
-        resp = ExtractStatusResponse(
+        resp = DistillStatusResponse(
             success=True,
             status=JobStatus.COMPLETED,
             data={"title": "Example", "content": "Hello"},

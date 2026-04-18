@@ -8,9 +8,9 @@ from huginn.models import (
     FlockResponse,
     FlockResultItem,
     CrawlRequest,
-    ExtractRequest,
+    DistillRequest,
     StreamCrawlResponse,
-    StreamExtractResponse,
+    StreamDistillResponse,
     OutputFormat,
 )
 from huginn.config import HuginnConfig, ProxyConfig, load_config
@@ -105,8 +105,8 @@ class TestSSEModels:
         assert resp.type == "document"
         assert resp.data["url"] == "https://example.com"
 
-    def test_stream_extract_response(self):
-        resp = StreamExtractResponse(type="progress", data={"step": "scraping"})
+    def test_stream_distill_response(self):
+        resp = StreamDistillResponse(type="progress", data={"step": "scraping"})
         assert resp.type == "progress"
         assert resp.data["step"] == "scraping"
 
@@ -119,11 +119,11 @@ class TestSSEModels:
         assert req.stream is True
 
     def test_extract_request_stream_default(self):
-        req = ExtractRequest(urls=["https://example.com"])
+        req = DistillRequest(urls=["https://example.com"])
         assert req.stream is False
 
     def test_extract_request_stream_true(self):
-        req = ExtractRequest(urls=["https://example.com"], stream=True)
+        req = DistillRequest(urls=["https://example.com"], stream=True)
         assert req.stream is True
 
 

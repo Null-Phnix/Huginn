@@ -67,7 +67,7 @@ class Location(BaseModel):
     languages: Optional[List[str]] = None
 
 
-class ExtractOptions(BaseModel):
+class DistillOptions(BaseModel):
     """LLM extraction options."""
 
     prompt: Optional[str] = None
@@ -101,7 +101,7 @@ class ScrapeRequest(BaseModel):
     headers: Optional[Dict[str, str]] = None
     wait_for: Optional[Union[int, str]] = Field(None)
     actions: Optional[List[Action]] = None
-    extract: Optional[ExtractOptions] = None
+    extract: Optional[DistillOptions] = None
     include_tags: Optional[List[str]] = Field(None)
     exclude_tags: Optional[List[str]] = Field(None)
     only_main_content: bool = Field(True)
@@ -189,18 +189,19 @@ class MapResponse(BaseModel):
     error: Optional[str] = None
 
 
-# ─── Extract Endpoint ─────────────────────────────────────────────────────────
+# ─── Distill Endpoint ─────────────────────────────────────────────────────────
 
-class ExtractRequest(BaseModel):
-    """POST /v1/extract request body."""
+class DistillRequest(BaseModel):
+    """POST /v1/distill request body — structured data extraction from URLs."""
 
     urls: List[str] = Field(default_factory=list)
     prompt: Optional[str] = None
-    schema_: Optional[Dict[str, Any]] = Field(None)
-    system_prompt: Optional[str] = Field(None)
+    schema_: Optional[Dict[str, Any]] = Field(None, description="JSON schema for structured extraction")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt for LLM")
+    format: str = Field("markdown", description="Output format: text, markdown, or json")
     # Huginn extensions
-    mental_model: bool = Field(True)
-    max_retries: int = 3
+    mental_model: bool = Field(True, description="Use DOM mental model for better extraction")
+    max_retries: int = Field(3, ge=0, le=5, description="Max extraction retry attempts")
     stream: bool = Field(False)
 
     @field_validator("urls")
@@ -210,22 +211,30 @@ class ExtractRequest(BaseModel):
             raise ValueError("urls must contain at least one URL")
         return v
 
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v):
+        allowed = {"text", "markdown", "json"}
+        if v.lower() not in allowed:
+            raise ValueError(f"format must be one of {allowed}, got '{v}'")
+        return v.lower()
 
-class ExtractStartResponse(BaseModel):
-    """POST /v1/extract response (async)."""
+
+class DistillStartResponse(BaseModel):
+    """POST /v1/distill response (async job started)."""
+
     success: bool
     id: str
     error: Optional[str] = None
 
 
-class ExtractStatusResponse(BaseModel):
-    """GET /v1/extract/{id} response."""
+class DistillStatusResponse(BaseModel):
+    """GET /v1/distill/{id} response."""
+
     success: bool
     status: JobStatus
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
-
-
 
 # ─── SSE Streaming Responses ─────────────────────────────────────────────────
 
@@ -236,7 +245,7 @@ class StreamCrawlResponse(BaseModel):
     error: Optional[str] = None
 
 
-class StreamExtractResponse(BaseModel):
+class StreamDistillResponse(BaseModel):
     """SSE event payload for extract progress/done events."""
     type: str  # "progress" or "done"
     data: Optional[Dict[str, Any]] = None
@@ -307,7 +316,7 @@ class FlockResponse(BaseModel):
     error: Optional[str] = None
 
 
-# ─── Job Management �──────────────────────────────────────────────────────────
+# ─── Job Management ──────────────────────────────────────────────────────────
 
 class JobInfo(BaseModel):
     """Job status info."""
@@ -319,4 +328,14 @@ class JobInfo(BaseModel):
     completed: int = 0
     total: Optional[int] = None
     error: Optional[str] = None
+
+
+# ─── Backward Compatibility Aliases ──────────────────────────────────────────
+# Firecrawl-compatible names (deprecated, use HUGINN names instead)
+
+ExtractOptions = DistillOptions
+ExtractRequest = DistillRequest
+ExtractStartResponse = DistillStartResponse
+ExtractStatusResponse = DistillStatusResponse
+StreamExtractResponse = StreamDistillResponse
 

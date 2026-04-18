@@ -34,9 +34,9 @@ from .models import (
     CrawlRequest,
     CrawlStartResponse,
     CrawlStatusResponse,
-    ExtractRequest,
-    ExtractStartResponse,
-    ExtractStatusResponse,
+    DistillRequest,
+    DistillStartResponse,
+    DistillStatusResponse,
     JobStatus,
     Location,
     MapRequest,
@@ -51,7 +51,7 @@ from .models import (
     SearchResponse,
     SearchResultItem,
     StreamCrawlResponse,
-    StreamExtractResponse,
+    StreamDistillResponse,
 )
 from .job_store import JobStore
 from .browser import BrowserManager
@@ -315,14 +315,14 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     # ─--- Extract ───────────────────────────────────────────────────────────
 
     @app.post("/v1/distill")
-    async def start_extract(req: ExtractRequest, auth=Depends(verify_api_key)):
+    async def start_distill(req: DistillRequest, auth=Depends(verify_api_key)):
         """Start an async extraction job. Returns job ID for polling, or SSE stream if stream=True."""
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
 
         if req.stream:
             return StreamingResponse(
-                _stream_extract(req),
+                _stream_distill(req),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -340,12 +340,12 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             ttl=config.server.job_ttl,
         )
 
-        task = asyncio.create_task(_run_extract(job_id, req))
+        task = asyncio.create_task(_run_distill(job_id, req))
         _crawl_tasks[job_id] = task
 
-        return ExtractStartResponse(success=True, id=job_id)
+        return DistillStartResponse(success=True, id=job_id)
 
-    @app.get("/v1/distill/{job_id}", response_model=ExtractStatusResponse)
+    @app.get("/v1/distill/{job_id}", response_model=DistillStatusResponse)
     @limiter.limit("100/minute")
     async def get_distill_status(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Get extraction job status and results."""
@@ -361,7 +361,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         if status == JobStatus.COMPLETED and job.get("result_json"):
             result_data = json.loads(job["result_json"])
 
-        return ExtractStatusResponse(
+        return DistillStatusResponse(
             success=True,
             status=status,
             data=result_data,
@@ -522,7 +522,7 @@ async def _run_crawl(job_id: str, req: CrawlRequest):
         _crawl_tasks.pop(job_id, None)
 
 
-async def _run_extract(job_id: str, req: ExtractRequest):
+async def _run_distill(job_id: str, req: DistillRequest):
     """Background task for extract jobs."""
     extractor = Extractor(
         browser=_browser,
@@ -540,6 +540,7 @@ async def _run_extract(job_id: str, req: ExtractRequest):
             prompt=req.prompt,
             schema=req.schema_,
             system_prompt=req.system_prompt,
+            output_format=req.format,
         )
 
         await _job_store.update_job(
@@ -643,7 +644,7 @@ async def _stream_crawl(req: CrawlRequest):
         yield sse_event("done", {"type": "done", "data": {"success": False, "status": "failed", "error": str(e)}})
 
 
-async def _stream_extract(req: ExtractRequest):
+async def _stream_distill(req: DistillRequest):
     """SSE generator for extract — yields progress events and a final done event."""
     extractor = Extractor(
         browser=_browser,
@@ -702,6 +703,7 @@ async def _stream_extract(req: ExtractRequest):
             prompt=req.prompt,
             schema=req.schema_,
             system_prompt=req.system_prompt,
+            output_format=req.format,
         )
 
         # Send final done event with the result

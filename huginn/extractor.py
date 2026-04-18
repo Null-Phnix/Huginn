@@ -59,12 +59,17 @@ class Extractor:
         prompt: Optional[str] = None,
         schema: Optional[Dict[str, Any]] = None,
         system_prompt: Optional[str] = None,
+        output_format: str = "markdown",
     ) -> Dict[str, Any]:
         """
         Extract structured data from one or more URLs.
 
         For single URLs: returns extracted data.
         For multiple URLs: merges findings from all pages.
+
+        output_format: "text", "markdown", or "json"
+          - text/markdown: returns raw LLM output
+          - json: validates against schema and returns structured data
         """
         all_texts = []
         page_metadata = []
@@ -100,10 +105,22 @@ class Extractor:
             combined_text = combined_text[:100_000]
 
         # Build extraction prompt
-        extraction_prompt = self._build_prompt(combined_text, prompt, schema, page_metadata)
+        extraction_prompt = self._build_prompt(combined_text, prompt, schema, page_metadata, output_format)
 
         # Extract using LLM with retries + mental model
         result = await self._extract_with_llm(extraction_prompt, schema, system_prompt, combined_text)
+
+        # Format the output based on requested format
+        if output_format == "json" and schema:
+            # Validate extracted data against schema
+            validated = self._validate_schema(result.data, schema)
+            return {
+                "data": validated,
+                "confidence": result.confidence,
+                "attempts": result.attempts,
+                "sources": page_metadata,
+                "success": True,
+            }
 
         return {
             "data": result.data,
@@ -181,8 +198,12 @@ class Extractor:
         prompt: Optional[str],
         schema: Optional[Dict[str, Any]],
         page_metadata: List[Dict],
+        output_format: str = "markdown",
     ) -> str:
-        """Build the LLM extraction prompt."""
+        """Build the LLM extraction prompt.
+
+        output_format: "text" (raw text), "markdown" (default), or "json" (strict schema)
+        """
         parts = ["Extract the requested information from the following web page content.\n"]
 
         if prompt:
@@ -190,11 +211,22 @@ class Extractor:
         else:
             parts.append("Task: Extract all relevant structured information.\n")
 
-        if schema:
+        if output_format == "json" and schema:
             parts.append(f"\nExpected output schema:\n```json\n{json.dumps(schema, indent=2)}\n```\n")
-            parts.append("Return your extraction as valid JSON matching this schema.\n")
+            parts.append("Return your extraction as valid JSON matching this schema exactly. ")
+            parts.append("Do not include any text outside the JSON object.\n")
+        elif output_format == "json":
+            parts.append("Return your extraction as valid JSON. ")
+            parts.append("Do not include any text outside the JSON object.\n")
+        elif output_format == "text":
+            parts.append("Return your extraction as plain text.\n")
         else:
-            parts.append("Return your extraction as a JSON object.\n")
+            # markdown format — default
+            if schema:
+                parts.append(f"\nExpected output schema:\n```json\n{json.dumps(schema, indent=2)}\n```\n")
+                parts.append("Return your extraction as valid JSON matching this schema.\n")
+            else:
+                parts.append("Return your extraction as a JSON object.\n")
 
         parts.append(f"\nSource pages: {len(page_metadata)}")
         for meta in page_metadata[:5]:
@@ -415,24 +447,78 @@ class Extractor:
             return {"raw_response": content, "parse_error": True}
 
     def _validate_schema(self, data: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate extracted data against schema. Returns confidence score."""
+        """Validate extracted data against a JSON schema.
+
+        Returns the data with a confidence score and validation metadata.
+        Supports type checking, required field validation, and nested objects.
+        """
         if not isinstance(data, dict):
-            return {"data": data, "confidence": 0.3}
+            return {"data": data, "confidence": 0.3, "validation_errors": ["Expected JSON object"]}
 
         properties = schema.get("properties", {})
         required = schema.get("required", [])
+        errors = []
 
+        # Type mapping for validation
+        type_map = {
+            "string": str,
+            "integer": int,
+            "number": (int, float),
+            "boolean": bool,
+            "array": list,
+            "object": dict,
+        }
+
+        # Validate required fields
+        for field in required:
+            if field not in data or data[field] is None:
+                errors.append(f"Missing required field: {field}")
+
+        # Type-check present fields against schema
+        for field, field_schema in properties.items():
+            if field not in data or data[field] is None:
+                continue
+            value = data[field]
+            expected_type = field_schema.get("type")
+            if expected_type and expected_type in type_map:
+                if not isinstance(value, type_map[expected_type]):
+                    # Allow int-as-float and vice versa for number type
+                    if expected_type == "number" and isinstance(value, (int, float)):
+                        pass
+                    elif expected_type == "integer" and isinstance(value, int):
+                        pass
+                    else:
+                        errors.append(
+                            f"Field '{field}' has type {type(value).__name__}, "
+                            f"expected {expected_type}"
+                        )
+
+            # Recursively validate nested objects
+            if isinstance(value, dict) and field_schema.get("type") == "object":
+                nested_result = self._validate_schema(value, field_schema)
+                if nested_result.get("validation_errors"):
+                    for err in nested_result["validation_errors"]:
+                        errors.append(f"{field}.{err}")
+
+        # Confidence scoring
         filled_required = sum(1 for r in required if r in data and data[r] is not None)
-        filled_optional = sum(1 for k in properties if k in data and data[k] is not None and k not in required)
+        filled_optional = sum(
+            1 for k in properties if k in data and data[k] is not None and k not in required
+        )
 
         total_fields = len(properties)
         required_ratio = filled_required / len(required) if required else 1.0
         optional_ratio = filled_optional / max(total_fields - len(required), 1)
 
-        # Confidence based on how many fields were filled
-        confidence = required_ratio * 0.8 + optional_ratio * 0.2
+        # Penalize for type errors and missing required fields
+        error_penalty = min(len(errors) * 0.15, 0.6)
+        confidence = max(required_ratio * 0.8 + optional_ratio * 0.2 - error_penalty, 0.0)
+        confidence = min(confidence, 1.0)
 
-        return {"data": data, "confidence": min(confidence, 1.0)}
+        result = {"data": data, "confidence": confidence}
+        if errors:
+            result["validation_errors"] = errors
+        return result
 
     def _update_beliefs(self, beliefs: Dict, result: Dict, attempt: int, confidence: float):
         """Update mental model beliefs after an extraction attempt."""

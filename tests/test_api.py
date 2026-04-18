@@ -114,8 +114,8 @@ class TestExtractEndpoint:
 
     @pytest.mark.asyncio
     async def test_extract_request_model(self):
-        from huginn.models import ExtractRequest
-        req = ExtractRequest(
+        from huginn.models import DistillRequest
+        req = DistillRequest(
             urls=["https://example.com"],
             prompt="Extract the main content",
             schema_={"type": "object", "properties": {"title": {"type": "string"}}},
