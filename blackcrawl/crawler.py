@@ -124,12 +124,7 @@ class Crawler:
                         timeout=timeout,
                     )
 
-                    # Add page to results (without the links format in metadata)
-                    page_dict = page_data.model_dump(by_alias=True)
-                    # Clean up: remove None values
-                    for k, v in list(page_dict.items()):
-                        if v is None and k not in ("rawHtml",):
-                            del page_dict[k]
+                    # Add page to results
                     result.pages.append(page_data)
                     result.completed += 1
 
@@ -139,7 +134,7 @@ class Crawler:
                         norm_link = self._normalize_url(link)
                         if norm_link in result.visited or norm_link in result.queued:
                             continue
-                        if not self._should_follow(norm_link, base_domain, depth + 1):
+                        if not self._should_follow(norm_link, base_domain, depth + 1, base_path_prefix=base_path_prefix):
                             continue
                         if len(result.queued) >= self.max_pages * 2:  # discovery cap
                             continue
@@ -164,8 +159,6 @@ class Crawler:
             # Collect batch of pages at next depth level
             batch = []
             while queue and len(batch) < self.concurrency:
-                if not queue:
-                    break
                 url, depth = queue.popleft()
                 if depth > self.max_depth:
                     continue
@@ -198,7 +191,7 @@ class Crawler:
             normalized += f"?{query}"
         return normalized
 
-    def _should_follow(self, url: str, base_domain: str, depth: int) -> bool:
+    def _should_follow(self, url: str, base_domain: str, depth: int, base_path_prefix: str = "") -> bool:
         """Determine if a discovered URL should be added to the crawl queue."""
         if depth > self.max_depth:
             return False
@@ -224,11 +217,9 @@ class Crawler:
             return False
 
         # Backward crawling check (subpaths only by default)
-        if not self.allow_backward:
-            start_parsed = urlparse(base_domain if "://" in base_domain else f"https://{base_domain}")
-            start_prefix = start_parsed.path.rstrip("/")
-            if start_prefix and not parsed.path.startswith(start_prefix):
-                pass  # Allow sibling paths by default
+        if not self.allow_backward and base_path_prefix:
+            if not parsed.path.startswith(base_path_prefix):
+                return False
 
         # Include/exclude path filtering
         if self.include_paths:

@@ -258,10 +258,17 @@ class BrowserManager:
             "--disable-gpu",
         ]
 
-        self._browser = await self._playwright.chromium.launch(
-            headless=self.headless,
-            args=launch_args,
-        )
+        try:
+            self._browser = await self._playwright.chromium.launch(
+                headless=self.headless,
+                args=launch_args,
+            )
+        except Exception as e:
+            logger.error(f"Failed to launch browser: {e}")
+            if self._playwright:
+                await self._playwright.stop()
+                self._playwright = None
+            raise
         logger.info(f"Browser launched (headless={self.headless}, stealth={self.stealth})")
 
     async def stop(self):
@@ -665,7 +672,6 @@ class BrowserManager:
                 "are you a robot",
                 "just a moment",
                 "ddos protection",
-                "checking your browser",
             ]
             return any(ind in content for ind in challenge_indicators)
         except Exception:
@@ -697,7 +703,11 @@ class BrowserManager:
                     await asyncio.sleep(ms / 1000)
                 elif action_type == "scroll":
                     direction = action.get("direction", "down")
-                    amount = action.get("amount", 500)
+                    try:
+                        amount = int(action.get("amount", 500))
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid scroll amount: {action.get('amount')}")
+                        amount = 500
                     if direction == "down":
                         await page.evaluate(f"window.scrollBy(0, {amount})")
                     else:

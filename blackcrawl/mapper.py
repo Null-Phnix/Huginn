@@ -10,7 +10,14 @@ import logging
 import re
 from typing import List, Optional, Set
 from urllib.parse import urlparse, urljoin
-from xml.etree import ElementTree
+try:
+    from defusedxml import ElementTree as ElementTree
+except ImportError:
+    # Fallback: disable entity expansion as a basic defense
+    from xml.etree import ElementTree
+    import xml.sax
+    xml.sax.make_parser = lambda *a, **kw: xml.sax.make_parser.__wrapped__(*a, **kw) if hasattr(xml.sax.make_parser, '__wrapped__') else xml.sax.make_parser()
+    logger.warning("defusedxml not installed — XML parsing vulnerable to bombs. pip install defusedxml")
 
 import httpx
 

@@ -354,10 +354,14 @@ class Extractor:
 
         async with httpx.AsyncClient(timeout=60) as client:
             # Convert to Gemini format
+            system_instruction = None
             contents = []
             for msg in messages:
-                role = "user" if msg["role"] != "system" else "user"
-                contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+                if msg["role"] == "system":
+                    system_instruction = {"parts": [{"text": msg["content"]}]}
+                else:
+                    role = "model" if msg["role"] == "assistant" else "user"
+                    contents.append({"role": role, "parts": [{"text": msg["content"]}]})
 
             body = {
                 "contents": contents,
@@ -366,6 +370,8 @@ class Extractor:
                     "responseMimeType": "application/json" if schema else "text/plain",
                 },
             }
+            if system_instruction:
+                body["systemInstruction"] = system_instruction
 
             resp = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
@@ -391,14 +397,20 @@ class Extractor:
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            # Try to find JSON object in the response
-            import re
-            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    pass
+            # Brute-force find the outermost JSON object via bracket matching
+            start = content.find("{")
+            if start != -1:
+                depth = 0
+                for i in range(start, len(content)):
+                    if content[i] == "{":
+                        depth += 1
+                    elif content[i] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                return json.loads(content[start:i + 1])
+                            except json.JSONDecodeError:
+                                break  # outermost object failed, give up
 
             return {"raw_response": content, "parse_error": True}
 

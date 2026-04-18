@@ -83,7 +83,7 @@ def main():
 
 def _cmd_serve(args):
     """Start the API server."""
-    config = load_config(args.config) if args.config else BlackCrawlConfig()
+    config = load_config(args.config)
 
     if args.host:
         config.server.host = args.host
@@ -285,6 +285,7 @@ async def _cmd_doctor(args):
             print(f"  {name}: MISSING")
 
     # Check Playwright browsers
+    pw = None
     try:
         from playwright.async_api import async_playwright
         pw = await async_playwright().start()
@@ -292,13 +293,18 @@ async def _cmd_doctor(args):
         page = await browser.new_page()
         await page.goto("about:blank")
         await browser.close()
-        await pw.stop()
         print("  Playwright Chromium: OK")
     except Exception as e:
         print(f"  Playwright Chromium: FAILED ({e})")
+    finally:
+        if pw:
+            try:
+                await pw.stop()
+            except Exception:
+                pass
 
     # Check config
-    config = BlackCrawlConfig()
+    config = load_config()
     print(f"  Data dir: {config.data_dir}")
     print(f"  DB path: {config.db_path}")
     print(f"  Default port: {config.server.port}")
