@@ -346,6 +346,12 @@ class Extractor:
         model = self.llm_model or "gemini-2.0-flash"
         api_key = os.environ.get("GOOGLE_API_KEY", "")
 
+        if not api_key:
+            raise RuntimeError(
+                f"LLM provider 'google' requires GOOGLE_API_KEY environment variable. "
+                f"Set it or use --llm-provider ollama for local models."
+            )
+
         async with httpx.AsyncClient(timeout=60) as client:
             # Convert to Gemini format
             contents = []

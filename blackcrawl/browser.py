@@ -8,6 +8,8 @@ The heart of the system — inherited from Blackreach's battle-tested browser st
 
 import asyncio
 import base64
+import glob
+import json
 import logging
 import re
 import time
@@ -16,6 +18,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
+
+from .config import BrowserConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,24 +55,197 @@ Object.defineProperty(navigator, 'languages', {
 """
 
 
+class StarSearchBackend:
+    """Communicates with the StarSearch daemon via Unix socket.
+
+    The StarSearch daemon provides stealth-first browsing powered by
+    Rust and 80+ browser fingerprints.  It speaks a simple JSON-over-
+    Unix-socket protocol: each command is a JSON object terminated by
+    a newline, and each response is likewise.
+
+    Commands
+    --------
+    {"cmd": "navigate",   "url": "<url>"}            -> {"ok": bool, "status": int}
+    {"cmd": "content"}                                 -> {"ok": bool, "title": str, "text": str, ...}
+    {"cmd": "links"}                                    -> {"ok": bool, "links": [str, ...]}
+    {"cmd": "screenshot", "full_page": bool}            -> {"ok": bool, "data": "<base64>"}
+    {"cmd": "shutdown"}                                 -> {"ok": bool}
+    """
+
+    def __init__(self, socket_path: Optional[str] = None):
+        self.socket_path = socket_path
+        self._reader: Optional[asyncio.StreamReader] = None
+        self._writer: Optional[asyncio.StreamWriter] = None
+        self._connected = False
+
+    # ── socket discovery ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _discover_socket() -> Optional[str]:
+        """Find the StarSearch daemon socket under /tmp/starsearch-*/daemon.sock."""
+        pattern = "/tmp/starsearch-*/daemon.sock"
+        matches = sorted(glob.glob(pattern))
+        if matches:
+            logger.info(f"StarSearch daemon socket found: {matches[0]}")
+            return matches[0]
+        logger.warning("No StarSearch daemon socket found")
+        return None
+
+    # ── lifecycle ───────────────────────────────────────────────────────
+
+    async def start(self) -> bool:
+        """Connect to the StarSearch daemon.  Returns True on success."""
+        path = self.socket_path or self._discover_socket()
+        if path:
+            self.socket_path = path
+        else:
+            logger.warning("StarSearch: no socket path available, cannot start")
+            return False
+
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path),
+                timeout=5.0,
+            )
+            self._connected = True
+            logger.info(f"StarSearch backend connected to {self.socket_path}")
+            return True
+        except Exception as exc:
+            logger.warning(f"StarSearch: failed to connect to {self.socket_path}: {exc}")
+            self._connected = False
+            return False
+
+    async def stop(self):
+        """Tell the daemon we're done, then close the connection."""
+        if self._connected:
+            try:
+                await self._send_command({"cmd": "shutdown"})
+            except Exception:
+                pass
+        if self._writer:
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+            except Exception:
+                pass
+        self._reader = None
+        self._writer = None
+        self._connected = False
+
+    # ── low-level protocol ──────────────────────────────────────────────
+
+    async def _send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a JSON command and read the JSON response."""
+        if not self._connected or self._writer is None or self._reader is None:
+            raise RuntimeError("StarSearch backend is not connected")
+
+        payload = json.dumps(command) + "\n"
+        self._writer.write(payload.encode("utf-8"))
+        await self._writer.drain()
+
+        # Read response line
+        data = await asyncio.wait_for(self._reader.readline(), timeout=60.0)
+        if not data:
+            raise RuntimeError("StarSearch daemon closed the connection")
+        return json.loads(data.decode("utf-8").strip())
+
+    # ── high-level API ───────────────────────────────────────────────────
+
+    async def navigate(self, url: str) -> bool:
+        """Navigate the daemon to *url*.  Returns True on success."""
+        resp = await self._send_command({"cmd": "navigate", "url": url})
+        return resp.get("ok", False)
+
+    async def extract_content(self) -> Dict[str, Any]:
+        """Return the structured page content from the daemon."""
+        resp = await self._send_command({"cmd": "content"})
+        if not resp.get("ok", False):
+            raise RuntimeError("StarSearch content extraction failed")
+        return resp
+
+    async def get_links(self, base_url: Optional[str] = None) -> List[str]:
+        """Return discovered links, optionally filtered to *base_url*'s domain."""
+        resp = await self._send_command({"cmd": "links"})
+        if not resp.get("ok", False):
+            raise RuntimeError("StarSearch link discovery failed")
+        links: List[str] = resp.get("links", [])
+        if base_url:
+            domain = urlparse(base_url).netloc
+            links = [l for l in links if urlparse(l).netloc == domain]
+        return links
+
+    async def take_screenshot(self, full_page: bool = True) -> str:
+        """Return a base64-encoded screenshot."""
+        resp = await self._send_command({"cmd": "screenshot", "full_page": full_page})
+        if not resp.get("ok", False):
+            raise RuntimeError("StarSearch screenshot failed")
+        return resp.get("data", "")
+
+
 class BrowserManager:
-    """Manages Playwright browser instances with stealth and content extraction."""
+    """Manages Playwright browser instances with stealth and content extraction.
+
+    When *config* is supplied and ``config.backend == 'starsearch'``, the
+    manager delegates to a :class:`StarSearchBackend` instead of Playwright.
+    If the StarSearch daemon is unavailable it falls back to Playwright with
+    a warning.
+
+    When *config* is ``None`` (the default) the manager behaves exactly as
+    before — pure Playwright — preserving full backward compatibility.
+    """
 
     def __init__(self, headless: bool = True, stealth: bool = True,
                  navigation_timeout: int = DEFAULT_NAVIGATION_TIMEOUT,
                  viewport: Tuple[int, int] = (1920, 1080),
-                 user_agent: Optional[str] = None):
+                 user_agent: Optional[str] = None,
+                 config: Optional[BrowserConfig] = None):
         self.headless = headless
         self.stealth = stealth
         self.navigation_timeout = navigation_timeout
         self.viewport = viewport
         self.user_agent = user_agent
+
+        # Decide backend
+        self._backend_name: str = "playwright"
+        self._starsearch: Optional[StarSearchBackend] = None
+
+        if config is not None:
+            self._backend_name = config.backend
+            # Override scalar settings from config when they differ from defaults
+            if config.headless != headless:
+                self.headless = config.headless
+            if config.stealth_mode != stealth:
+                self.stealth = config.stealth_mode
+            if config.navigation_timeout != navigation_timeout:
+                self.navigation_timeout = config.navigation_timeout
+            if config.viewport_width and config.viewport_height:
+                self.viewport = (config.viewport_width, config.viewport_height)
+            if config.user_agent:
+                self.user_agent = config.user_agent
+
         self._playwright = None
         self._browser: Optional[Browser] = None
         self._contexts: List[BrowserContext] = []
 
+    # ── lifecycle ─────────────────────────────────────────────────────────
+
     async def start(self):
         """Launch browser with stealth configuration."""
+        # If StarSearch is requested, try to connect first
+        if self._backend_name == "starsearch":
+            self._starsearch = StarSearchBackend()
+            connected = await self._starsearch.start()
+            if connected:
+                logger.info("BrowserManager: using StarSearch backend")
+                return
+            else:
+                logger.warning(
+                    "StarSearch daemon unavailable — falling back to Playwright"
+                )
+                self._starsearch = None
+                self._backend_name = "playwright"
+
+        # Playwright path (default or fallback)
         if self._browser:
             return
 
@@ -88,6 +265,11 @@ class BrowserManager:
 
     async def stop(self):
         """Shut down browser and clean up."""
+        if self._starsearch:
+            await self._starsearch.stop()
+            self._starsearch = None
+            return
+
         for ctx in self._contexts:
             try:
                 await ctx.close()
@@ -107,17 +289,23 @@ class BrowserManager:
                 pass
             self._playwright = None
 
-    async def new_context(self) -> BrowserContext:
+    # ── context / page creation ───────────────────────────────────────────
+
+    async def new_context(self, proxy: Optional[Dict[str, str]] = None) -> BrowserContext:
         """Create a new browser context with stealth config."""
         if not self._browser:
             await self.start()
 
-        context = await self._browser.new_context(
-            viewport={"width": self.viewport[0], "height": self.viewport[1]},
-            user_agent=self.user_agent,
-            java_script_enabled=True,
-            ignore_https_errors=True,
-        )
+        context_kwargs = {
+            "viewport": {"width": self.viewport[0], "height": self.viewport[1]},
+            "user_agent": self.user_agent,
+            "java_script_enabled": True,
+            "ignore_https_errors": True,
+        }
+        if proxy:
+            context_kwargs["proxy"] = proxy
+
+        context = await self._browser.new_context(**context_kwargs)
         context.set_default_navigation_timeout(self.navigation_timeout)
         context.set_default_timeout(self.navigation_timeout)
 
@@ -139,8 +327,15 @@ class BrowserManager:
 
         return page
 
+    # ── navigation ────────────────────────────────────────────────────────
+
     async def navigate(self, page: Page, url: str, wait_until: str = "domcontentloaded") -> bool:
         """Navigate to URL with challenge detection and handling."""
+        # StarSearch path — uses its own browsing engine
+        if self._starsearch:
+            return await self._starsearch.navigate(url)
+
+        # Playwright path
         try:
             response = await page.goto(url, wait_until=wait_until)
             if not response:
@@ -156,11 +351,18 @@ class BrowserManager:
             logger.error(f"Navigation failed for {url}: {e}")
             return False
 
+    # ── content extraction ─────────────────────────────────────────────────
+
     async def extract_content(self, page: Page) -> Dict[str, Any]:
         """
         Extract page content using the DOM walker approach.
         Returns structured data: text, links, interactive elements, metadata.
         """
+        # StarSearch path
+        if self._starsearch:
+            return await self._starsearch.extract_content()
+
+        # Playwright path
         # Wait for content to render
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
@@ -269,6 +471,22 @@ class BrowserManager:
         Convert page content to clean Markdown.
         Uses a JS-based HTML-to-markdown approach for maximum fidelity.
         """
+        # StarSearch doesn't have a separate markdown endpoint —
+        # we build it from extract_content().  The Playwright path
+        # uses its own JS evaluator, which produces richer output.
+        if self._starsearch:
+            if content is None:
+                content = await self.extract_content(page)
+            # Lightweight markdown from structured content
+            md_parts = []
+            if content.get("title"):
+                md_parts.append(f"# {content['title']}\n")
+            if content.get("description"):
+                md_parts.append(f"> {content['description']}\n")
+            if content.get("text"):
+                md_parts.append(content["text"])
+            return "\n".join(md_parts)
+
         if content is None:
             content = await self.extract_content(page)
 
@@ -371,6 +589,14 @@ class BrowserManager:
 
     async def to_html(self, page: Page, only_main: bool = True) -> str:
         """Extract page HTML, optionally just main content."""
+        # StarSearch path: use content from extract_content
+        if self._starsearch:
+            content = await self._starsearch.extract_content()
+            # The daemon returns structured data, not raw HTML.
+            # When using StarSearch we can only return the text content.
+            # For real HTML, the caller should use Playwright.
+            return content.get("html", content.get("text", ""))
+
         if only_main:
             html = await page.evaluate("""() => {
                 const main = document.querySelector('main') ||
@@ -385,6 +611,11 @@ class BrowserManager:
 
     async def get_links(self, page: Page, base_url: Optional[str] = None) -> List[str]:
         """Extract all links from page, resolving relative URLs."""
+        # StarSearch path
+        if self._starsearch:
+            return await self._starsearch.get_links(base_url)
+
+        # Playwright path
         raw_links = await page.evaluate("""() => {
             const links = [];
             document.querySelectorAll('a[href]').forEach(a => {
@@ -406,6 +637,11 @@ class BrowserManager:
 
     async def take_screenshot(self, page: Page, full_page: bool = True) -> str:
         """Take screenshot and return as base64 string."""
+        # StarSearch path
+        if self._starsearch:
+            return await self._starsearch.take_screenshot(full_page=full_page)
+
+        # Playwright path
         buf = await page.screenshot(full_page=full_page)
         return base64.b64encode(buf).decode("utf-8")
 
@@ -442,6 +678,8 @@ class BrowserManager:
 
     async def execute_actions(self, page: Page, actions: List[dict]):
         """Execute a sequence of browser actions."""
+        # StarSearch doesn't support composite actions yet —
+        # fall through to Playwright (actions require a Page object anyway)
         for action in actions:
             action_type = action.get("type", "")
             try:
@@ -473,3 +711,10 @@ class BrowserManager:
                     logger.warning(f"Unknown action type: {action_type}")
             except Exception as e:
                 logger.warning(f"Action failed: {action_type} - {e}")
+
+    @property
+    def backend(self) -> str:
+        """Return the name of the active backend (``'playwright'`` or ``'starsearch'``)."""
+        if self._starsearch is not None:
+            return "starsearch"
+        return self._backend_name

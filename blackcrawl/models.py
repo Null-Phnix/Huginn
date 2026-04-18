@@ -141,6 +141,7 @@ class CrawlRequest(BaseModel):
     include_paths: Optional[List[str]] = Field(None, alias="includePaths")
     exclude_paths: Optional[List[str]] = Field(None, alias="excludePaths")
     scrape_options: Optional[ScrapeOptions] = Field(None, alias="scrapeOptions")
+    stream: bool = Field(False, alias="stream")
 
 
 class CrawlStartResponse(BaseModel):
@@ -159,7 +160,6 @@ class CrawlStatusResponse(BaseModel):
     status: JobStatus
     completed: int = 0
     total: Optional[int] = None
-    credits_used: int = 0
     expires_at: Optional[datetime] = Field(None, alias="expiresAt")
     data: Optional[List[ScrapeData]] = None
     error: Optional[str] = None
@@ -197,6 +197,7 @@ class ExtractRequest(BaseModel):
     # BlackCrawl extensions
     mental_model: bool = Field(True, alias="mentalModel")
     max_retries: int = 3
+    stream: bool = Field(False, alias="stream")
 
     @field_validator("urls")
     @classmethod
@@ -217,6 +218,40 @@ class ExtractStatusResponse(BaseModel):
     """GET /v1/extract/{id} response."""
     success: bool
     status: JobStatus
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+
+# ─── SSE Streaming Responses ─────────────────────────────────────────────────
+
+class StreamCrawlResponse(BaseModel):
+    """SSE event payload for crawl document/done events."""
+    type: str  # "document" or "done"
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class StreamExtractResponse(BaseModel):
+    """SSE event payload for extract progress/done events."""
+    type: str  # "progress" or "done"
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+
+# ─── SSE Streaming Responses ─────────────────────────────────────────────────
+
+class StreamCrawlResponse(BaseModel):
+    """SSE event payload for crawl document/done events."""
+    type: str  # "document" or "done"
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class StreamExtractResponse(BaseModel):
+    """SSE event payload for extract progress/done events."""
+    type: str  # "progress" or "done"
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
@@ -258,7 +293,44 @@ class SearchResponse(BaseModel):
     error: Optional[str] = None
 
 
-# ─── Job Management ───────────────────────────────────────────────────────────
+
+# ─── Batch Scrape Endpoint ─────────────────────────────────────────────────────
+
+class BatchScrapeRequest(BaseModel):
+    """POST /v1/batch/scrape request body."""
+    model_config = {"populate_by_name": True}
+
+    urls: List[str] = Field(..., min_length=1, max_length=50)
+    formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
+    only_main_content: bool = Field(True, alias="onlyMainContent")
+    include_tags: Optional[List[str]] = Field(None, alias="includeTags")
+    exclude_tags: Optional[List[str]] = Field(None, alias="excludeTags")
+    timeout: int = 30000
+
+    @field_validator("urls")
+    @classmethod
+    def validate_urls_count(cls, v):
+        if len(v) > 50:
+            raise ValueError("Maximum 50 URLs per batch")
+        return v
+
+
+class BatchScrapeResultItem(BaseModel):
+    """Single result in a batch scrape response."""
+    url: str
+    success: bool
+    data: Optional[ScrapeData] = None
+    error: Optional[str] = None
+
+
+class BatchScrapeResponse(BaseModel):
+    """POST /v1/batch/scrape response."""
+    success: bool
+    data: List[BatchScrapeResultItem] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+# ─── Job Management �──────────────────────────────────────────────────────────
 
 class JobInfo(BaseModel):
     """Job status info."""

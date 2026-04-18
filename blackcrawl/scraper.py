@@ -33,12 +33,13 @@ class Scraper:
         exclude_tags: Optional[List[str]] = None,
         only_main_content: bool = True,
         timeout: int = 30000,
+        proxy: Optional[Dict[str, str]] = None,
     ) -> ScrapeData:
         """Scrape a single page and return content in requested formats."""
         if formats is None:
             formats = [OutputFormat.MARKDOWN]
 
-        context = await self.browser.new_context()
+        context = await self.browser.new_context(proxy=proxy)
         page = await self.browser.new_page(context)
 
         try:

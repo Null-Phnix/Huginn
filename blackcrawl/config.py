@@ -26,6 +26,14 @@ class BrowserConfig:
 
 
 @dataclass
+class ProxyConfig:
+    """Proxy configuration."""
+    server: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+@dataclass
 class CrawlConfig:
     """Crawl behavior configuration."""
     max_depth: int = 3
@@ -58,6 +66,7 @@ class ServerConfig:
     job_ttl: int = 3600  # seconds to keep completed jobs
     max_concurrent_jobs: int = 10
     request_timeout: int = 300  # seconds
+    rate_limit: str = "100/minute"  # slowapi rate limit string
 
 
 @dataclass
@@ -67,6 +76,7 @@ class BlackCrawlConfig:
     crawl: CrawlConfig = field(default_factory=CrawlConfig)
     extract: ExtractConfig = field(default_factory=ExtractConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    proxy: ProxyConfig = field(default_factory=ProxyConfig)
     data_dir: str = os.path.expanduser("~/.blackcrawl")
     db_path: str = ""  # derived from data_dir if empty
     log_level: str = "INFO"
@@ -113,6 +123,10 @@ def _merge_config(config: BlackCrawlConfig, data: dict):
         for k, v in data["server"].items():
             if hasattr(config.server, k):
                 setattr(config.server, k, v)
+    if "proxy" in data:
+        for k, v in data["proxy"].items():
+            if hasattr(config.proxy, k):
+                setattr(config.proxy, k, v)
     if "data_dir" in data:
         config.data_dir = data["data_dir"]
     if "log_level" in data:
@@ -133,8 +147,12 @@ def _apply_env(config: BlackCrawlConfig):
         "BLACKCRAWL_MENTAL_MODEL": ("extract", "mental_model_enabled"),
         "BLACKCRAWL_API_KEY": ("server", "api_key"),
         "BLACKCRAWL_PORT": ("server", "port"),
+        "BLACKCRAWL_RATE_LIMIT": ("server", "rate_limit"),
         "BLACKCRAWL_DATA_DIR": (None, "data_dir"),
         "BLACKCRAWL_LOG_LEVEL": (None, "log_level"),
+        "BLACKCRAWL_PROXY_SERVER": ("proxy", "server"),
+        "BLACKCRAWL_PROXY_USERNAME": ("proxy", "username"),
+        "BLACKCRAWL_PROXY_PASSWORD": ("proxy", "password"),
     }
     for env_var, (section, attr) in env_map.items():
         val = os.environ.get(env_var)

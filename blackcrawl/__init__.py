@@ -13,3 +13,7 @@ DOM walker, and mental model system. Better than Firecrawl because:
 
 __version__ = "1.0.0"
 __author__ = "Phnix"
+
+from .browser import BrowserManager, StarSearchBackend  # noqa: F401
+
+__all__ = ["BrowserManager", "StarSearchBackend"]
