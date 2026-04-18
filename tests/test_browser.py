@@ -118,3 +118,158 @@ class TestWaitStrategy:
         from huginn.browser import WaitStrategy, parse_wait_for
         result = parse_wait_for("#main-content")
         assert result == (WaitStrategy.SELECTOR, "#main-content")
+
+
+class TestScrollConfig:
+    """Test ScrollConfig for infinite scroll handling."""
+
+    def test_scroll_config_defaults(self):
+        from huginn.browser import ScrollConfig
+        config = ScrollConfig()
+        assert config.max_scrolls == 10
+        assert config.delay_ms == 500
+        assert config.scroll_to_bottom is True
+
+    def test_scroll_config_custom(self):
+        from huginn.browser import ScrollConfig
+        config = ScrollConfig(max_scrolls=5, delay_ms=1000, scroll_to_bottom=False)
+        assert config.max_scrolls == 5
+        assert config.delay_ms == 1000
+        assert config.scroll_to_bottom is False
+
+    def test_scroll_config_max_scrolls_clamped(self):
+        from huginn.browser import ScrollConfig
+        import pytest
+        # max_scrolls must be >= 1 — Pydantic enforces this
+        with pytest.raises(Exception):
+            ScrollConfig(max_scrolls=0)
+
+    def test_scroll_config_delay_ms_min(self):
+        from huginn.browser import ScrollConfig
+        # delay_ms must be >= 0
+        config = ScrollConfig(delay_ms=0)
+        assert config.delay_ms >= 0
+
+
+class TestAutoScroll:
+    """Test auto_scroll method on BrowserManager."""
+
+    @pytest.mark.asyncio
+    async def test_auto_scroll_returns_count(self):
+        """auto_scroll should return number of scrolls performed."""
+        from huginn.browser import BrowserManager, ScrollConfig
+
+        bm = BrowserManager()
+        page = AsyncMock()
+        # Simulate a page that grows for 3 scrolls then stabilizes.
+        # auto_scroll calls evaluate("document.body.scrollHeight") to read height,
+        # then evaluate("window.scrollTo(...)") to scroll down. The mock must
+        # distinguish between these by checking if the script starts with "document".
+        call_count = [0]
+        heights = [5000, 10000, 15000, 15000]  # growing then stops
+
+        async def mock_evaluate(script):
+            if script.startswith("document"):
+                idx = min(call_count[0], len(heights) - 1)
+                call_count[0] += 1
+                return heights[idx]
+            # scrollTo calls — just return None
+            return None
+
+        page.evaluate = AsyncMock(side_effect=mock_evaluate)
+
+        config = ScrollConfig(max_scrolls=5, delay_ms=10)
+        result = await bm.auto_scroll(page, config)
+
+        # Should have scrolled 3 times (then height stabilized)
+        assert result == 3
+
+    @pytest.mark.asyncio
+    async def test_auto_scroll_stops_on_no_growth(self):
+        """auto_scroll should stop when page height stops growing."""
+        from huginn.browser import BrowserManager, ScrollConfig
+
+        bm = BrowserManager()
+        page = AsyncMock()
+        # Page doesn't grow at all (immediate stop)
+        page.evaluate = AsyncMock(return_value=5000)
+
+        config = ScrollConfig(max_scrolls=5, delay_ms=10)
+        result = await bm.auto_scroll(page, config)
+
+        # Should stop after first scroll since height never changes
+        assert result == 1
+
+    @pytest.mark.asyncio
+    async def test_auto_scroll_max_scrolls_limit(self):
+        """auto_scroll should not exceed max_scrolls."""
+        from huginn.browser import BrowserManager, ScrollConfig
+
+        bm = BrowserManager()
+        page = AsyncMock()
+        # Page keeps growing forever
+        counter = [0]
+        async def growing_height(script):
+            counter[0] += 1
+            return 5000 * (counter[0] + 1)
+
+        page.evaluate = AsyncMock(side_effect=growing_height)
+
+        config = ScrollConfig(max_scrolls=3, delay_ms=10)
+        result = await bm.auto_scroll(page, config)
+
+        assert result <= 3
+
+    @pytest.mark.asyncio
+    async def test_auto_scroll_default_config(self):
+        """auto_scroll with no config should use defaults."""
+        from huginn.browser import BrowserManager
+
+        bm = BrowserManager()
+        page = AsyncMock()
+        # Immediate no-growth should complete fast
+        page.evaluate = AsyncMock(return_value=5000)
+
+        result = await bm.auto_scroll(page)
+
+        assert result >= 1
+
+    @pytest.mark.asyncio
+    async def test_auto_scroll_scrolls_back_to_top(self):
+        """auto_scroll should scroll back to top when scroll_to_bottom is True."""
+        from huginn.browser import BrowserManager, ScrollConfig
+
+        bm = BrowserManager()
+        page = AsyncMock()
+        # Immediately stop growing
+        page.evaluate = AsyncMock(return_value=5000)
+
+        config = ScrollConfig(max_scrolls=2, delay_ms=10, scroll_to_bottom=True)
+        await bm.auto_scroll(page, config)
+
+        # Last evaluate call should scroll back to top
+        # The evaluate calls: scrollHeight, scrollTo, scrollHeight, scrollTo, scrollTo(0,0)
+        calls = [str(c) for c in page.evaluate.call_args_list]
+        assert any("scrollTo(0, 0)" in str(c) or "scrollTo(0,0)" in str(c) for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_auto_scroll_no_scroll_to_top(self):
+        """When scroll_to_bottom=False, should NOT scroll back to top."""
+        from huginn.browser import BrowserManager, ScrollConfig
+
+        bm = BrowserManager()
+        page = AsyncMock()
+        page.evaluate = AsyncMock(return_value=5000)
+
+        config = ScrollConfig(max_scrolls=2, delay_ms=10, scroll_to_bottom=False)
+        await bm.auto_scroll(page, config)
+
+        # None of the evaluate calls should be scrollTo(0, 0) or scrollTo(0,0)
+        calls = [str(c) for c in page.evaluate.call_args_list]
+        # Note: window.scrollTo(0, document.body.scrollHeight) IS the scroll action
+        # scrollTo(0, 0) is the "back to top" — there should be only scrollDown calls, no top reset
+        top_scrolls = [c for c in calls if "0, 0" in c or "0,0" in c]
+        # The scroll-to-bottom action is "window.scrollTo(0, document.body.scrollHeight)"
+        # which does NOT have "0, 0" — it has "0, ...scrollHeight"
+        # The back-to-top is "window.scrollTo(0, 0)" which has "0, 0"
+        assert len(top_scrolls) == 0

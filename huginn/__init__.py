@@ -14,6 +14,6 @@ stealth browser engine, DOM walker, and mental model system.
 __version__ = "1.0.0"
 __author__ = "Phnix"
 
-from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for  # noqa: F401
+from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for, ScrollConfig  # noqa: F401
 
-__all__ = ["BrowserManager", "StarSearchBackend", "WaitStrategy", "parse_wait_for"]
+__all__ = ["BrowserManager", "StarSearchBackend", "WaitStrategy", "parse_wait_for", "ScrollConfig"]

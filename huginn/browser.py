@@ -18,6 +18,8 @@ from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
 
+from pydantic import BaseModel, Field
+
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
 from .config import BrowserConfig
@@ -93,6 +95,17 @@ def parse_wait_for(wait_for: Optional[Union[int, float, str]]) -> Tuple[WaitStra
         # Otherwise treat as CSS selector
         return (WaitStrategy.SELECTOR, wait_for)
     return (WaitStrategy.TIMEOUT, 3000)
+
+
+class ScrollConfig(BaseModel):
+    """Configuration for infinite scroll handling.
+
+    Controls how auto_scroll iterates through dynamically-loaded content
+    (infinite scroll pages, lazy-loaded images, load-more buttons).
+    """
+    max_scrolls: int = Field(default=10, ge=1, description="Maximum number of scroll iterations")
+    delay_ms: int = Field(default=500, ge=0, description="Delay in ms between scrolls for content to load")
+    scroll_to_bottom: bool = Field(default=True, description="Scroll back to top after finishing")
 
 
 class StarSearchBackend:
@@ -429,6 +442,48 @@ class BrowserManager:
                 await page.wait_for_load_state("domcontentloaded")
             except Exception:
                 pass  # already loaded
+
+    # ── infinite scroll ──────────────────────────────────────────────────────
+
+    async def auto_scroll(self, page: Page, config: Optional[ScrollConfig] = None) -> int:
+        """Auto-scroll a page to load lazy/dynamic content.
+
+        Scrolls down repeatedly, waiting for new content to load between
+        each scroll. Stops when the page height stops changing or max_scrolls
+        is reached. Optionally scrolls back to the top when done.
+
+        Args:
+            page: Playwright page object
+            config: ScrollConfig controlling behavior (uses defaults if None)
+
+        Returns:
+            Number of scrolls performed.
+        """
+        if config is None:
+            config = ScrollConfig()
+
+        scroll_count = 0
+        last_height = 0
+
+        for _ in range(config.max_scrolls):
+            current_height = await page.evaluate("document.body.scrollHeight")
+            if current_height == last_height and scroll_count > 0:
+                break  # No more content loading
+
+            last_height = current_height
+
+            # Scroll to bottom
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            scroll_count += 1
+
+            # Wait for new content to load
+            await asyncio.sleep(config.delay_ms / 1000)
+
+        # Scroll back to top if requested
+        if config.scroll_to_bottom:
+            await page.evaluate("window.scrollTo(0, 0)")
+
+        return scroll_count
 
     # ── content extraction ─────────────────────────────────────────────────
 

@@ -200,6 +200,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
                 timeout=req.timeout,
                 proxy=proxy_dict,
                 max_retries=req.max_retries,
+                scroll=req.scroll,
             )
             return ScrapeResponse(success=True, data=data)
         except Exception as e:

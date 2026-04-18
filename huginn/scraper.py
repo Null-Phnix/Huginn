@@ -54,6 +54,7 @@ class Scraper:
         timeout: int = 30000,
         proxy: Optional[Dict[str, str]] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        scroll: bool = False,
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -88,6 +89,10 @@ class Scraper:
                 # Execute pre-extraction actions
                 if actions:
                     await self.browser.execute_actions(page, actions)
+
+                # Auto-scroll for dynamic content
+                if scroll:
+                    await self.browser.auto_scroll(page)
 
                 # Extract content
                 content = await self.browser.extract_content(page)
