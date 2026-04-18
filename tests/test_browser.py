@@ -62,3 +62,59 @@ class TestBrowserConstants:
         from huginn.browser import CHALLENGE_WAIT_SECONDS, MAX_CHALLENGE_RETRIES
         assert CHALLENGE_WAIT_SECONDS > 0
         assert MAX_CHALLENGE_RETRIES > 0
+
+
+class TestWaitStrategy:
+    """Test smart wait strategy parsing and enum."""
+
+    def test_wait_strategy_enum(self):
+        from huginn.browser import WaitStrategy
+        assert WaitStrategy.SELECTOR == "selector"
+        assert WaitStrategy.NETWORK_IDLE == "networkidle"
+        assert WaitStrategy.DOM_CONTENT_LOADED == "domcontentloaded"
+        assert WaitStrategy.TIMEOUT == "timeout"
+
+    def test_parse_wait_for_int(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for(3000)
+        assert result == (WaitStrategy.TIMEOUT, 3000)
+
+    def test_parse_wait_for_float(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for(2500.5)
+        assert result == (WaitStrategy.TIMEOUT, 2500)
+
+    def test_parse_wait_for_string_selector(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for("div.content")
+        assert result == (WaitStrategy.SELECTOR, "div.content")
+
+    def test_parse_wait_for_networkidle(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for("networkidle")
+        assert result == (WaitStrategy.NETWORK_IDLE, 5000)
+
+    def test_parse_wait_for_network_idle_hyphen(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for("network-idle")
+        assert result == (WaitStrategy.NETWORK_IDLE, 5000)
+
+    def test_parse_wait_for_network_idle_underscore(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for("network_idle")
+        assert result == (WaitStrategy.NETWORK_IDLE, 5000)
+
+    def test_parse_wait_for_domcontentloaded(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for("domcontentloaded")
+        assert result == (WaitStrategy.DOM_CONTENT_LOADED, 0)
+
+    def test_parse_wait_for_none(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for(None)
+        assert result == (WaitStrategy.TIMEOUT, 3000)
+
+    def test_parse_wait_for_css_class_selector(self):
+        from huginn.browser import WaitStrategy, parse_wait_for
+        result = parse_wait_for("#main-content")
+        assert result == (WaitStrategy.SELECTOR, "#main-content")

@@ -13,8 +13,9 @@ import json
 import logging
 import re
 import time
+from enum import Enum
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
@@ -53,6 +54,45 @@ Object.defineProperty(navigator, 'languages', {
     get: () => ['en-US', 'en']
 });
 """
+
+
+class WaitStrategy(str, Enum):
+    """Smart wait strategies for page navigation.
+
+    Instead of a dumb asyncio.sleep, we can:
+    - TIMEOUT: sleep for N ms (backward compatible)
+    - SELECTOR: wait for a CSS selector to appear
+    - NETWORK_IDLE: wait for network activity to settle
+    - DOM_CONTENT_LOADED: wait for DOM ready (fastest)
+    """
+    TIMEOUT = "timeout"
+    SELECTOR = "selector"
+    NETWORK_IDLE = "networkidle"
+    DOM_CONTENT_LOADED = "domcontentloaded"
+
+
+def parse_wait_for(wait_for: Optional[Union[int, float, str]]) -> Tuple[WaitStrategy, Union[int, str]]:
+    """Parse the wait_for parameter into a (WaitStrategy, value) tuple.
+
+    Accepts:
+        int/float — timeout in ms: (TIMEOUT, int_ms)
+        "css.selector" — wait for element: (SELECTOR, "css.selector")
+        "networkidle" / "network-idle" / "network_idle" — wait for network idle: (NETWORK_IDLE, 5000)
+        "domcontentloaded" — wait for DOM ready: (DOM_CONTENT_LOADED, 0)
+        None — default timeout: (TIMEOUT, 3000)
+    """
+    if wait_for is None:
+        return (WaitStrategy.TIMEOUT, 3000)
+    if isinstance(wait_for, (int, float)):
+        return (WaitStrategy.TIMEOUT, int(wait_for))
+    if isinstance(wait_for, str):
+        if wait_for in ("networkidle", "network_idle", "network-idle"):
+            return (WaitStrategy.NETWORK_IDLE, 5000)
+        if wait_for == "domcontentloaded":
+            return (WaitStrategy.DOM_CONTENT_LOADED, 0)
+        # Otherwise treat as CSS selector
+        return (WaitStrategy.SELECTOR, wait_for)
+    return (WaitStrategy.TIMEOUT, 3000)
 
 
 class StarSearchBackend:
@@ -362,6 +402,33 @@ class BrowserManager:
             logger.error(f"Navigation failed for {url}: {e}")
             self.last_status_code = 0
             return False
+
+    async def smart_wait(self, page: Page, strategy: WaitStrategy, value, timeout_ms: int = 10000):
+        """Apply intelligent wait strategy to the page.
+
+        Args:
+            page: Playwright page object
+            strategy: WaitStrategy enum value
+            value: Timeout in ms (TIMEOUT), selector string (SELECTOR), or unused
+            timeout_ms: Max time to wait for selector/networkidle
+        """
+        if strategy == WaitStrategy.TIMEOUT:
+            await asyncio.sleep(value / 1000)
+        elif strategy == WaitStrategy.SELECTOR:
+            try:
+                await page.wait_for_selector(value, timeout=timeout_ms)
+            except Exception as e:
+                logger.warning(f"Selector wait failed for '{value}': {e}")
+        elif strategy == WaitStrategy.NETWORK_IDLE:
+            try:
+                await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception:
+                pass  # networkidle can timeout on complex pages, that's ok
+        elif strategy == WaitStrategy.DOM_CONTENT_LOADED:
+            try:
+                await page.wait_for_load_state("domcontentloaded")
+            except Exception:
+                pass  # already loaded
 
     # ── content extraction ─────────────────────────────────────────────────
 

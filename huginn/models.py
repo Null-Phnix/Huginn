@@ -77,7 +77,7 @@ class ScrapeOptions(BaseModel):
     only_main_content: bool = Field(True)
     include_tags: Optional[List[str]] = Field(None)
     exclude_tags: Optional[List[str]] = Field(None)
-    wait_for: Optional[int] = Field(None)
+    wait_for: Optional[Union[int, str]] = Field(None)
     timeout: int = 30000
     headers: Optional[Dict[str, str]] = None
     actions: Optional[List[Action]] = None
@@ -91,7 +91,7 @@ class ScrapeRequest(BaseModel):
     url: str
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     headers: Optional[Dict[str, str]] = None
-    wait_for: Optional[int] = Field(None)
+    wait_for: Optional[Union[int, str]] = Field(None)
     actions: Optional[List[Action]] = None
     extract: Optional[ExtractOptions] = None
     include_tags: Optional[List[str]] = Field(None)

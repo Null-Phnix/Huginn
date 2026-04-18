@@ -7,10 +7,10 @@ execute optional actions, then extract content in requested formats.
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
-from .browser import BrowserManager
+from .browser import BrowserManager, WaitStrategy, parse_wait_for
 from .models import OutputFormat, ScrapeData
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class Scraper:
         url: str,
         formats: Optional[List[OutputFormat]] = None,
         headers: Optional[Dict[str, str]] = None,
-        wait_for: Optional[int] = None,
+        wait_for: Optional[Union[int, str]] = None,
         actions: Optional[List[dict]] = None,
         include_tags: Optional[List[str]] = None,
         exclude_tags: Optional[List[str]] = None,
@@ -53,9 +53,10 @@ class Scraper:
             if not success:
                 return ScrapeData(metadata={"url": url, "status_code": 500, "error": "Navigation failed"})
 
-            # Wait for specific selector or time
+            # Smart wait: selector, networkIdle, domContentLoaded, or timeout
             if wait_for:
-                await asyncio.sleep(wait_for / 1000)
+                strategy, value = parse_wait_for(wait_for)
+                await self.browser.smart_wait(page, strategy, value, timeout_ms=timeout)
 
             # Execute pre-extraction actions
             if actions:
