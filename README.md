@@ -2,8 +2,8 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-9f6ff3?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-v1.0.0-4ade80?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
-[![Tests](https://img.shields.io/badge/tests-114_passing-4ade80?style=flat-square&labelColor=07061a)]
+[![Version](https://img.shields.io/badge/version-v1.1.0-4ade80?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
+[![Tests](https://img.shields.io/badge/tests-258_passing-4ade80?style=flat-square&labelColor=07061a)]
 
 **Autonomous web scraping API. Firecrawl-compatible interface, stealth-first, self-hosted.**
 
@@ -13,6 +13,14 @@ Built on [Blackreach](https://github.com/Null-Phnix/Blackreach)'s DOM walker, st
 pip install blackcrawl
 playwright install chromium
 blackcrawl serve
+```
+
+```bash
+# Docker (one-liner)
+docker run -p 7432:7432 \
+  -e HUGINN_API_KEY=your_key \
+  -v ./data:/app/data \
+  huginn/huginn:latest
 ```
 
 ```python
@@ -64,7 +72,7 @@ Every popular web scraping API has fundamental problems:
 | Problem | Firecrawl | Jina Reader | Huginn |
 |---------|-----------|-------------|------------|
 | Anti-bot detection | Cloud-only, paid tier | Basic | Built-in stealth (webdriver patches, fingerprint spoofing, behavioral humanization) |
-| JS-rendered content | Playwright | Basic | Playwright + StarSearch (15 JS injection modules, 80+ fingerprint profiles) |
+| JS-rendered content | Playwright | Basic | Playwright + stealth patches (webdriver removal, plugin spoofing, viewport normalization) |
 | Crawl reliability | Hangs silently | No crawling | Stuck detection, error recovery, rate limit resilience from 3k+ real-world test failures |
 | Content quality | Readability + turndown | Readability | DOM walker (ARIA roles, landmarks, interactive element IDs — 200k token pages → 2k token observations) |
 | Structured extraction | LLM throw at text | None | Mental model-assisted extraction with belief tracking and retry logic |
@@ -314,6 +322,51 @@ Request → FastAPI → [Scrape|Crawl|Map|Extract|Search]
 ---
 
 ## Differences from Firecrawl
+
+## v1.1 New Features
+
+| Feature | Firecrawl Status | Huginn Status |
+|---------|-------------------|---------------|
+| **Webhook notifications** | Cloud only (Oct 2024) | Built-in |
+| **Scheduled crawling** | Cloud only (Oct 2024) | Built-in |
+| **PDF/OCR extraction** | Cloud only (Oct 2024) | Built-in |
+| **Docker deployment** | Self-hosted plan (Jan 2025) | Docker one-liner |
+| **OpenAPI docs** | Cloud only | Built-in |
+| **Python SDK** | Cloud only | Built-in |
+| **MCP server** | No | Built-in |
+| **CLI tool** | No | Built-in |
+
+### Webhooks
+Receive POST callbacks when crawl/scrape jobs complete:
+```bash
+curl -X POST http://localhost:7432/v1/scrape \
+  -H "Authorization: Bearer $HUGINN_API_KEY" \
+  -d '{"url":"https://example.com","webhook_url":"https://your-endpoint.com/callback"}'
+```
+
+### Scheduled Jobs
+Schedule recurring crawls with cron syntax:
+```bash
+huginn schedule create \
+  --name "daily-docs" \
+  --job-type crawl \
+  --request '{"url":"https://docs.python.org","maxDepth":2}' \
+  --cron "0 9 * * *" \
+  --webhook-url https://your-endpoint.com/callback
+```
+
+### Docker One-Liner
+```bash
+curl -fsSL https://get.docker.com | sh
+docker run -d \
+  --name huginn \
+  -p 7432:7432 \
+  -e HUGINN_API_KEY=your_key \
+  -v huginn_data:/app/data \
+  huginn/huginn:latest
+```
+
+Then: `docker exec huginn huginn jobs list`
 
 | Feature | Firecrawl (self-hosted) | Huginn |
 |---------|------------------------|------------|

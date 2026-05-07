@@ -1,0 +1,1168 @@
+openapi: 3.1.0
+info:
+  title: Huginn
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /v1/probe:
+    post:
+      summary: Scrape
+      description: Scrape a single URL and return content in requested formats.
+      operationId: scrape_v1_probe_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScrapeRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScrapeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sweep:
+    post:
+      summary: Start Sweep
+      description: Start an async crawl job. Returns job ID for polling, or SSE stream
+        if stream=True.
+      operationId: start_sweep_v1_sweep_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrawlRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sweep/{job_id}:
+    get:
+      summary: Get Sweep Status
+      description: Get crawl job status and results.
+      operationId: get_sweep_status_v1_sweep__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrawlStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      summary: Cancel Crawl
+      description: Cancel a running crawl job.
+      operationId: cancel_crawl_v1_sweep__job_id__delete
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/chart:
+    post:
+      summary: Chart Site
+      description: "Fast URL discovery \u2014 returns all links without full content\
+        \ extraction."
+      operationId: chart_site_v1_chart_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MapRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/distill:
+    post:
+      summary: Start Distill
+      description: Start an async extraction job. Returns job ID for polling, or SSE
+        stream if stream=True.
+      operationId: start_distill_v1_distill_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DistillRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/distill/{job_id}:
+    get:
+      summary: Get Distill Status
+      description: Get extraction job status and results.
+      operationId: get_distill_status_v1_distill__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DistillStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/seek:
+    post:
+      summary: Search
+      description: Search the web and scrape results.
+      operationId: search_v1_seek_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/jobs:
+    get:
+      summary: List Jobs
+      description: List all jobs, optionally filtered by status.
+      operationId: list_jobs_v1_jobs_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/jobs/{job_id}:
+    delete:
+      summary: Delete Job
+      description: Delete a job.
+      operationId: delete_job_v1_jobs__job_id__delete
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/flock:
+    post:
+      summary: Flock Scrape
+      description: Scrape multiple URLs concurrently.
+      operationId: flock_scrape_v1_flock_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FlockRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlockResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    Action:
+      properties:
+        type:
+          $ref: '#/components/schemas/ActionType'
+        selector:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Selector
+        text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Text
+        key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Key
+        direction:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+          default: down
+        amount:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Amount
+        values:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Values
+        timeout:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Timeout
+      type: object
+      required:
+      - type
+      title: Action
+      description: Browser action to execute before extraction.
+    ActionType:
+      type: string
+      enum:
+      - click
+      - wait
+      - scroll
+      - screenshot
+      - type
+      - press
+      - select
+      - hover
+      - wait_for_selector
+      title: ActionType
+    CrawlRequest:
+      properties:
+        url:
+          type: string
+          title: Url
+        max_depth:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Max Depth
+        limit:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Limit
+        allow_backward_crawling:
+          type: boolean
+          title: Allow Backward Crawling
+          default: false
+        allow_external_links:
+          type: boolean
+          title: Allow External Links
+          default: false
+        include_paths:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Include Paths
+        exclude_paths:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Exclude Paths
+        scrape_options:
+          anyOf:
+          - $ref: '#/components/schemas/ScrapeOptions'
+          - type: 'null'
+        ignore_robots:
+          type: boolean
+          title: Ignore Robots
+          description: Skip robots.txt checks when True
+          default: false
+        stream:
+          type: boolean
+          title: Stream
+          default: false
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+          description: URL to POST job completion/failure notifications
+      type: object
+      required:
+      - url
+      title: CrawlRequest
+      description: POST /v1/crawl request body.
+    CrawlStatusResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        completed:
+          type: integer
+          title: Completed
+          default: 0
+        total:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Total
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        data:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ScrapeData'
+            type: array
+          - type: 'null'
+          title: Data
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      - status
+      title: CrawlStatusResponse
+      description: GET /v1/crawl/{id} response.
+    DistillOptions:
+      properties:
+        prompt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt
+        schema_:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Schema
+        system_prompt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: System Prompt
+      type: object
+      title: DistillOptions
+      description: LLM extraction options.
+    DistillRequest:
+      properties:
+        urls:
+          items:
+            type: string
+          type: array
+          title: Urls
+        prompt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt
+        schema_:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Schema
+          description: JSON schema for structured extraction
+        system_prompt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: System Prompt
+          description: Custom system prompt for LLM
+        format:
+          type: string
+          title: Format
+          description: 'Output format: text, markdown, or json'
+          default: markdown
+        mental_model:
+          type: boolean
+          title: Mental Model
+          description: Use DOM mental model for better extraction
+          default: true
+        max_retries:
+          type: integer
+          maximum: 5.0
+          minimum: 0.0
+          title: Max Retries
+          description: Max extraction retry attempts
+          default: 3
+        stream:
+          type: boolean
+          title: Stream
+          default: false
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+          description: URL to POST job completion/failure notifications
+      type: object
+      title: DistillRequest
+      description: "POST /v1/distill request body \u2014 structured data extraction\
+        \ from URLs."
+    DistillStatusResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        data:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Data
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      - status
+      title: DistillStatusResponse
+      description: GET /v1/distill/{id} response.
+    FlockRequest:
+      properties:
+        urls:
+          items:
+            type: string
+          type: array
+          maxItems: 50
+          minItems: 1
+          title: Urls
+        formats:
+          items:
+            $ref: '#/components/schemas/OutputFormat'
+          type: array
+          title: Formats
+        only_main_content:
+          type: boolean
+          title: Only Main Content
+          default: true
+        include_tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Include Tags
+        exclude_tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Exclude Tags
+        timeout:
+          type: integer
+          title: Timeout
+          default: 30000
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+          description: URL to POST job completion/failure notifications
+      type: object
+      required:
+      - urls
+      title: FlockRequest
+      description: POST /v1/batch/scrape request body.
+    FlockResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        data:
+          items:
+            $ref: '#/components/schemas/FlockResultItem'
+          type: array
+          title: Data
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      title: FlockResponse
+      description: POST /v1/batch/scrape response.
+    FlockResultItem:
+      properties:
+        url:
+          type: string
+          title: Url
+        success:
+          type: boolean
+          title: Success
+        data:
+          anyOf:
+          - $ref: '#/components/schemas/ScrapeData'
+          - type: 'null'
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - url
+      - success
+      title: FlockResultItem
+      description: Single result in a batch scrape response.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    JobStatus:
+      type: string
+      enum:
+      - pending
+      - running
+      - completed
+      - failed
+      - cancelled
+      title: JobStatus
+    Location:
+      properties:
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        languages:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Languages
+      type: object
+      title: Location
+      description: Geographic location for proxy.
+    MapRequest:
+      properties:
+        url:
+          type: string
+          title: Url
+        search:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+        include_subdomains:
+          type: boolean
+          title: Include Subdomains
+          default: false
+        limit:
+          type: integer
+          title: Limit
+          default: 5000
+      type: object
+      required:
+      - url
+      title: MapRequest
+      description: POST /v1/map request body.
+    MapResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        links:
+          items:
+            type: string
+          type: array
+          title: Links
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      title: MapResponse
+      description: POST /v1/map response.
+    OutputFormat:
+      type: string
+      enum:
+      - markdown
+      - html
+      - raw_html
+      - screenshot
+      - links
+      - metadata
+      - pdf
+      title: OutputFormat
+    ProxyMode:
+      type: string
+      enum:
+      - basic
+      - stealth
+      title: ProxyMode
+    ScrapeData:
+      properties:
+        markdown:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Markdown
+        html:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Html
+        raw_html:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Raw Html
+        screenshot:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Screenshot
+        links:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Links
+        metadata:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadata
+        extract:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Extract
+      type: object
+      title: ScrapeData
+      description: Scrape result data.
+    ScrapeOptions:
+      properties:
+        formats:
+          items:
+            $ref: '#/components/schemas/OutputFormat'
+          type: array
+          title: Formats
+        only_main_content:
+          type: boolean
+          title: Only Main Content
+          default: true
+        include_tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Include Tags
+        exclude_tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Exclude Tags
+        wait_for:
+          anyOf:
+          - type: integer
+          - type: string
+          - type: 'null'
+          title: Wait For
+        timeout:
+          type: integer
+          title: Timeout
+          default: 30000
+        headers:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Headers
+        actions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/Action'
+            type: array
+          - type: 'null'
+          title: Actions
+        max_retries:
+          type: integer
+          maximum: 5.0
+          minimum: 0.0
+          title: Max Retries
+          default: 2
+        scroll:
+          type: boolean
+          title: Scroll
+          description: Auto-scroll page to load dynamic content
+          default: false
+        render_mode:
+          type: string
+          title: Render Mode
+          description: 'Rendering mode: auto, full (browser), light (httpx)'
+          default: auto
+      type: object
+      title: ScrapeOptions
+      description: Options passed to scrape during crawl.
+    ScrapeRequest:
+      properties:
+        url:
+          type: string
+          title: Url
+        formats:
+          items:
+            $ref: '#/components/schemas/OutputFormat'
+          type: array
+          title: Formats
+        headers:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Headers
+        wait_for:
+          anyOf:
+          - type: integer
+          - type: string
+          - type: 'null'
+          title: Wait For
+        actions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/Action'
+            type: array
+          - type: 'null'
+          title: Actions
+        extract:
+          anyOf:
+          - $ref: '#/components/schemas/DistillOptions'
+          - type: 'null'
+        include_tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Include Tags
+        exclude_tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Exclude Tags
+        only_main_content:
+          type: boolean
+          title: Only Main Content
+          default: true
+        timeout:
+          type: integer
+          title: Timeout
+          default: 30000
+        proxy:
+          anyOf:
+          - $ref: '#/components/schemas/ProxyMode'
+          - type: 'null'
+        location:
+          anyOf:
+          - $ref: '#/components/schemas/Location'
+          - type: 'null'
+        stealth_mode:
+          type: boolean
+          title: Stealth Mode
+          default: true
+        max_retries:
+          type: integer
+          maximum: 5.0
+          minimum: 0.0
+          title: Max Retries
+          description: Max retry attempts on transient errors
+          default: 2
+        scroll:
+          type: boolean
+          title: Scroll
+          description: Auto-scroll page to load dynamic content before extraction
+          default: false
+        render_mode:
+          type: string
+          title: Render Mode
+          description: 'Rendering mode: auto, full (browser), light (httpx)'
+          default: auto
+      type: object
+      required:
+      - url
+      title: ScrapeRequest
+      description: POST /v1/scrape request body.
+    ScrapeResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        data:
+          anyOf:
+          - $ref: '#/components/schemas/ScrapeData'
+          - type: 'null'
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      title: ScrapeResponse
+      description: POST /v1/scrape response.
+    SearchOptions:
+      properties:
+        limit:
+          type: integer
+          title: Limit
+          default: 5
+        tbs:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tbs
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+      type: object
+      title: SearchOptions
+      description: Search-specific options.
+    SearchRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+        search_options:
+          anyOf:
+          - $ref: '#/components/schemas/SearchOptions'
+          - type: 'null'
+        scrape_options:
+          anyOf:
+          - $ref: '#/components/schemas/ScrapeOptions'
+          - type: 'null'
+        fallback_chain:
+          type: boolean
+          title: Fallback Chain
+          default: true
+      type: object
+      required:
+      - query
+      title: SearchRequest
+      description: POST /v1/search request body.
+    SearchResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        data:
+          items:
+            $ref: '#/components/schemas/SearchResultItem'
+          type: array
+          title: Data
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      title: SearchResponse
+      description: POST /v1/search response.
+    SearchResultItem:
+      properties:
+        markdown:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Markdown
+        html:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Html
+        metadata:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadata
+      type: object
+      title: SearchResultItem
+      description: Single search result with scraped content.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

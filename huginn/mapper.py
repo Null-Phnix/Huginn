@@ -10,6 +10,8 @@ import logging
 import re
 from typing import List, Optional, Set
 from urllib.parse import urlparse, urljoin
+logger = logging.getLogger(__name__)
+
 try:
     from defusedxml import ElementTree as ElementTree
 except ImportError:
@@ -31,6 +33,10 @@ class Mapper:
 
     def __init__(self, browser: BrowserManager):
         self.browser = browser
+
+    async def chart_site(self, *args, **kwargs):
+        """Alias for map_site — used by /v1/chart endpoint."""
+        return await self.map_site(*args, **kwargs)
 
     async def map_site(
         self,

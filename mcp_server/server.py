@@ -1,203 +1,442 @@
 """
-Blackreach MCP Server
+Huginn MCP Server
 
-Exposes the Blackreach autonomous browser agent as Claude tool calls.
-Better than WebFetch for: JS-rendered sites, paginated content,
-sites with anti-bot measures, multi-step navigation.
+A Model Context Protocol server that exposes Huginn web intelligence tools
+(probe, sweep, chart, seek, distill, flock) to MCP clients.
 
-Architecture: Submits jobs to the Blackreach HTTP server (localhost:7432),
-then polls for completion. This avoids MCP tool call timeouts since Blackreach
-can take 2-5 minutes per job.
+Uses the `mcp` Python package (modelcontextprotocol/python-sdk).
 
-Start the HTTP server first in your terminal:
-  blackreach-server
-
-Keep that terminal tab open, then use these tools normally.
+Environment Variables:
+    HUGINN_BASE_URL: Base URL of the Huginn API (default: http://localhost:7432)
+    HUGINN_API_KEY:  API key for Huginn authentication
+    HUGINN_POLL_INTERVAL: Seconds between job status polls (default: 2)
+    HUGINN_POLL_TIMEOUT:  Max seconds to wait for job completion (default: 300)
 """
+from __future__ import annotations
+
+import asyncio
+import os
 import time
+from typing import Any
+
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
-mcp = FastMCP("blackreach")
+# ─── Settings ──────────────────────────────────────────────────────────────────
 
-HTTP_BASE   = "http://127.0.0.1:7432"
-SUBMIT_TIMEOUT = 10    # seconds to submit job
-POLL_INTERVAL  = 5     # seconds between polls
-MAX_WAIT       = 600   # 10 min max wait
+HUGINN_BASE_URL = os.getenv("HUGINN_BASE_URL", "http://localhost:7432").rstrip("/")
+HUGINN_API_KEY = os.getenv("HUGINN_API_KEY", "")
+HUGINN_POLL_INTERVAL = float(os.getenv("HUGINN_POLL_INTERVAL", "2"))
+HUGINN_POLL_TIMEOUT = float(os.getenv("HUGINN_POLL_TIMEOUT", "300"))
 
-
-def _not_running_msg() -> str:
-    return (
-        "Blackreach HTTP server is not running. Start it first:\n\n"
-        "  blackreach-server\n\n"
-        "Keep that terminal tab open, then retry."
-    )
+# ─── HTTP Helpers ─────────────────────────────────────────────────────────────
 
 
-def _submit(endpoint: str, **kwargs) -> str | dict:
-    """Submit a job and return job_id, or error string."""
-    try:
-        resp = httpx.post(f"{HTTP_BASE}/{endpoint}", json=kwargs, timeout=SUBMIT_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()
-    except httpx.ConnectError:
-        return _not_running_msg()
-    except Exception as e:
-        return f"Error submitting job: {e}"
+def _headers() -> dict[str, str]:
+    h = {"Content-Type": "application/json", "Accept": "application/json"}
+    if HUGINN_API_KEY:
+        h["Authorization"] = f"Bearer {HUGINN_API_KEY}"
+    return h
 
 
-def _poll(job_id: str) -> str:
-    """Poll until job completes, return formatted result string."""
-    deadline = time.time() + MAX_WAIT
-    dots = 0
-
-    while time.time() < deadline:
-        time.sleep(POLL_INTERVAL)
-        try:
-            resp = httpx.get(f"{HTTP_BASE}/jobs/{job_id}", timeout=SUBMIT_TIMEOUT)
-            resp.raise_for_status()
-            job = resp.json()
-        except Exception as e:
-            return f"Error polling job {job_id}: {e}"
-
-        status = job.get("status")
-
-        if status in ("done", "failed"):
-            lines = [
-                f"Success: {job.get('success')}",
-                f"Pages visited: {job.get('pages_visited', 0)}",
-                f"Steps taken: {job.get('steps_taken', 0)}",
-            ]
-            # The actual extracted content
-            extracted = job.get("result") or ""
-            if extracted:
-                lines.append(f"\n--- EXTRACTED CONTENT ---\n{extracted}\n--- END ---")
-
-            downloads = job.get("downloads") or []
-            if downloads:
-                lines.append(f"\nDownloads ({len(downloads)}):")
-                for d in downloads:
-                    lines.append(f"  {d}")
-            errors = job.get("errors") or []
-            if errors:
-                lines.append("\nErrors:")
-                for e in errors:
-                    lines.append(f"  {e}")
-            elapsed = int((job.get("finished_at", time.time()) - job.get("created_at", time.time())))
-            lines.append(f"\nCompleted in ~{elapsed}s")
-            return "\n".join(lines)
-
-        # Still pending/running — keep polling
-        dots = (dots + 1) % 4
-        dot_str = "." * (dots + 1)
-        print(f"[blackreach] Job {job_id} {status}{dot_str}", flush=True)
-
-    return f"Timed out waiting for job {job_id} after {MAX_WAIT}s. Check /jobs/{job_id} manually."
-
-
-@mcp.tool()
-def blackreach_browse(goal: str, start_url: str = "") -> str:
-    """
-    Run the Blackreach autonomous browser agent to accomplish a goal.
-
-    Use this instead of WebFetch when:
-    - The site uses JavaScript to render content
-    - You need to navigate multiple pages or handle pagination
-    - The site has Cloudflare or other anti-bot protection
-    - You need to interact with forms, buttons, or dynamic elements
-    - WebFetch returned empty, blocked, or incomplete content
-
-    NOTE: This can take 2-5 minutes. It submits the job and waits for completion.
-
-    Args:
-        goal: Natural language description of what to research, find, or download.
-              Be specific. E.g. "Find all remote AI engineer jobs on wellfound.com
-              posted in the last 7 days and return title, company, salary, and URL"
-        start_url: Optional starting URL. Agent will search for the right URL if not provided.
-
-    Returns:
-        Summary of what was accomplished, pages visited, steps taken, and any downloads.
-    """
-    payload = {"goal": goal}
-    if start_url:
-        payload["start_url"] = start_url
-
-    result = _submit("browse", **payload)
-    if isinstance(result, str):
-        return result  # error message
-
-    job_id = result.get("job_id")
-    if not job_id:
-        return f"Unexpected response: {result}"
-
-    return f"Job submitted: {job_id}\nWaiting for Blackreach to complete...\n\n" + _poll(job_id)
-
-
-@mcp.tool()
-def blackreach_search(query: str, num_results: int = 10) -> str:
-    """
-    Use Blackreach to perform a web search and extract structured results.
-
-    Better than WebFetch for search because it handles JS-rendered results
-    and can follow pagination. Takes 2-5 minutes.
-
-    Args:
-        query: Search query string
-        num_results: How many results to return (default 10)
-
-    Returns:
-        Search results with titles, URLs, and descriptions
-    """
-    result = _submit("search", query=query, num_results=num_results)
-    if isinstance(result, str):
-        return result
-
-    job_id = result.get("job_id")
-    if not job_id:
-        return f"Unexpected response: {result}"
-
-    return f"Search job submitted: {job_id}\n\n" + _poll(job_id)
-
-
-@mcp.tool()
-def blackreach_scrape_jobs(
-    role: str,
-    site: str = "wellfound.com",
-    filters: str = "remote, posted last 7 days"
-) -> str:
-    """
-    Scrape job listings from a job board using Blackreach.
-
-    Handles JS-rendered job boards that WebFetch can't access.
-    Takes 3-8 minutes depending on the site.
-
-    Args:
-        role: Job title to search for (e.g. "AI engineer", "Python developer")
-        site: Job board domain (default: wellfound.com)
-        filters: Additional filters to apply (default: "remote, posted last 7 days")
-
-    Returns:
-        List of job listings with title, company, salary (if shown), location, and URL
-    """
-    try:
-        resp = httpx.post(
-            f"{HTTP_BASE}/scrape-jobs",
-            params={"role": role, "site": site, "filters": filters},
-            timeout=SUBMIT_TIMEOUT,
+async def _post_json(path: str, json_data: dict[str, Any]) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{HUGINN_BASE_URL}{path}",
+            json=json_data,
+            headers=_headers(),
         )
         resp.raise_for_status()
-        result = resp.json()
-    except httpx.ConnectError:
-        return _not_running_msg()
-    except Exception as e:
-        return f"Error submitting job scrape: {e}"
+        return resp.json()
 
-    job_id = result.get("job_id")
+
+async def _get_json(path: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.get(
+            f"{HUGINN_BASE_URL}{path}",
+            headers=_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _delete_json(path: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.delete(
+            f"{HUGINN_BASE_URL}{path}",
+            headers=_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ─── Job Polling ──────────────────────────────────────────────────────────────
+
+
+async def _poll_job(
+    path: str,
+    ctx: Context | None = None,
+    poll_interval: float = HUGINN_POLL_INTERVAL,
+    timeout: float = HUGINN_POLL_TIMEOUT,
+) -> dict[str, Any]:
+    """
+    Poll a Huginn job endpoint until it reaches a terminal state.
+
+    Args:
+        path: The status endpoint to poll (e.g. /v1/sweep/{job_id})
+        ctx:  Optional MCP context for logging
+        poll_interval: Seconds between polls
+        timeout: Max seconds before TimeoutError
+
+    Returns the full job result dict.
+    Raises asyncio.TimeoutError if the job does not complete within `timeout`.
+    """
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        job = await _get_json(path)
+        status = str(job.get("status", job.get("data", {}).get("status", ""))).lower()
+
+        if ctx is not None:
+            ctx.debug(f"Job {path} status: {status}")
+
+        if status in ("completed", "success", "done"):
+            return job
+        if status in ("failed", "error", "cancelled"):
+            return job
+
+        await asyncio.sleep(poll_interval)
+
+    raise asyncio.TimeoutError(f"Job at {path} did not complete within {timeout}s")
+
+
+# ─── FastMCP Server ───────────────────────────────────────────────────────────
+
+mcp = FastMCP(
+    name="Huginn",
+    instructions=(
+        "Huginn MCP Server — autonomous web intelligence. Provides: probe (single URL), "
+        "sweep (deep crawl), chart (sitemap), seek (search), distill (structured extraction), "
+        "flock (batch scrape). Connect to a Huginn API instance (default http://localhost:7432)."
+    ),
+)
+
+
+# ─── Tool: probe ──────────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    name="probe",
+    description=(
+        "Scrape a single URL and return content in requested formats (markdown, html, links, etc.). "
+        "Use this for quick, lightweight page inspection without full crawling."
+    ),
+)
+async def probe(
+    url: str,
+    formats: list[str] | None = None,
+    only_main_content: bool = True,
+    include_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """
+    Scrape a single URL.
+
+    Args:
+        url:               The URL to scrape.
+        formats:           Output formats (markdown, html, raw_html, screenshot, links, metadata, pdf).
+        only_main_content: Filter to main content (default True).
+        include_tags:      Comma-separated tag list to include.
+        exclude_tags:      Comma-separated tag list to exclude.
+    """
+    if ctx:
+        ctx.info(f"Probing {url}")
+
+    payload: dict[str, Any] = {"url": url, "only_main_content": only_main_content}
+    if formats:
+        payload["formats"] = formats
+    if include_tags:
+        payload["include_tags"] = include_tags
+    if exclude_tags:
+        payload["exclude_tags"] = exclude_tags
+
+    return await _post_json("/v1/probe", payload)
+
+
+# ─── Tool: sweep ──────────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    name="sweep",
+    description=(
+        "Deep crawl a website starting from a URL, following links to discover pages. "
+        "Submits a crawl job, polls until completion, returns full crawled data. "
+        "For quick single-page scraping use 'probe' instead."
+    ),
+)
+async def sweep(
+    url: str,
+    max_depth: int = 2,
+    max_pages: int = 50,
+    formats: list[str] | None = None,
+    webhook_url: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """
+    Deep crawl a website.
+
+    Args:
+        url:        Starting URL for the crawl.
+        max_depth:  How deep to follow links (default 2).
+        max_pages:  Maximum unique pages to collect (default 50).
+        formats:    Output formats per page.
+        webhook_url: Optional webhook for completion notification.
+    """
+    if ctx:
+        ctx.info(f"Starting sweep of {url} (depth={max_depth}, max_pages={max_pages})")
+
+    payload: dict[str, Any] = {
+        "url": url,
+        "max_depth": max_depth,
+        "limit": max_pages,
+        "scrape_options": {"formats": formats or ["markdown"]},
+    }
+    if webhook_url:
+        payload["webhook_url"] = webhook_url
+
+    submit = await _post_json("/v1/sweep", payload)
+    job_id = submit.get("job_id")
     if not job_id:
-        return f"Unexpected response: {result}"
+        raise ValueError(f"Huginn returned no job_id: {submit}")
 
-    return f"Job scrape submitted: {job_id} — {role} on {site}\n\n" + _poll(job_id)
+    if ctx:
+        ctx.info(f"Crawl job submitted: {job_id}")
 
+    result = await _poll_job(f"/v1/sweep/{job_id}", ctx)
+
+    if ctx:
+        ctx.info(f"Crawl job {job_id} completed")
+
+    return result
+
+
+# ─── Tool: chart ──────────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    name="chart",
+    description="Generate a site map / chart of links from a root URL.",
+)
+async def chart(
+    url: str,
+    search: str | None = None,
+    include_subdomains: bool = False,
+    limit: int = 100,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """
+    Generate a site map.
+
+    Args:
+        url:                Root URL to chart.
+        search:             Limit to pages matching this search term.
+        include_subdomains: Include subdomains (default False).
+        limit:             Max links to return (default 100).
+    """
+    if ctx:
+        ctx.info(f"Charting {url}")
+
+    payload: dict[str, Any] = {"url": url, "limit": limit}
+    if search:
+        payload["search"] = search
+    if include_subdomains:
+        payload["include_subdomains"] = True
+
+    submit = await _post_json("/v1/chart", payload)
+    job_id = submit.get("job_id")
+    if not job_id:
+        return submit  # Some chart endpoints are sync
+
+    result = await _poll_job(f"/v1/chart/{job_id}", ctx)
+    return result
+
+
+# ─── Tool: seek ────────────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    name="seek",
+    description=(
+        "Search the web and return ranked results with snippets. "
+        "For deep crawling of result pages use 'sweep' instead."
+    ),
+)
+async def seek(
+    query: str,
+    limit: int = 10,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """
+    Web search.
+
+    Args:
+        query: Search query string.
+        limit: Number of results (default 10).
+    """
+    if ctx:
+        ctx.info(f"Seeking: {query}")
+
+    payload: dict[str, Any] = {"query": query}
+    if limit != 10:
+        payload["search_options"] = {"limit": limit}
+
+    return await _post_json("/v1/seek", payload)
+
+
+# ─── Tool: distill ──────────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    name="distill",
+    description=(
+        "Extract structured data from one or more URLs using a JSON schema or natural language prompt. "
+        "Submits an extraction job, polls until completion, returns structured result. "
+        "For simple scraping use 'probe' instead."
+    ),
+)
+async def distill(
+    urls: list[str],
+    prompt: str,
+    schema: dict[str, Any] | None = None,
+    format: str = "markdown",
+    webhook_url: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """
+    Extract structured data from URLs.
+
+    Args:
+        urls:       List of URLs to extract from.
+        prompt:     Natural language instruction for what to extract.
+        schema:     Optional JSON Schema for structured output.
+        format:     Output format — text, markdown, or json (requires schema).
+        webhook_url: Optional webhook for completion notification.
+    """
+    if ctx:
+        ctx.info(f"Distilling {len(urls)} URL(s) with prompt: {prompt}")
+
+    payload: dict[str, Any] = {
+        "urls": urls,
+        "prompt": prompt,
+        "format": format,
+    }
+    if schema:
+        payload["schema_"] = schema
+    if webhook_url:
+        payload["webhook_url"] = webhook_url
+
+    submit = await _post_json("/v1/distill", payload)
+    job_id = submit.get("job_id")
+    if not job_id:
+        raise ValueError(f"Huginn returned no job_id: {submit}")
+
+    if ctx:
+        ctx.info(f"Distill job submitted: {job_id}")
+
+    result = await _poll_job(f"/v1/distill/{job_id}", ctx)
+
+    if ctx:
+        ctx.info(f"Distill job {job_id} completed")
+
+    return result
+
+
+# ─── Tool: flock ────────────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    name="flock",
+    description=(
+        "Batch scrape multiple URLs in parallel. "
+        "Submits a flock job, polls until completion, returns results for all URLs. "
+        "For sequential single-URL scraping use 'probe' instead."
+    ),
+)
+async def flock(
+    urls: list[str],
+    formats: list[str] | None = None,
+    only_main_content: bool = True,
+    webhook_url: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """
+    Batch scrape multiple URLs.
+
+    Args:
+        urls:               List of URLs to scrape.
+        formats:            Output formats (markdown, html, links, etc.).
+        only_main_content: Filter to main content (default True).
+        webhook_url:        Optional webhook for completion notification.
+    """
+    if ctx:
+        ctx.info(f"Flocking {len(urls)} URLs")
+
+    payload: dict[str, Any] = {
+        "urls": urls,
+        "only_main_content": only_main_content,
+    }
+    if formats:
+        payload["formats"] = formats
+    if webhook_url:
+        payload["webhook_url"] = webhook_url
+
+    submit = await _post_json("/v1/flock", payload)
+    job_id = submit.get("job_id")
+    if not job_id:
+        raise ValueError(f"Huginn returned no job_id: {submit}")
+
+    if ctx:
+        ctx.info(f"Flock job submitted: {job_id}")
+
+    result = await _poll_job(f"/v1/flock/{job_id}", ctx)
+
+    if ctx:
+        ctx.info(f"Flock job {job_id} completed")
+
+    return result
+
+
+# ─── Tool: jobs ────────────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    name="jobs",
+    description="List recent Huginn jobs or get details for a specific job.",
+)
+async def list_jobs(
+    job_id: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """
+    List jobs or get a specific job.
+
+    Args:
+        job_id: If provided, get details for this job. Otherwise list recent jobs.
+    """
+    if job_id:
+        return await _get_json(f"/v1/jobs/{job_id}")
+    return await _get_json("/v1/jobs")
+
+
+# ─── Main Entry Point ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="stdio")
+
+
+# ─── Entry Point ───────────────────────────────────────────────────────────────
+
+def main():
+    """Entry point for huginn-mcp CLI."""
+    mcp.run(transport="stdio")

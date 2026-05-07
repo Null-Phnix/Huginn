@@ -273,7 +273,7 @@ class BrowserManager:
                 self.navigation_timeout = config.navigation_timeout
             if config.viewport_width and config.viewport_height:
                 self.viewport = (config.viewport_width, config.viewport_height)
-            if config.user_agent:
+            if config.user_agent is not None:
                 self.user_agent = config.user_agent
 
         self._playwright = None
@@ -554,6 +554,13 @@ class BrowserManager:
             let mainEl = document.querySelector('main') ||
                          document.querySelector('article') ||
                          document.querySelector('[role="main"]');
+
+            // arxiv: abstract is in <blockquote> or .abstract div
+            if (!mainEl && window.location.hostname.includes('arxiv.org')) {
+                mainEl = document.querySelector('.abstract') ||
+                         document.querySelector('blockquote') ||
+                         document.querySelector('.full-text');
+            }
 
             if (!mainEl) {
                 // Try largest content block heuristic

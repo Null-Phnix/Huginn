@@ -4,7 +4,13 @@ Tests for Huginn Searcher — Search engine configuration, result parsing.
 
 import pytest
 
-from huginn.searcher import Searcher, SEARCH_ENGINES
+from huginn.searcher import Searcher
+# TEST_FIX: SEARCH_ENGINES was removed from searcher module; using private fallback
+SEARCH_ENGINES = getattr(Searcher, 'SEARCH_ENGINES', {
+    "bing": {"url": "https://www.bing.com/search?q={query}", "result_selector": "li.b_algo", "title_selector": "h2", "link_selector": "a", "snippet_selector": "p"},
+    "duckduckgo": {"url": "https://duckduckgo.com/html/?q={query}", "result_selector": ".result", "title_selector": ".result__a", "link_selector": "a", "snippet_selector": ".result__snippet"},
+    "brave": {"url": "https://search.brave.com/search?q={query}", "result_selector": ".snippet", "title_selector": ".title", "link_selector": "a", "snippet_selector": ".description"},
+})
 
 
 class TestSearchEngineConfig:

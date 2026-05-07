@@ -11,7 +11,69 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
-# ─── Enums ────────────────────────────────────────────────────────────────────
+# ─── Enums ───────────────────────────────────────────────────────────────────
+
+class ErrorCode(str, Enum):
+    """Machine-readable error codes for all Huginn endpoints.
+
+    Unlike error messages, these codes are stable across versions and
+    can be used for programmatic error handling.
+    """
+    # Success variants
+    SUCCESS = "success"
+
+    # Client errors (4xx) — do not retry
+    BAD_REQUEST = "bad_request"                   # 400
+    INVALID_URL = "invalid_url"                  # 400
+    MISSING_REQUIRED_FIELD = "missing_required"   # 400
+    UNSUPPORTED_FORMAT = "unsupported_format"    # 400
+    VALIDATION_ERROR = "validation_error"         # 400
+    UNAUTHORIZED = "unauthorized"                 # 401
+    FORBIDDEN = "forbidden"                      # 403
+    NOT_FOUND = "not_found"                      # 404
+    RATE_LIMITED = "rate_limited"               # 429
+    CONTENT_TOO_LARGE = "content_too_large"      # 413
+
+    # Server errors (5xx) — may retry
+    TIMEOUT = "timeout"                           # 408 / 504
+    CONNECTION_ERROR = "connection_error"         # 502 / 503
+    UPSTREAM_ERROR = "upstream_error"            # 502
+    CIRCUIT_OPEN = "circuit_open"                 # 503
+    SERVICE_UNAVAILABLE = "service_unavailable"   # 503
+    INTERNAL_ERROR = "internal_error"            # 500
+
+    # Scraping-specific errors
+    NAVIGATION_FAILED = "navigation_failed"
+    CAPTCHA_DETECTED = "captcha_detected"
+    BLOCKED_BY_ROBOTS = "blocked_by_robots"
+    SSL_ERROR = "ssl_error"
+    INVALID_RESPONSE = "invalid_response"
+    EMPTY_CONTENT = "empty_content"
+    PARTIAL_FAILURE = "partial_failure"           # some URLs failed
+    ALL_URLS_FAILED = "all_urls_failed"
+
+    # Job errors
+    JOB_NOT_FOUND = "job_not_found"
+    JOB_EXPIRED = "job_expired"
+
+    @classmethod
+    def from_http_status(cls, status: int) -> "ErrorCode":
+        """Map an HTTP status code to the most appropriate ErrorCode."""
+        mapping = {
+            400: cls.BAD_REQUEST,
+            401: cls.UNAUTHORIZED,
+            403: cls.FORBIDDEN,
+            404: cls.NOT_FOUND,
+            408: cls.TIMEOUT,
+            413: cls.CONTENT_TOO_LARGE,
+            429: cls.RATE_LIMITED,
+            500: cls.INTERNAL_ERROR,
+            502: cls.UPSTREAM_ERROR,
+            503: cls.SERVICE_UNAVAILABLE,
+            504: cls.TIMEOUT,
+        }
+        return mapping.get(status, cls.INTERNAL_ERROR)
+
 
 class OutputFormat(str, Enum):
     MARKDOWN = "markdown"
@@ -20,6 +82,7 @@ class OutputFormat(str, Enum):
     SCREENSHOT = "screenshot"
     LINKS = "links"
     METADATA = "metadata"
+    PDF = "pdf"  # Extract text from PDF using OCR
 
 
 class ActionType(str, Enum):
@@ -99,6 +162,7 @@ class ScrapeRequest(BaseModel):
     url: str
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     headers: Optional[Dict[str, str]] = None
+    cookies: Optional[Dict[str, str]] = Field(None, description="Cookies to set on requests")
     wait_for: Optional[Union[int, str]] = Field(None)
     actions: Optional[List[Action]] = None
     extract: Optional[DistillOptions] = None
@@ -125,6 +189,7 @@ class ScrapeData(BaseModel):
     links: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
     extract: Optional[Dict[str, Any]] = None
+    pdf_text: Optional[str] = None
 
 
 class ScrapeResponse(BaseModel):
@@ -132,6 +197,9 @@ class ScrapeResponse(BaseModel):
     success: bool
     data: Optional[ScrapeData] = None
     error: Optional[str] = None
+    error_code: Optional[ErrorCode] = Field(None, description="Machine-readable error code")
+    cached: bool = Field(False, description="Whether result was served from cache")
+    warnings: Optional[List[str]] = Field(default_factory=list)
 
 
 # ─── Crawl Endpoint ───────────────────────────────────────────────────────────
@@ -149,6 +217,7 @@ class CrawlRequest(BaseModel):
     scrape_options: Optional[ScrapeOptions] = Field(None)
     ignore_robots: bool = Field(False, description="Skip robots.txt checks when True")
     stream: bool = Field(False)
+    webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
 
 
 class CrawlStartResponse(BaseModel):
@@ -169,6 +238,11 @@ class CrawlStatusResponse(BaseModel):
     expires_at: Optional[datetime] = Field(None)
     data: Optional[List[ScrapeData]] = None
     error: Optional[str] = None
+    error_code: Optional[ErrorCode] = Field(None, description="Machine-readable error code")
+    warnings: Optional[List[str]] = Field(default_factory=list,
+        description="Non-fatal warnings (e.g. some URLs failed when partial=True)")
+    partial: Optional[bool] = Field(False,
+        description="True when some URLs failed but partial results are returned")
 
 
 # ─── Map Endpoint ─────────────────────────────────────────────────────────────
@@ -187,6 +261,7 @@ class MapResponse(BaseModel):
     success: bool
     links: List[str] = Field(default_factory=list)
     error: Optional[str] = None
+    error_code: Optional[ErrorCode] = Field(None)
 
 
 # ─── Distill Endpoint ─────────────────────────────────────────────────────────
@@ -203,6 +278,8 @@ class DistillRequest(BaseModel):
     mental_model: bool = Field(True, description="Use DOM mental model for better extraction")
     max_retries: int = Field(3, ge=0, le=5, description="Max extraction retry attempts")
     stream: bool = Field(False)
+    webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
+    template: Optional[str] = Field(None, description="Use a built-in template: product, article, job_posting, real_estate, person, event, review, faq, recipe, research_paper")
 
     @field_validator("urls")
     @classmethod
@@ -235,6 +312,8 @@ class DistillStatusResponse(BaseModel):
     status: JobStatus
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    error_code: Optional[ErrorCode] = Field(None)
+    warnings: Optional[List[str]] = Field(default_factory=list)
 
 # ─── SSE Streaming Responses ─────────────────────────────────────────────────
 
@@ -269,6 +348,7 @@ class SearchRequest(BaseModel):
     scrape_options: Optional[ScrapeOptions] = Field(None)
     # Huginn extension
     fallback_chain: bool = Field(True)  # Bing->DDG->Brave
+    scrape_results: bool = Field(True)   # Whether to scrape result URLs (disable for fast search-only)
 
 
 class SearchResultItem(BaseModel):
@@ -297,16 +377,20 @@ class FlockRequest(BaseModel):
     include_tags: Optional[List[str]] = Field(None)
     exclude_tags: Optional[List[str]] = Field(None)
     timeout: int = 30000
+    webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
 
 
 
 
 class FlockResultItem(BaseModel):
     """Single result in a batch scrape response."""
+
     url: str
     success: bool
     data: Optional[ScrapeData] = None
     error: Optional[str] = None
+    error_code: Optional[ErrorCode] = Field(None, description="Machine-readable error code")
+    cached: bool = Field(False, description="Whether result was served from cache")
 
 
 class FlockResponse(BaseModel):
@@ -314,6 +398,10 @@ class FlockResponse(BaseModel):
     success: bool
     data: List[FlockResultItem] = Field(default_factory=list)
     error: Optional[str] = None
+    error_code: Optional[ErrorCode] = Field(None)
+    partial: bool = Field(False,
+        description="True when some URLs failed but partial results are returned")
+    warnings: Optional[List[str]] = Field(default_factory=list)
 
 
 # ─── Job Management ──────────────────────────────────────────────────────────
@@ -327,6 +415,181 @@ class JobInfo(BaseModel):
     updated_at: datetime
     completed: int = 0
     total: Optional[int] = None
+    error: Optional[str] = None
+
+
+# ─── Schedule Model ─────────────────────────────────────────────────────────────
+
+class ScheduleStatus(str, Enum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    RUNNING = "running"
+    FAILED = "failed"
+
+
+class Schedule(BaseModel):
+
+    """ORM-style model for a persisted schedule (DB row)."""
+
+    id: str
+    name: str
+    job_type: str
+    request_json: str
+    cron: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    enabled: bool = True
+    webhook_url: Optional[str] = None
+    created_at: Optional[datetime] = None
+    last_run: Optional[datetime] = None
+    next_run: Optional[datetime] = None
+
+    @property
+    def status(self) -> str:
+        if not self.enabled:
+            return "paused"
+        return "active"
+
+
+class ScheduleRequest(BaseModel):
+    """POST /v1/schedule request body."""
+
+    name: str = Field(..., description="Human-readable name for this schedule")
+    job_type: str = Field(..., description="Type of job: sweep, distill, flock, or probe")
+    cron: Optional[str] = Field(None, description="Cron expression (e.g. '0 9 * * *' for daily at 9am)")
+    interval_seconds: Optional[int] = Field(None, description="Run every N seconds (alternative to cron)")
+    request: Dict[str, Any] = Field(..., description="The job request body to execute")
+    webhook_url: Optional[str] = Field(None, description="URL to POST when scheduled job fires")
+    enabled: bool = Field(True)
+
+
+class ScheduleResponse(BaseModel):
+    """Schedule response model."""
+
+    id: str
+    name: str
+    job_type: str
+    cron: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    request_json: str
+    webhook_url: Optional[str] = None
+    enabled: bool
+    status: str = "active"
+    created_at: Optional[datetime] = None
+    last_run: Optional[datetime] = None
+    next_run: Optional[datetime] = None
+
+
+# ─── Research Endpoint ───────────────────────────────────────────────────────────
+
+class ResearchRequest(BaseModel):
+    """POST /v1/research request."""
+    query: str = Field(..., description="The research question or topic")
+    depth: int = Field(3, ge=1, le=5, description="Research depth (iterations)")
+    max_sources: int = Field(20, ge=1, le=100, description="Maximum sources to consult")
+    target_length: str = Field(
+        "standard",
+        description="Target report length: brief, standard, or comprehensive",
+    )
+    background_questions: Optional[List[str]] = Field(
+        None, description="Specific sub-questions to investigate"
+    )
+    urls: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Pre-specified URLs to scrape before doing any web search or query decomposition",
+    )
+
+
+class ResearchCitation(BaseModel):
+    """A source citation in research response."""
+    url: str
+    title: str
+    domain: str
+    quote: str
+    relevance_score: float
+    timestamp: str
+    accessed_at: datetime
+
+
+class ResearchFinding(BaseModel):
+    """A discrete finding from research."""
+    topic: str
+    claim: str
+    supporting_citations: List[ResearchCitation]
+    confidence: float
+    contradicts: Optional[str] = None
+    needs_verification: bool = False
+    verified: bool = False
+
+
+class ResearchResponse(BaseModel):
+    """POST /v1/research response."""
+    success: bool
+    query: Optional[str] = None
+    summary: Optional[str] = None
+    report: Optional[str] = None
+    findings: List[ResearchFinding] = Field(default_factory=list)
+    citations: List[ResearchCitation] = Field(default_factory=list)
+    confidence: float = 0.0
+    sources_consulted: int = 0
+    research_duration_seconds: float = 0.0
+    depth_achieved: int = 0
+    warnings: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+    error_code: Optional[ErrorCode] = None
+
+
+# ─── Page Watch / Change Detection ─────────────────────────────────────────────
+
+class WatchRequest(BaseModel):
+    """POST /v1/watch request."""
+    url: str = Field(..., description="URL to watch for changes")
+    selectors: Optional[List[str]] = Field(
+        None, description="CSS selectors to monitor (default: whole page)"
+    )
+    webhook_url: Optional[str] = Field(
+        None, description="Webhook URL to fire when content changes"
+    )
+    check_interval_seconds: int = Field(
+        3600, ge=60, le=604800,
+        description="How often to check for changes (default: 1 hour)"
+    )
+
+
+class WatchSnapshot(BaseModel):
+    """A point-in-time snapshot of a watched page."""
+    content_hash: str
+    detected_changes: Optional[List[str]] = None
+    created_at: datetime
+
+
+class WatchResponse(BaseModel):
+    """POST /v1/watch response."""
+    success: bool
+    url: str
+    domain: str
+    content_hash: str
+    change_count: int = 0
+    last_check: Optional[datetime] = None
+    last_change: Optional[datetime] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+    error_code: Optional[ErrorCode] = None
+
+
+class WatchStatusResponse(BaseModel):
+    """GET /v1/watch/{url} response."""
+    success: bool
+    url: str
+    domain: str
+    enabled: bool
+    webhook_url: Optional[str] = None
+    selectors: List[str]
+    snapshot_count: int
+    change_count: int
+    last_check: Optional[datetime] = None
+    last_change: Optional[datetime] = None
+    latest_hash: Optional[str] = None
+    history: List[WatchSnapshot] = Field(default_factory=list)
     error: Optional[str] = None
 
 

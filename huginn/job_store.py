@@ -11,7 +11,8 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+import uuid
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,22 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_expires ON jobs(expires_at);
+
+CREATE TABLE IF NOT EXISTS schedules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    job_type TEXT NOT NULL,
+    cron TEXT,
+    interval_seconds INTEGER,
+    request_json TEXT NOT NULL,
+    webhook_url TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    last_run TEXT,
+    next_run TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
 """
 
 
@@ -128,6 +145,77 @@ class JobStore:
             )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    # ─── Schedules ───────────────────────────────────────────────────────────────
+
+    async def create_schedule(self, schedule_id: str, name: str, job_type: str,
+                              request: dict, ttl: int = 3600,
+                              cron: Optional[str] = None,
+                              interval_seconds: Optional[int] = None,
+                              webhook_url: Optional[str] = None) -> str:
+        """Create a new schedule and return its ID."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "INSERT INTO schedules (id, name, job_type, request_json, cron, interval_seconds, "
+            "webhook_url, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (schedule_id, name, job_type, json.dumps(request), cron, interval_seconds,
+             webhook_url, now)
+        )
+        await self._db.commit()
+        logger.info(f"Created schedule: {schedule_id} ({name})")
+        return schedule_id
+
+    async def get_schedule(self, schedule_id: str) -> Optional[dict]:
+        """Get schedule by ID."""
+        cursor = await self._db.execute("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["request_json"] = json.loads(result["request_json"]) if result.get("request_json") else None
+        return result
+
+    async def list_schedules(self, limit: int = 50) -> List[dict]:
+        """List all schedules."""
+        cursor = await self._db.execute(
+            "SELECT * FROM schedules ORDER BY created_at DESC LIMIT ?", (limit,)
+        )
+        rows = await cursor.fetchall()
+        results = []
+        for row in rows:
+            result = dict(row)
+            result["request_json"] = json.loads(result["request_json"]) if result.get("request_json") else None
+            results.append(result)
+        return results
+
+    async def update_schedule(self, schedule_id: str, **kwargs) -> None:
+        """Update schedule fields."""
+        if not kwargs:
+            return
+        sets = []
+        params = []
+        for key, value in kwargs.items():
+            col = key
+            if key == "request":
+                col = "request_json"
+                value = json.dumps(value) if value is not None else None
+            elif key in ("last_run", "next_run") and value is not None:
+                value = value.isoformat() if hasattr(value, "isoformat") else value
+            elif key == "enabled":
+                value = 1 if value else 0
+            sets.append(f"{col} = ?")
+            params.append(value)
+        params.append(schedule_id)
+        await self._db.execute(
+            f"UPDATE schedules SET {', '.join(sets)} WHERE id = ?", params
+        )
+        await self._db.commit()
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        """Delete a schedule."""
+        cursor = await self._db.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
 
     async def cleanup_expired(self):
         """Remove expired jobs."""

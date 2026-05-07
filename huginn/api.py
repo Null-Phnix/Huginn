@@ -26,6 +26,7 @@ from slowapi.util import get_remote_address
 from starlette.responses import StreamingResponse
 
 from .config import HuginnConfig, load_config
+from .metrics import MetricsMiddleware, get_per_endpoint_stats
 from .models import (
     Action,
     FlockRequest,
@@ -52,8 +53,19 @@ from .models import (
     SearchResultItem,
     StreamCrawlResponse,
     StreamDistillResponse,
+    ScheduleRequest,
+    ScheduleResponse,
+    ResearchRequest,
+    ResearchResponse,
+    ResearchCitation,
+    WatchRequest,
+    WatchResponse,
+    WatchStatusResponse,
+    WatchSnapshot,
 )
 from .job_store import JobStore
+from .scheduler import Scheduler
+from .webhook import fire_webhook_for_job
 from .browser import BrowserManager
 from .scraper import Scraper
 from .crawler import Crawler
@@ -70,6 +82,25 @@ _SSE_TEMPLATE = "event: {}\ndata: {}\n\n"
 def sse_event(event: str, data: dict) -> str:
     """Format an SSE event: event line + data line + blank line."""
     return _SSE_TEMPLATE.format(event, json.dumps(data))
+
+
+def _map_exception_to_error_code(e: Exception) -> Optional[str]:
+    """Map exception type to Huginn ErrorCode string."""
+    from .models import ErrorCode
+    name = type(e).__name__.lower()
+    mapping = {
+        "httpx.timeout": ErrorCode.TIMEOUT,
+        "httpx.connecterror": ErrorCode.CONNECTION_ERROR,
+        "asyncio.timeouterror": ErrorCode.TIMEOUT,
+        "circuit openerror": ErrorCode.CIRCUIT_OPEN,
+        "valueerror": ErrorCode.INVALID_URL,
+        "urllib.error.httperror": ErrorCode.UPSTREAM_ERROR,
+        "playwright.timeout": ErrorCode.TIMEOUT,
+    }
+    for key, code in mapping.items():
+        if key in name:
+            return code
+    return ErrorCode.NAVIGATION_FAILED
 
 
 # ─── Rate Limiter & Helpers ─────────────────────────────────────────────────────
@@ -94,12 +125,13 @@ _config: Optional[HuginnConfig] = None
 _browser: Optional[BrowserManager] = None
 _job_store: Optional[JobStore] = None
 _crawl_tasks: dict = {}  # job_id -> asyncio.Task
+_scheduler: Optional[Scheduler] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
-    global _config, _browser, _job_store
+    global _config, _browser, _job_store, _scheduler
 
     _config = app.state.config
     logging.basicConfig(level=getattr(logging, _config.log_level), format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -115,6 +147,10 @@ async def lifespan(app: FastAPI):
     # can select the StarSearch backend when configured.
     _browser = BrowserManager(config=_config.browser)
     await _browser.start()
+    _scheduler = Scheduler(_job_store)
+    _scheduler.start()
+    logger.info("Scheduler started")
+    _register_scheduler_handlers()
 
     logger.info(f"Huginn started on {_config.server.host}:{_config.server.port}")
     logger.info(f"Browser: backend={_browser.backend}, headless={_config.browser.headless}, stealth={_config.browser.stealth_mode}")
@@ -127,6 +163,9 @@ async def lifespan(app: FastAPI):
         task.cancel()
     await _browser.stop()
     await _job_store.close()
+    if _scheduler:
+        await _scheduler.stop()
+        logger.info("Scheduler stopped")
 
 
 def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
@@ -151,6 +190,9 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Metrics middleware (must be added before routes)
+    app.add_middleware(MetricsMiddleware)
+
     # Rate limiting
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -172,7 +214,50 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "version": "1.0.0", "browser": "running" if _browser else "stopped"}
+        """Comprehensive health check endpoint."""
+        return {
+            "status": "ok",
+            "version": "1.1.0",
+            "browser": "running" if _browser else "stopped",
+            "scheduler": "running" if (_scheduler and _scheduler._running) else "stopped",
+        }
+
+    @app.get("/health/detailed")
+    async def health_detailed():
+        """Detailed health check with circuit breaker and cache statistics."""
+        from .cache import get_response_cache
+        from .circuit_breaker import get_circuit_breaker, extract_domain
+
+        cache = await get_response_cache()
+        cb = get_circuit_breaker()
+
+        return {
+            "status": "ok",
+            "version": "1.1.0",
+            "browser": "running" if _browser else "stopped",
+            "scheduler": "running" if (_scheduler and _scheduler._running) else "stopped",
+            "circuit_breaker": await cb.get_stats(),
+            "cache": await cache.stats(),
+        }
+
+    @app.get("/health/ready")
+    async def readiness():
+        """Kubernetes readiness probe — returns 503 if not ready."""
+        if not _browser:
+            raise HTTPException(status_code=503, detail="Browser not initialized")
+        return {"ready": True}
+
+    @app.get("/health/live")
+    async def liveness():
+        """Kubernetes liveness probe."""
+        return {"alive": True}
+
+    # ─── Metrics ───────────────────────────────────────────────────────────────
+
+    @app.get("/v1/metrics")
+    async def metrics():
+        """Return per-endpoint metrics: call count, avg latency, success rate."""
+        return get_per_endpoint_stats()
 
     # ─--- Scrape ────────────────────────────────────────────────────────────
 
@@ -183,8 +268,29 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
 
-        scraper = Scraper(_browser)
+        from .circuit_breaker import get_circuit_breaker, CircuitOpenError as CBCircuitOpen, extract_domain
+        from .cache import get_cached_scrape_result, cache_scrape_result
+        from .models import ErrorCode
+
+        cb = get_circuit_breaker()
+        domain = extract_domain(req.url)
+
+        # Check circuit breaker first
+        is_open = cb.is_open(domain)
+        if is_open:
+            return ScrapeResponse(
+                success=False,
+                error=f"Circuit breaker open for {domain}. Domain is temporarily blocked due to repeated failures.",
+                error_code=ErrorCode.CIRCUIT_OPEN,
+            )
+
+        # Check response cache
         formats = req.formats or [OutputFormat.MARKDOWN]
+        cached = await get_cached_scrape_result(req.url, formats)
+        if cached:
+            return ScrapeResponse(success=True, data=cached, cached=True)
+
+        scraper = Scraper(_browser, cb)
         proxy_dict = build_proxy_dict(config)
 
         try:
@@ -203,10 +309,28 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
                 scroll=req.scroll,
                 render_mode=req.render_mode,
             )
+            # Cache successful result
+            await cache_scrape_result(req.url, formats, data)
+            # Record success for circuit breaker
+            await cb.record_success(domain)
             return ScrapeResponse(success=True, data=data)
+        except CBCircuitOpen:
+            return ScrapeResponse(
+                success=False,
+                error=f"Circuit breaker opened for {domain} during request.",
+                error_code=ErrorCode.CIRCUIT_OPEN,
+            )
+        except asyncio.TimeoutError:
+            await cb.record_failure(domain)
+            return ScrapeResponse(
+                success=False,
+                error=f"Request timed out after {req.timeout}ms",
+                error_code=ErrorCode.TIMEOUT,
+            )
         except Exception as e:
-            logger.error(f"Scrape failed: {e}", exc_info=True)
-            return ScrapeResponse(success=False, error=str(e))
+            await cb.record_failure(domain)
+            error_code = _map_exception_to_error_code(e)
+            return ScrapeResponse(success=False, error=str(e), error_code=error_code)
 
     # ─--- Crawl ─────────────────────────────────────────────────────────────
 
@@ -264,7 +388,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         expires_at = None
         if job.get("expires_at"):
             try:
-                from datetime import datetime as dt
+                from datetime import datetime, timezone
                 expires_at = dt.fromisoformat(job["expires_at"])
             except (ValueError, TypeError):
                 pass
@@ -368,7 +492,79 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             error=job.get("error"),
         )
 
-    # ─--- Search ────────────────────────────────────────────────────────────
+    # ─── Deep Research ─────────────────────────────────────────────────────
+
+    @app.post("/v1/research", response_model=ResearchResponse)
+    async def deep_research(req: ResearchRequest, auth=Depends(verify_api_key)):
+        """
+        Conduct autonomous deep research on any topic.
+
+        Iteratively explores multiple sources, tracks beliefs with confidence
+        scores, detects contradictions, and synthesizes a structured report.
+
+        This is Huginn's most powerful endpoint — far beyond what Firecrawl
+        or any single-pass scraper can achieve.
+        """
+        if not _browser:
+            raise HTTPException(status_code=503, detail="Browser not initialized")
+
+        from .memory import ResearchMemory
+        from .researcher import DeepResearcher
+
+        try:
+            memory = ResearchMemory(data_dir=config.data_dir) if config.server.data_dir else None
+            researcher = DeepResearcher(
+                browser=_browser,
+                llm_provider=_config.extract.llm_provider,
+                llm_model=_config.extract.llm_model,
+                urls=req.urls,
+                memory=memory,
+            )
+
+            result = await researcher.research(
+                query=req.query,
+                depth=req.depth,
+                max_sources=req.max_sources,
+                target_length=req.target_length,
+                background_questions=req.background_questions,
+            )
+
+            return ResearchResponse(
+                success=True,
+                query=result.query,
+                summary=result.summary,
+                report=result.report,
+                findings=[
+                    ResearchFinding(
+                        topic=f.topic,
+                        claim=f.claim,
+                        supporting_citations=[
+                            ResearchCitation(**c.to_dict()) for c in f.supporting_citations
+                        ],
+                        confidence=f.confidence,
+                        contradicts=f.contradicts,
+                        needs_verification=f.needs_verification,
+                        verified=f.verified,
+                    )
+                    for f in result.findings
+                ],
+                citations=[ResearchCitation(**c.to_dict()) for c in result.citations],
+                confidence=result.confidence,
+                sources_consulted=result.sources_consulted,
+                research_duration_seconds=result.research_duration_seconds,
+                depth_achieved=result.depth_achieved,
+                warnings=result.warnings,
+            )
+
+        except Exception as e:
+            logger.error(f"Deep research failed: {e}", exc_info=True)
+            return ResearchResponse(
+                success=False,
+                error=str(e),
+                error_code=_map_exception_to_error_code(e),
+            )
+
+    # ─── Search ────────────────────────────────────────────────────────────
 
     @app.post("/v1/seek", response_model=SearchResponse)
     @limiter.limit("30/minute")
@@ -390,6 +586,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
                 tbs=req.search_options.tbs if req.search_options else None,
                 country=req.search_options.country if req.search_options else None,
                 language=req.search_options.language if req.search_options else None,
+                scrape_results=req.scrape_results,
             )
             return SearchResponse(success=True, data=results)
         except Exception as e:
@@ -426,17 +623,39 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     @app.post("/v1/flock", response_model=FlockResponse)
     @limiter.limit("10/minute")
     async def flock_scrape(request: Request, req: FlockRequest, auth=Depends(verify_api_key)):
-        """Scrape multiple URLs concurrently."""
+        """Scrape multiple URLs concurrently with partial results support."""
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
 
+        from .circuit_breaker import get_circuit_breaker, extract_domain
+        from .cache import get_cached_scrape_result, cache_scrape_result
+        from .models import ErrorCode
+
         proxy_dict = build_proxy_dict(config)
-        scraper = Scraper(_browser)
+        cb = get_circuit_breaker()
+        scraper = Scraper(_browser, cb)
         sem = asyncio.Semaphore(5)
         results: List[FlockResultItem] = []
+        warnings: List[str] = []
 
         async def scrape_one(url: str) -> FlockResultItem:
             async with sem:
+                domain = extract_domain(url)
+
+                # Skip circuit-open domains
+                if cb.is_open(domain):
+                    warnings.append(f"Skipped {url}: circuit breaker open")
+                    return FlockResultItem(
+                        url=url, success=False,
+                        error=f"Circuit breaker open for {domain}",
+                        error_code=ErrorCode.CIRCUIT_OPEN,
+                    )
+
+                # Check cache
+                cached = await get_cached_scrape_result(url, req.formats or [OutputFormat.MARKDOWN])
+                if cached:
+                    return FlockResultItem(url=url, success=True, data=cached, cached=True)
+
                 try:
                     data = await scraper.scrape(
                         url=url,
@@ -447,27 +666,539 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
                         timeout=req.timeout,
                         proxy=proxy_dict,
                     )
+                    await cache_scrape_result(url, req.formats or [OutputFormat.MARKDOWN], data)
+                    await cb.record_success(domain)
                     return FlockResultItem(url=url, success=True, data=data)
+                except asyncio.TimeoutError:
+                    await cb.record_failure(domain)
+                    return FlockResultItem(
+                        url=url, success=False,
+                        error=f"Request timed out after {req.timeout}ms",
+                        error_code=ErrorCode.TIMEOUT,
+                    )
                 except Exception as e:
-                    logger.error(f"Batch scrape failed for {url}: {e}")
-                    return FlockResultItem(url=url, success=False, error=str(e))
+                    await cb.record_failure(domain)
+                    return FlockResultItem(
+                        url=url, success=False,
+                        error=str(e),
+                        error_code=_map_exception_to_error_code(e),
+                    )
 
         tasks = [scrape_one(url) for url in req.urls]
         items = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for item in items:
+        for i, item in enumerate(items):
             if isinstance(item, FlockResultItem):
                 results.append(item)
             elif isinstance(item, Exception):
-                results.append(FlockResultItem(url="unknown", success=False, error=str(item)))
+                results.append(FlockResultItem(
+                    url=req.urls[i] if i < len(req.urls) else "unknown",
+                    success=False, error=str(item),
+                    error_code=ErrorCode.NAVIGATION_FAILED,
+                ))
 
         success_count = sum(1 for r in results if r.success)
+        partial = success_count > 0 and success_count < len(results)
+
         return FlockResponse(
             success=success_count > 0,
+            partial=partial,
             data=results,
+            warnings=warnings if warnings else None,
         )
 
+    # ─── Page Watch / Change Detection ─────────────────────────────────────
+
+    from .watcher import PageWatcher, get_watch_store, compute_content_hash
+    from .models import ErrorCode as EC
+
+    @app.post("/v1/watch", response_model=WatchResponse)
+    async def watch_page(req: WatchRequest, auth=Depends(verify_api_key)):
+        """
+        Start watching a page for content changes.
+
+        Takes an initial snapshot and returns the content hash.
+        Use GET /v1/watch/{url} to check status,
+        and DELETE /v1/watch/{url} to stop watching.
+        """
+        if not _browser:
+            raise HTTPException(status_code=503, detail="Browser not initialized")
+
+        from .watcher import extract_domain
+
+        domain = extract_domain(req.url)
+        cb = get_circuit_breaker()
+
+        if cb.is_open(domain):
+            return WatchResponse(
+                success=False,
+                url=req.url,
+                domain=domain,
+                content_hash="",
+                error=f"Circuit breaker open for {domain}",
+                error_code=EC.CIRCUIT_OPEN,
+            )
+
+        store = get_watch_store()
+        watcher = PageWatcher(_browser, store)
+
+        try:
+            # Take initial snapshot
+            snapshot = await watcher.check(req.url)
+        except Exception as e:
+            await cb.record_failure(domain)
+            return WatchResponse(
+                success=False,
+                url=req.url,
+                domain=domain,
+                content_hash="",
+                error=str(e),
+                error_code=_map_exception_to_error_code(e),
+            )
+
+        await cb.record_success(domain)
+
+        # Register watching
+        entry = await store.watch(
+            url=req.url,
+            selectors=req.selectors,
+            webhook_url=req.webhook_url,
+        )
+        await store.add_snapshot(req.url, snapshot)
+
+        # Start background monitoring if interval is set
+        if req.check_interval_seconds >= 60:
+            await watcher.start_monitoring(req.url, req.check_interval_seconds)
+
+        return WatchResponse(
+            success=True,
+            url=req.url,
+            domain=domain,
+            content_hash=snapshot.content_hash,
+            change_count=0,
+            last_check=snapshot.created_at,
+            message="Now watching for changes. Webhook will fire on content changes.",
+        )
+
+    @app.get("/v1/watch/{url:path}", response_model=WatchStatusResponse)
+    async def get_watch_status(url: str, auth=Depends(verify_api_key)):
+        """Get the current status and history of a watched page."""
+        from .watcher import extract_domain
+
+        store = get_watch_store()
+        entry = await store.get(url)
+
+        if not entry:
+            raise HTTPException(status_code=404, detail="URL is not being watched")
+
+        return WatchStatusResponse(
+            success=True,
+            url=entry.url,
+            domain=entry.domain,
+            enabled=entry.enabled,
+            webhook_url=entry.webhook_url,
+            selectors=entry.selectors,
+            snapshot_count=len(entry.snapshots),
+            change_count=entry.change_count,
+            last_check=entry.last_check,
+            last_change=entry.last_change,
+            latest_hash=entry.latest_snapshot().content_hash if entry.latest_snapshot() else None,
+            history=[
+                WatchSnapshot(
+                    content_hash=s.content_hash,
+                    detected_changes=s.detected_changes,
+                    created_at=s.created_at,
+                )
+                for s in entry.snapshots
+            ],
+        )
+
+    @app.post("/v1/watch/{url:path}/check", response_model=WatchResponse)
+    async def check_watch(url: str, auth=Depends(verify_api_key)):
+        """
+        Manually trigger a check for a watched URL.
+        Returns the new snapshot and any detected changes.
+        """
+        from .watcher import extract_domain
+
+        cb = get_circuit_breaker()
+        domain = extract_domain(url)
+        store = get_watch_store()
+        watcher = PageWatcher(_browser, store)
+
+        entry = await store.get(url)
+        if not entry:
+            raise HTTPException(status_code=404, detail="URL is not being watched")
+
+        try:
+            snapshot = await watcher.check_and_notify(url)
+        except Exception as e:
+            await cb.record_failure(domain)
+            return WatchResponse(
+                success=False,
+                url=url,
+                domain=domain,
+                content_hash="",
+                error=str(e),
+                error_code=_map_exception_to_error_code(e),
+            )
+
+        entry = await store.get(url)
+        return WatchResponse(
+            success=True,
+            url=url,
+            domain=domain,
+            content_hash=snapshot.content_hash,
+            change_count=entry.change_count if entry else 0,
+            last_check=snapshot.created_at,
+            last_change=entry.last_change if entry else None,
+            message=f"{len(snapshot.detected_changes)} changes detected" if snapshot.detected_changes else "No changes detected",
+        )
+
+    @app.delete("/v1/watch/{url:path}")
+    async def unwatch_page(url: str, auth=Depends(verify_api_key)):
+        """Stop watching a page."""
+        from .watcher import PageWatcher
+
+        store = get_watch_store()
+        watcher = PageWatcher(_browser, store)
+        await watcher.stop_monitoring(url)
+        removed = await store.unwatch(url)
+
+        return {"success": removed, "url": url}
+
+    @app.get("/v1/watches")
+    async def list_watches(auth=Depends(verify_api_key)):
+        """List all watched URLs."""
+        store = get_watch_store()
+        entries = await store.list_watched()
+        return {
+            "success": True,
+            "count": len(entries),
+            "watches": [e.to_dict() for e in entries],
+        }
+
+
+    # ─── Schedule Endpoints ────────────────────────────────────────────────
+
+    @app.post("/v1/schedule", response_model=ScheduleResponse)
+    async def create_schedule(req: ScheduleRequest, auth=Depends(verify_api_key)):
+        """Create a new crawl/distill schedule."""
+        import uuid
+        if not req.cron and not req.interval_seconds:
+            raise HTTPException(status_code=400, detail="Provide cron or interval_seconds")
+        
+        schedule_id = str(uuid.uuid4())
+        
+        # Register with scheduler (handles DB persistence internally)
+        if req.enabled:
+            schedule = await _scheduler.add_schedule(
+                name=req.name,
+                job_type=req.job_type,
+                request={"job_type": req.job_type, "request": req.request, "webhook_url": req.webhook_url},
+                cron=req.cron,
+                interval_seconds=req.interval_seconds,
+                webhook_url=req.webhook_url,
+                enabled=True,
+            )
+            schedule_id = schedule["id"]
+        
+        logger.info(f"Created schedule {schedule_id} ({req.name})")
+        
+        return ScheduleResponse(
+            id=schedule_id,
+            name=req.name,
+            job_type=req.job_type,
+            cron=req.cron,
+            interval_seconds=req.interval_seconds,
+            request_json=json.dumps(req.request),
+            webhook_url=req.webhook_url,
+            enabled=req.enabled,
+            status="active",
+            created_at=datetime.now(timezone.utc),
+        )
+
+    @app.get("/v1/schedule", response_model=List[ScheduleResponse])
+    async def list_schedules(auth=Depends(verify_api_key)):
+        """List all schedules."""
+        schedules = await _scheduler.list_schedules()
+        return [
+            ScheduleResponse(
+                id=s["id"],
+                name=s["name"],
+                job_type=s["job_type"],
+                cron=s.get("cron"),
+                interval_seconds=s.get("interval_seconds"),
+                request_json=s.get("request", ""),
+                webhook_url=s.get("webhook_url"),
+                enabled=s.get("enabled", True),
+                status="active" if s.get("enabled") else "paused",
+                created_at=s.get("created_at"),
+                last_run=s.get("last_run"),
+                next_run=s.get("next_run"),
+            )
+            for s in schedules
+        ]
+
+    @app.get("/v1/schedule/{schedule_id}", response_model=ScheduleResponse)
+    async def get_schedule(schedule_id: str, auth=Depends(verify_api_key)):
+        """Get a specific schedule."""
+        s = await _scheduler.get_schedule(schedule_id)
+        if not s:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        return ScheduleResponse(
+            id=s["id"],
+            name=s["name"],
+            job_type=s["job_type"],
+            cron=s.get("cron"),
+            interval_seconds=s.get("interval_seconds"),
+            request_json=s.get("request", ""),
+            webhook_url=s.get("webhook_url"),
+            enabled=s.get("enabled", True),
+            status="active" if s.get("enabled") else "paused",
+            created_at=s.get("created_at"),
+            last_run=s.get("last_run"),
+            next_run=s.get("next_run"),
+        )
+
+    @app.delete("/v1/schedule/{schedule_id}")
+    async def delete_schedule(schedule_id: str, auth=Depends(verify_api_key)):
+        """Delete a schedule."""
+        await _scheduler.delete_schedule(schedule_id)
+        return {"success": True}
+
+    @app.post("/v1/schedule/{schedule_id}/pause")
+    async def pause_schedule(schedule_id: str, auth=Depends(verify_api_key)):
+        """Pause a schedule."""
+        result = await _scheduler.pause_schedule(schedule_id)
+        return {"success": True}
+
+    @app.post("/v1/schedule/{schedule_id}/resume")
+    async def resume_schedule(schedule_id: str, auth=Depends(verify_api_key)):
+        """Resume a schedule."""
+        result = await _scheduler.resume_schedule(schedule_id)
+        return {"success": True}
+
+    # ─── Firecrawl-compatible route aliases ─────────────────────────────────────
+
+    @app.post("/v1/scrape", response_model=ScrapeResponse)
+    async def scrape_alias(request: Request, req: ScrapeRequest, auth=Depends(verify_api_key)):
+        return await scrape(request, req, auth)
+
+    @app.post("/v1/crawl")
+    async def crawl_alias(req: CrawlRequest, auth=Depends(verify_api_key)):
+        return await start_sweep(req, auth)
+
+    @app.get("/v1/crawl/{job_id}")
+    async def crawl_status_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
+        return await get_sweep_status(request, job_id, auth)
+
+    @app.delete("/v1/crawl/{job_id}")
+    async def crawl_cancel_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
+        return await cancel_crawl(request, job_id, auth)
+
+    @app.post("/v1/map", response_model=MapResponse)
+    async def map_alias(request: Request, req: MapRequest, auth=Depends(verify_api_key)):
+        return await chart_site(request, req, auth)
+
+    @app.post("/v1/extract")
+    async def extract_alias(req: DistillRequest, auth=Depends(verify_api_key)):
+        return await start_distill(req, auth)
+
+    @app.get("/v1/extract/{job_id}")
+    async def extract_status_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
+        return await get_distill_status(request, job_id, auth)
+
+    @app.post("/v1/search", response_model=SearchResponse)
+    async def search_alias(request: Request, req: SearchRequest, auth=Depends(verify_api_key)):
+        return await search(request, req, auth)
+
+    # ─── Firecrawl Batch Endpoint Aliases ─────────────────────────────────────────
+
+    @app.post("/v1/batch/scrape", response_model=FlockResponse)
+    async def batch_scrape_alias(request: Request, req: FlockRequest, auth=Depends(verify_api_key)):
+        """Firecrawl-compatible alias for /v1/flock."""
+        return await flock_scrape(request, req, auth)
+
+    @app.get("/v1/batch/scrape/{job_id}")
+    async def batch_scrape_status_alias(job_id: str, auth=Depends(verify_api_key)):
+        """Firecrawl-compatible alias for batch scrape status — maps to job store."""
+        if not _job_store:
+            raise HTTPException(status_code=503, detail="Job store not initialized")
+        job = await _job_store.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {
+            "success": True,
+            "job_id": job_id,
+            "status": job.get("status"),
+            "completed": job.get("completed"),
+            "total": job.get("total"),
+            "error": job.get("error"),
+        }
+
+    # ─── Firecrawl Crawl Cancel POST Alias ─────────────────────────────────────────
+
+    @app.post("/v1/crawl/{job_id}/cancel")
+    async def crawl_cancel_post_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
+        """Firecrawl-compatible alias — POST to cancel a crawl."""
+        return await cancel_crawl(request, job_id, auth)
+
+
+# ─── Templates API ─────────────────────────────────────────────────────────────
+# ─── Templates API ─────────────────────────────────────────────────────────────
+
+    @app.get("/v1/templates")
+    async def list_templates_api(auth=Depends(verify_api_key)):
+        """List all available extraction templates with schemas."""
+        from .templates import get_all_templates
+        result = []
+        for name, t in get_all_templates().items():
+            result.append({
+                "name": name,
+                "description": t.description,
+                "schema": t.schema,
+                "fields_guide": t.fields_guide,
+                "merge_strategy": t.merge_strategy,
+                "max_page_chars": t.max_page_chars,
+            })
+        return {"success": True, "templates": result, "count": len(result)}
+
+    @app.get("/v1/templates/{template_name}")
+    async def get_template_api(template_name: str, auth=Depends(verify_api_key)):
+        """Get a single template's full details."""
+        from .templates import get_template
+        try:
+            t = get_template(template_name)
+            return {
+                "success": True,
+                "name": t.name,
+                "description": t.description,
+                "schema": t.schema,
+                "system_prompt": t.system_prompt,
+                "fields_guide": t.fields_guide,
+                "merge_strategy": t.merge_strategy,
+                "max_page_chars": t.max_page_chars,
+            }
+        except KeyError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Template '{template_name}' not found"
+            )
+
+# ─── Research Memory API ───────────────────────────────────────────────────────
+
+    @app.get("/v1/memory/query")
+    async def memory_query(
+        q: str = Query(..., description="Query text"),
+        n: int = Query(5, ge=1, le=50),
+        min_relevance: float = Query(0.0, ge=0.0, le=1.0),
+        type: Optional[str] = Query(None, description="Filter by type: finding, citation, snippet, report_summary"),
+        auth=Depends(verify_api_key),
+    ):
+        """Semantic search over accumulated research memory."""
+        from .memory import ResearchMemory
+
+        memory = ResearchMemory(data_dir=config.data_dir)
+        if not memory.available:
+            raise HTTPException(status_code=503, detail="Research memory not available (chromadb not installed)")
+
+        results = await memory.query(
+            query_text=q,
+            n_results=n,
+            min_relevance=min_relevance,
+            filter_type=type,
+        )
+
+        return {
+            "success": True,
+            "query": q,
+            "count": len(results),
+            "results": results,
+        }
+
+
+    @app.get("/v1/memory/reports")
+    async def memory_reports(auth=Depends(verify_api_key)):
+        """List all stored research reports."""
+        from .memory import ResearchMemory
+
+        memory = ResearchMemory(data_dir=config.data_dir)
+        if not memory.available:
+            raise HTTPException(status_code=503, detail="Research memory not available")
+
+        reports = await memory.get_all_reports()
+        return {"success": True, "reports": reports, "count": len(reports)}
+
+
+    @app.delete("/v1/memory/reports/{report_id}")
+    async def memory_delete_report(report_id: str, auth=Depends(verify_api_key)):
+        """Delete a research report and all its associated findings/citations."""
+        from .memory import ResearchMemory
+
+        memory = ResearchMemory(data_dir=config.data_dir)
+        if not memory.available:
+            raise HTTPException(status_code=503, detail="Research memory not available")
+
+        await memory.delete_report(report_id)
+        return {"success": True, "deleted": report_id}
+
+
+    @app.get("/v1/memory/related")
+    async def memory_related(
+        topic: str = Query(...),
+        n: int = Query(10, ge=1, le=50),
+        auth=Depends(verify_api_key),
+    ):
+        """Find topics related to the given topic from accumulated research."""
+        from .memory import ResearchMemory
+
+        memory = ResearchMemory(data_dir=config.data_dir)
+        if not memory.available:
+            raise HTTPException(status_code=503, detail="Research memory not available")
+
+        topics = await memory.get_related_topics(topic, n_results=n)
+        return {"success": True, "topic": topic, "related": topics, "count": len(topics)}
+
+
     return app
+
+
+
+async def _schedule_handler(request: dict):
+    """Handle a scheduled job firing. Scheduler passes already-parsed dict."""
+    import uuid
+    job_type = request.get("job_type", "crawl")
+    request_dict = request.get("request", {})
+    
+    job_id = str(uuid.uuid4())
+    
+    await _job_store.create_job({
+        "id": job_id,
+        "type": job_type,
+        "status": "queued",
+        "request": request_dict,
+    })
+    
+    if job_type == "crawl":
+        from .models import CrawlRequest
+        req = CrawlRequest(**request_dict)
+        await _run_crawl(job_id, req)
+    elif job_type == "distill":
+        from .models import DistillRequest
+        req = DistillRequest(**request_dict)
+        await _run_distill(job_id, req)
+    elif job_type == "flock":
+        from .models import FlockRequest
+        req = FlockRequest(**request_dict)
+        await _run_flock(job_id, req)
+
+# Register handlers with the scheduler's registry
+def _register_scheduler_handlers():
+    from .scheduler import _HANDLERS
+    _HANDLERS["crawl"] = _schedule_handler
+    _HANDLERS["distill"] = _schedule_handler
+    _HANDLERS["flock"] = _schedule_handler
 
 
 # ─── Background Task Runners ────────────────────────────────────────────────
@@ -524,16 +1255,22 @@ async def _run_crawl(job_id: str, req: CrawlRequest):
 
 async def _run_distill(job_id: str, req: DistillRequest):
     """Background task for extract jobs."""
-    extractor = Extractor(
-        browser=_browser,
-        llm_provider=_config.extract.llm_provider,
-        llm_model=_config.extract.llm_model,
-        max_retries=req.max_retries,
-        mental_model=req.mental_model,
-    )
-
+    import httpx
+    http_client = httpx.AsyncClient(timeout=120, limits=httpx.Limits(max_connections=20))
     try:
+        extractor = Extractor(
+            browser=_browser,
+            llm_provider=_config.extract.llm_provider,
+            llm_model=_config.extract.llm_model,
+            max_retries=req.max_retries,
+            mental_model=req.mental_model,
+            http_client=http_client,
+        )
+
         await _job_store.update_job(job_id, status="running")
+
+        from .templates import get_template
+        template = get_template(req.template) if req.template else None
 
         result = await extractor.extract(
             urls=req.urls,
@@ -541,6 +1278,7 @@ async def _run_distill(job_id: str, req: DistillRequest):
             schema=req.schema_,
             system_prompt=req.system_prompt,
             output_format=req.format,
+            template=template,
         )
 
         await _job_store.update_job(
@@ -553,6 +1291,102 @@ async def _run_distill(job_id: str, req: DistillRequest):
         await _job_store.update_job(job_id, status="cancelled", error="Job cancelled")
     except Exception as e:
         logger.error(f"Extract job {job_id} failed: {e}", exc_info=True)
+        await _job_store.update_job(job_id, status="failed", error=str(e))
+    finally:
+        await http_client.aclose()
+        _crawl_tasks.pop(job_id, None)
+
+
+# ─── Batch Task Runner ─────────────────────────────────────────────────────────
+
+async def _run_flock(job_id: str, req: FlockRequest):
+    """Background task for batch scrape (flock) jobs."""
+    from .circuit_breaker import get_circuit_breaker, extract_domain
+    from .cache import get_cached_scrape_result, cache_scrape_result
+    from .models import ErrorCode
+
+    proxy_dict = build_proxy_dict(config)
+    cb = get_circuit_breaker()
+    scraper = Scraper(_browser, cb)
+    sem = asyncio.Semaphore(5)
+    results: List[FlockResultItem] = []
+
+    async def scrape_one(url: str) -> FlockResultItem:
+        async with sem:
+            domain = extract_domain(url)
+            if cb.is_open(domain):
+                return FlockResultItem(
+                    url=url, success=False,
+                    error=f"Circuit breaker open for {domain}",
+                    error_code=ErrorCode.CIRCUIT_OPEN,
+                )
+
+            cached = await get_cached_scrape_result(url, req.formats or [OutputFormat.MARKDOWN])
+            if cached:
+                return FlockResultItem(url=url, success=True, data=cached, cached=True)
+
+            try:
+                data = await scraper.scrape(
+                    url=url,
+                    formats=req.formats,
+                    include_tags=req.include_tags,
+                    exclude_tags=req.exclude_tags,
+                    only_main_content=req.only_main_content,
+                    timeout=req.timeout,
+                    proxy=proxy_dict,
+                )
+                await cache_scrape_result(url, req.formats or [OutputFormat.MARKDOWN], data)
+                await cb.record_success(domain)
+                return FlockResultItem(url=url, success=True, data=data)
+            except asyncio.TimeoutError:
+                await cb.record_failure(domain)
+                return FlockResultItem(
+                    url=url, success=False,
+                    error=f"Request timed out after {req.timeout}ms",
+                    error_code=ErrorCode.TIMEOUT,
+                )
+            except Exception as e:
+                await cb.record_failure(domain)
+                return FlockResultItem(
+                    url=url, success=False,
+                    error=str(e),
+                    error_code=_map_exception_to_error_code(e),
+                )
+
+    try:
+        await _job_store.update_job(job_id, status="running")
+
+        tasks = [scrape_one(url) for url in req.urls]
+        items = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, item in enumerate(items):
+            if isinstance(item, FlockResultItem):
+                results.append(item)
+            elif isinstance(item, Exception):
+                results.append(FlockResultItem(
+                    url=req.urls[i] if i < len(req.urls) else "unknown",
+                    success=False, error=str(item),
+                    error_code=ErrorCode.NAVIGATION_FAILED,
+                ))
+
+        success_count = sum(1 for r in results if r.success)
+        partial = success_count > 0 and success_count < len(results)
+
+        await _job_store.update_job(
+            job_id,
+            status="completed",
+            job_result={"results": [r.model_dump() for r in results], "partial": partial},
+            completed=success_count,
+            total=len(results),
+        )
+
+        if req.webhook_url:
+            await fire_webhook_for_job(req.webhook_url, job_id, "flock", results)
+
+    except asyncio.CancelledError:
+        await _job_store.update_job(job_id, status="cancelled", error="Job cancelled")
+    except Exception as e:
+        logger.error(f"Flock job {job_id} failed: {e}", exc_info=True)
         await _job_store.update_job(job_id, status="failed", error=str(e))
     finally:
         _crawl_tasks.pop(job_id, None)
@@ -698,12 +1532,15 @@ async def _stream_distill(req: DistillRequest):
             },
         })
 
+        from .templates import get_template
+        template = get_template(req.template) if req.template else None
         result = await extractor.extract(
             urls=req.urls,
             prompt=req.prompt,
             schema=req.schema_,
             system_prompt=req.system_prompt,
             output_format=req.format,
+            template=template,
         )
 
         # Send final done event with the result
@@ -712,7 +1549,6 @@ async def _stream_distill(req: DistillRequest):
     except Exception as e:
         logger.error(f"SSE extract stream error: {e}", exc_info=True)
         yield sse_event("done", {"type": "done", "data": {"success": False, "status": "failed", "error": str(e)}})
-
 
 # ─── Default app instance ────────────────────────────────────────────────────
 

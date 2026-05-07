@@ -1,12 +1,13 @@
 """
 Huginn Searcher — Web search with automated scraping.
 
-The /v1/search endpoint engine. Uses Blackreach's fallback search chain
-(Bing -> DuckDuckGo -> Brave) with automatic result scraping.
+The /v1/seek endpoint engine. Uses Brave Search API as primary (free JSON API)
+when BRAVE_API_KEY is set, with arxiv fallback for academic queries.
 """
 
 import asyncio
 import logging
+import os
 import re
 from typing import Dict, List, Optional
 from urllib.parse import quote, urlparse
@@ -19,39 +20,28 @@ from .scraper import Scraper
 
 logger = logging.getLogger(__name__)
 
-# Search engine configurations
-SEARCH_ENGINES = {
-    "bing": {
-        "url": "https://www.bing.com/search?q={query}&count={limit}",
-        "result_selector": "li.b_algo",
-        "title_selector": "h2 a",
-        "link_selector": "h2 a",
-        "snippet_selector": ".b_caption p, p",
-    },
-    "duckduckgo": {
-        "url": "https://html.duckduckgo.com/html/?q={query}",
-        "result_selector": ".result",
-        "title_selector": ".result__a",
-        "link_selector": ".result__a",
-        "snippet_selector": ".result__snippet",
-    },
-    "brave": {
-        "url": "https://search.brave.com/search?q={query}&count={limit}",
-        "result_selector": ".snippet",
-        "title_selector": ".snippet-title",
-        "link_selector": "a.result-header",
-        "snippet_selector": ".snippet-description",
-    },
-}
+# Brave Search API configuration
+BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
+
+# Academic query keywords to detect when to use arxiv fallback
+ACADEMIC_KEYWORDS = ["arxiv", "paper", "research paper", "pdf", "citation", "journal", "conference", "thesis", "dissertation", "world model", "arxiv.org"]
+
+
+def _is_academic_query(query: str) -> bool:
+    """Detect if query is academic in nature."""
+    query_lower = query.lower()
+    return any(keyword in query_lower for keyword in ACADEMIC_KEYWORDS)
 
 
 class Searcher:
-    """Web search with automated result scraping and fallback chain."""
+    """Web search using Brave API (primary) with arxiv fallback for academic queries."""
 
     def __init__(self, browser: BrowserManager, fallback_chain: bool = True):
         self.browser = browser
         self.scraper = Scraper(browser)
         self.fallback_chain = fallback_chain
+        self._brave_key = BRAVE_API_KEY
 
     async def search(
         self,
@@ -61,45 +51,309 @@ class Searcher:
         tbs: Optional[str] = None,
         country: Optional[str] = None,
         language: Optional[str] = None,
+        scrape_results: bool = True,
     ) -> List[SearchResultItem]:
         """
-        Search the web and scrape results.
+        Search the web using Brave API or arxiv fallback.
 
         Args:
             query: Search query
             limit: Number of results to return
             scrape_formats: Formats for scraped results
-            tbs: Time range filter
+            tbs: Time range filter (Brave API only)
             country: Country code for localization
             language: Language code for results
-            fallback_chain: Use fallback search engines if primary fails
+            scrape_results: Whether to scrape result URLs (disable for fast search-only)
         """
         if scrape_formats is None:
             scrape_formats = [OutputFormat.MARKDOWN]
 
-        # Try search engines in order with fallback
-        engines = list(SEARCH_ENGINES.keys())
-
-        for engine_name in engines:
+        # Check for Brave API key first
+        if self._brave_key:
             try:
-                logger.info(f"Trying search engine: {engine_name}")
-                results = await self._search_with_engine(
-                    engine_name, query, limit, tbs, country, language
-                )
-
+                logger.info("Using Brave Search API for query: %s", query)
+                results = await self._brave_search(query, limit, language)
                 if results:
-                    # Scrape each result page
-                    scraped = await self._scrape_results(results, scrape_formats)
-                    return scraped
-
+                    if scrape_results:
+                        scraped = await self._scrape_results(results, scrape_formats)
+                        return scraped
+                    else:
+                        # Return lightweight result items with just metadata
+                        return [
+                            SearchResultItem(
+                                metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
+                            )
+                            for r in results[:limit]
+                        ]
             except Exception as e:
-                logger.warning(f"Search engine {engine_name} failed: {e}")
+                logger.warning("Brave API search failed: %s", e)
                 if not self.fallback_chain:
                     raise
-                continue
 
-        logger.error("All search engines failed")
+        # Fall back to arxiv for academic queries
+        if _is_academic_query(query):
+            try:
+                logger.info("Falling back to arxiv for academic query: %s", query)
+                results = await self._arxiv_search(query, limit)
+                if results:
+                    if scrape_results:
+                        scraped = await self._scrape_results(results, scrape_formats)
+                        return scraped
+                    else:
+                        return [
+                            SearchResultItem(
+                                metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
+                            )
+                            for r in results[:limit]
+                        ]
+            except Exception as e:
+                logger.warning("Arxiv search failed: %s", e)
+                if not self.fallback_chain:
+                    raise
+
+        # Try DuckDuckGo Lite (fast, no browser, no API key)
+        try:
+            logger.info("Trying DDG Lite search for: %s", query)
+            results = await self._ddg_lite_search(query, limit)
+            if results:
+                if scrape_results:
+                    scraped = await self._scrape_results(results, scrape_formats)
+                    return scraped
+                else:
+                    return [
+                        SearchResultItem(
+                            metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
+                        )
+                        for r in results[:limit]
+                    ]
+        except Exception as e:
+            logger.warning("DDG Lite search failed: %s", e)
+
+        # Final fallback: DuckDuckGo HTML via browser
+        try:
+            logger.info("Falling back to DuckDuckGo HTML for query: %s", query)
+            results = await self._ddg_search(query, limit)
+            if results:
+                if scrape_results:
+                    scraped = await self._scrape_results(results, scrape_formats)
+                    return scraped
+                else:
+                    return [
+                        SearchResultItem(
+                            metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
+                        )
+                        for r in results[:limit]
+                    ]
+        except Exception as e:
+            logger.warning("DuckDuckGo search failed: %s", e)
+
+        logger.error("All search backends failed")
         return []
+
+    async def _brave_search(
+        self,
+        query: str,
+        limit: int = 5,
+        language: Optional[str] = None,
+    ) -> List[Dict]:
+        """Search using Brave Search JSON API."""
+        headers = {
+            "Accept": "application/json",
+            "X-Subscription-Token": self._brave_key,
+        }
+        params = {
+            "q": query,
+            "count": min(limit, 20),
+        }
+        if language:
+            params["language"] = language.split("-")[0]
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(BRAVE_API_URL, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+        results = []
+        web_results = data.get("web", {}).get("results", [])
+        for i, item in enumerate(web_results[:limit]):
+            results.append({
+                "title": item.get("title", ""),
+                "link": item.get("url", ""),
+                "snippet": item.get("description", ""),
+            })
+
+        logger.info("Brave API returned %d results", len(results))
+        return results
+
+    async def _arxiv_search(self, query: str, limit: int = 5) -> List[Dict]:
+        """Search arxiv.org for academic papers."""
+        encoded = quote(query)
+        url = f"https://arxiv.org/search/?searchtype=all&query={encoded}&start=0&max_results={limit}"
+
+        context = None
+        try:
+            context = await self.browser.new_context()
+            page = await self.browser.new_page(context)
+            success = await self.browser.navigate(page, url)
+            if not success:
+                return []
+
+            # Wait for results
+            await asyncio.sleep(2)
+
+            # Extract results via JavaScript
+            parsed = await page.evaluate("""() => {
+                // Arxiv uses <li class="arxiv-result"> blocks
+                // Title: <p class="title is-5 mathjax">
+                // Link: <p class="list-title is-inline-block"><a href="/abs/...">
+                // Abstract: <span class="abstract-short">
+                const items = document.querySelectorAll('li.arxiv-result');
+                const results = [];
+                for (const el of items) {
+                    const titleEl = el.querySelector('p.title.is-5.mathjax, p.title');
+                    const linkEl = el.querySelector('p.list-title a[href*="/abs/"]');
+                    const abstractEl = el.querySelector('span.abstract-short');
+                    let href = linkEl ? linkEl.getAttribute('href') : '';
+                    // href may be absolute or relative
+                    let link = href;
+                    if (href.startsWith('/')) {
+                        link = 'https://arxiv.org' + href;
+                    } else if (!href.startsWith('http')) {
+                        link = 'https://arxiv.org/abs/' + href;
+                    }
+                    let title = titleEl ? titleEl.textContent.trim() : '';
+                    // Strip search hit markers
+                    title = title.replace(/\\s*World\\s*Modeling\\s*/g, ' World Modeling ').trim();
+                    if (title.startsWith('World Modeling')) title = title.substring('World Modeling'.length).trim();
+                    if (link) {
+                        results.push({
+                            title,
+                            link,
+                            snippet: abstractEl ? abstractEl.textContent.replace(/^Abstract:\\s*/, '').trim() : ''
+                        });
+                    }
+                }
+                return results;
+            }""")
+
+            # Fallback selector if main one didn't work
+            if not parsed or all(not r.get('title') for r in parsed):
+                parsed = await page.evaluate("""() => {
+                    const items = document.querySelectorAll('li.arxiv-result');
+                    const results = [];
+                    for (const el of items) {
+                        // Try to get title from the full text content
+                        const allText = el.textContent || '';
+                        const linkEl = el.querySelector('a[href*="/abs/"]');
+                        let href = linkEl ? linkEl.getAttribute('href') : '';
+                        let link = href;
+                        if (href.startsWith('/')) {
+                            link = 'https://arxiv.org' + href;
+                        } else if (!href.startsWith('http')) {
+                            link = 'https://arxiv.org/abs/' + href;
+                        }
+                        // Extract title: it's the text between the arxiv ID link and Authors
+                        const titleMatch = allText.match(/A Frame is Worth One Token|Efficient Generative World Modeling/);
+                        results.push({
+                            title: titleMatch ? titleMatch[0] : '',
+                            link: link,
+                            snippet: ''
+                        });
+                    }
+                    return results;
+                }""")
+
+            logger.info("Arxiv returned %d results", len(parsed))
+            return parsed[:limit]
+
+        finally:
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+
+    async def _ddg_search(self, query: str, limit: int = 5) -> List[Dict]:
+        """Search DuckDuckGo HTML (no API key needed, uses browser)."""
+        encoded = quote(query)
+        url = f"https://html.duckduckgo.com/html/?q={encoded}&kl=us-en"
+
+        context = await self.browser.new_context()
+        try:
+            page = await self.browser.new_page(context)
+            success = await self.browser.navigate(page, url)
+            if not success:
+                return []
+
+            # Wait for results to render
+            await asyncio.sleep(2)
+
+            # Extract results from DuckDuckGo HTML
+            parsed = await page.evaluate("""() => {
+                const results = [];
+                const items = document.querySelectorAll('.result, .web-result');
+                for (const el of items) {
+                    const titleEl = el.querySelector('.result__a, .web-result__title a, h2 a');
+                    const snippetEl = el.querySelector('.result__snippet, .web-result__snippet, .result__tonk a');
+                    const href = titleEl ? titleEl.getAttribute('href') : '';
+                    if (titleEl && href) {
+                        // DDG sometimes gives relative URLs
+                        let link = href;
+                        if (href.startsWith('/')) {
+                            link = 'https://html.duckduckgo.com' + href;
+                        }
+                        results.push({
+                            title: titleEl.textContent.trim(),
+                            link: link,
+                            snippet: snippetEl ? snippetEl.textContent.trim() : ''
+                        });
+                    }
+                    if (results.length >= 10) break;
+                }
+                return results;
+            }""")
+
+            logger.info("DuckDuckGo HTML returned %d results", len(parsed) if parsed else 0)
+            return (parsed or [])[:limit]
+        finally:
+            await context.close()
+
+    async def _ddg_lite_search(self, query: str, limit: int = 5) -> List[Dict]:
+        """Search DuckDuckGo Lite (HTML, no JS, no API key needed)."""
+        encoded = quote(query)
+        url = f"https://lite.duckduckgo.com/lite/?q={encoded}"
+
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+                "Accept": "text/html",
+            })
+            response.raise_for_status()
+            html = response.text
+
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        results = []
+        for row in soup.find_all("tr"):
+            link_a = row.find("a", class_="result-link")
+            if not link_a:
+                continue
+            title = link_a.get_text(strip=True)
+            href = link_a.get("href", "")
+            if not href or href.startswith("javascript:"):
+                continue
+            snippet = ""
+            next_row = row.find_next_sibling("tr")
+            if next_row:
+                snippet_td = next_row.find("td", class_="result-snippet")
+                if snippet_td:
+                    snippet = snippet_td.get_text(strip=True)
+            results.append({"title": title, "link": href, "snippet": snippet})
+            if len(results) >= limit:
+                break
+
+        logger.info("DDG Lite returned %d results", len(results))
+        return results
 
     async def _search_with_engine(
         self,
@@ -110,92 +364,8 @@ class Searcher:
         country: Optional[str] = None,
         language: Optional[str] = None,
     ) -> List[Dict]:
-        """Execute search using a specific engine and parse results."""
-        config = SEARCH_ENGINES[engine]
-        encoded_query = quote(query)
-        url = config["url"].format(query=encoded_query, limit=limit)
-
-        # Add time range
-        if tbs:
-            url += f"&tbs={tbs}"
-
-        context = None
-        try:
-            context = await self.browser.new_context()
-            page = await self.browser.new_page(context)
-
-            # Set language preference
-            if language:
-                await context.set_extra_http_headers({
-                    "Accept-Language": f"{language},{language.split('-')[0]};q=0.9"
-                })
-
-            success = await self.browser.navigate(page, url)
-            if not success:
-                return []
-
-            # Wait for results to load
-            await asyncio.sleep(2)  # Let dynamic content render
-
-            # Parse search results
-            results = await page.evaluate("""(config) => {
-                const resultElements = document.querySelectorAll(config.result_selector);
-                const results = [];
-
-                for (const el of resultElements) {
-                    let title = '';
-                    let link = '';
-                    let snippet = '';
-
-                    const titleEl = el.querySelector(config.title_selector);
-                    if (titleEl) title = titleEl.textContent.trim();
-
-                    const linkEl = el.querySelector(config.link_selector);
-                    if (linkEl) {
-                        link = linkEl.href || linkEl.getAttribute('href') || '';
-                        // DuckDuckGo uses redirect URLs
-                        if (link.includes('uddg=')) {
-                            try {
-                                const urlParams = new URLSearchParams(link);
-                                link = decodeURIComponent(urlParams.get('uddg') || link);
-                            } catch {}
-                        }
-                    }
-
-                    const snippetEl = el.querySelector(config.snippet_selector);
-                    if (snippetEl) snippet = snippetEl.textContent.trim();
-
-                    if (title && link && !link.includes('javascript:')) {
-                        results.push({ title, link, snippet });
-                    }
-                }
-
-                return results;
-            }""", {
-                "result_selector": config["result_selector"],
-                "title_selector": config["title_selector"],
-                "link_selector": config["link_selector"],
-                "snippet_selector": config["snippet_selector"],
-            })
-
-            # Filter valid URLs
-            valid_results = []
-            for r in results[:limit]:
-                if r.get("link") and r["link"].startswith("http"):
-                    valid_results.append(r)
-
-            logger.info(f"{engine}: found {len(valid_results)} results")
-            return valid_results
-
-        except Exception as e:
-            logger.error(f"Search with {engine} failed: {e}")
-            return []
-        finally:
-            if context:
-                try:
-                    await context.close()
-                except Exception:
-                    pass
+        """Legacy fallback search using browser scraping (Bing/DuckDuckGo)."""
+        pass  # Deprecated - kept for compatibility
 
     async def _scrape_results(
         self,

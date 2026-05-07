@@ -22,7 +22,7 @@ class BrowserConfig:
     navigation_timeout: int = 30000  # ms
     wait_for_timeout: int = 5000  # ms
     stealth_mode: bool = True
-    user_agent: Optional[str] = None
+    user_agent: Optional[str] = "Huginn/1.1 (+https://huginn.dev/bot)"
 
 
 @dataclass
@@ -86,6 +86,7 @@ class HuginnConfig:
             self.db_path = os.path.join(self.data_dir, "huginn.db")
         # NOTE: Directory creation deferred to runtime (ensure_data_dir).
         # __post_init__ should not have side effects like makedirs.
+        _apply_env(self)
 
     def ensure_data_dir(self):
         """Create data directory if it does not exist. Call at startup, not import time."""
@@ -160,6 +161,7 @@ def _apply_env(config: HuginnConfig):
         "HUGINN_PROXY_SERVER": ("proxy", "server"),
         "HUGINN_PROXY_USERNAME": ("proxy", "username"),
         "HUGINN_PROXY_PASSWORD": ("proxy", "password"),
+        "HUGINN_USER_AGENT": ("browser", "user_agent"),
     }
     for env_var, (section, attr) in env_map.items():
         val = os.environ.get(env_var)

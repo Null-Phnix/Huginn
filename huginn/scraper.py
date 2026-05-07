@@ -16,7 +16,9 @@ import markdownify
 from bs4 import BeautifulSoup, Tag
 
 from .browser import BrowserManager, WaitStrategy, parse_wait_for
+from .circuit_breaker import CircuitBreaker, CircuitOpenError, extract_domain, get_circuit_breaker
 from .models import OutputFormat, ScrapeData
+from .pdf import extract_pdf_text, is_pdf_content
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +134,10 @@ def classify_error(error: Exception) -> tuple:
 class Scraper:
     """Scrapes a single URL and returns content in requested formats."""
 
-    def __init__(self, browser: BrowserManager):
+    def __init__(self, browser: BrowserManager, circuit_breaker: Optional[CircuitBreaker] = None):
         self.browser = browser
+        self._cb = circuit_breaker
+        self._cb_domain_failures: dict[str, int] = {}  # domain -> consecutive failures
 
     async def scrape(
         self,
@@ -155,9 +159,65 @@ class Scraper:
 
         Retries up to max_retries times with exponential backoff on timeout,
         connection, and server errors. Client errors (4xx) are not retried.
+
+        The circuit breaker (if configured) prevents hammering domains that are
+        returning persistent errors, protecting both the target and our resources.
         """
         if formats is None:
             formats = [OutputFormat.MARKDOWN]
+
+        domain = extract_domain(url)
+        cb = self._cb or get_circuit_breaker()
+
+        # Check circuit before any request
+        if cb.is_open(domain):
+            logger.debug(f"Circuit open for {domain}, returning fast-fail for {url}")
+            return ScrapeData(
+                metadata={
+                    "url": url,
+                    "error": f"Circuit breaker open for {domain}. Site may be temporarily unavailable.",
+                    "status_code": 503,
+                    "circuit_open": True,
+                }
+            )
+
+        # Wrap the actual scrape in the circuit breaker
+        try:
+            return await cb.call(domain, self._scrape_impl, url, formats, headers,
+                                  wait_for, actions, include_tags, exclude_tags,
+                                  only_main_content, timeout, proxy, max_retries, scroll,
+                                  render_mode)
+        except CircuitOpenError:
+            return ScrapeData(
+                metadata={
+                    "url": url,
+                    "error": f"Circuit breaker open for {domain}. Site may be temporarily unavailable.",
+                    "status_code": 503,
+                    "circuit_open": True,
+                }
+            )
+        except Exception as e:
+            # Record the failure so circuit breaker tracks it
+            await cb.record_failure(domain)
+            raise
+
+    async def _scrape_impl(
+        self,
+        url: str,
+        formats: Optional[List[OutputFormat]],
+        headers: Optional[Dict[str, str]],
+        wait_for: Optional[Union[int, str]],
+        actions: Optional[List[dict]],
+        include_tags: Optional[List[str]],
+        exclude_tags: Optional[List[str]],
+        only_main_content: bool,
+        timeout: int,
+        proxy: Optional[Dict[str, str]],
+        max_retries: int,
+        scroll: bool,
+        render_mode: str,
+    ) -> ScrapeData:
+        """Internal implementation — wrapped by circuit breaker."""
 
         # ── Lightweight rendering path ────────────────────────────────────
         # If render_mode is "light" or "auto", try lightweight HTTP fetch first.
@@ -198,6 +258,7 @@ class Scraper:
         # ── Full browser rendering path ─────────────────────────────────
 
         last_error = None
+        pdf_text: Optional[str] = None  # extracted if page is PDF
         for attempt in range(max_retries + 1):
             context = None
             try:
@@ -216,6 +277,36 @@ class Scraper:
                 success = await self.browser.navigate(page, url)
                 if not success:
                     return ScrapeData(metadata={"url": url, "status_code": 500, "error": "Navigation failed"})
+
+                # Check if response is a PDF -- use PDF extractor instead
+                try:
+                    resp = page.url  # Current URL after navigation
+                    content_type = ""
+                    try:
+                        resp_obj = await page.evaluate("() => document.contentType || ''")
+                        content_type = resp_obj or ""
+                    except Exception:
+                        pass
+
+                    if url.lower().endswith(".pdf") or "application/pdf" in content_type:
+                        logger.info(f"PDF detected for {url}, using PDF extractor")
+                        # Download PDF bytes via a fetch
+                        async with httpx.AsyncClient(timeout=timeout) as pdf_client:
+                            pdf_resp = await pdf_client.get(url)
+                            if pdf_resp.status_code == 200:
+                                pdf_text = await extract_pdf_text(pdf_resp.content)
+                                return ScrapeData(
+                                    markdown=pdf_text,
+                                    metadata={
+                                        "url": url,
+                                        "title": url.split("/")[-1],
+                                        "status_code": pdf_resp.status_code,
+                                        "content_type": "pdf",
+                                    },
+                                )
+                except Exception as e:
+                    logger.warning(f"PDF extraction attempt failed for {url}: {e}")
+                    # Fall through to normal HTML extraction
 
                 # Smart wait: selector, networkIdle, domContentLoaded, or timeout
                 if wait_for:
@@ -260,6 +351,8 @@ class Scraper:
                     elif fmt == OutputFormat.METADATA:
                         # Already collected in metadata
                         pass
+                    elif fmt == OutputFormat.PDF:
+                        result.pdf_text = pdf_text
 
                 # Apply include/exclude tag filtering on HTML
                 if include_tags or exclude_tags:

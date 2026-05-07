@@ -1,0 +1,31 @@
+# Huginn Docker Compose — self-hosted scraping API
+version: "3.8"
+
+services:
+  huginn:
+    build: .
+    image: ghcr.io/null-phnix/huginn:latest
+    container_name: huginn
+    ports:
+      - "7432:7432"
+    environment:
+      HUGINN_DATA_DIR: /data
+      HUGINN_PORT: 7432
+      HUGINN_USER_AGENT: "Huginn/Bot (+https://huginn.dev/bot)"
+    volumes:
+      - huginn-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7432/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+volumes:
+  huginn-data:
+    driver: local

@@ -7,8 +7,10 @@ URL deduplication, depth limits, and path filtering.
 
 import asyncio
 import hashlib
+import heapq
 import logging
 import re
+import signal
 import time
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -135,7 +137,7 @@ class CrawlResult:
 
 
 class Crawler:
-    """BFS web crawler with concurrency, dedup, and path filtering."""
+    """Priority web crawler with concurrency, dedup, pagination detection, and SIGINT handling."""
 
     def __init__(
         self,
@@ -179,6 +181,36 @@ class Crawler:
         seen_hashes.add(h)
         return False
 
+    # ─── Pagination ──────────────────────────────────────────────────────────
+    _PAGINATION_PATTERNS = [
+        r"/page/(\d+)",
+        r"/p/(\d+)",
+        r"/\?(?:.*[&;]|)page=(\d+)",
+        r"/\?(?:.*[&;]|)p=(\d+)",
+        r"-page-(\d+)",
+        r"_(\d+)\.html?",
+    ]
+
+    def _detect_pagination(self, links: list[str]) -> Optional[dict]:
+        """Detect pagination patterns in discovered links. Returns {base_url, page_numbers}."""
+        import re
+        seen_bases = {}
+        for link in links:
+            parsed = urlparse(link)
+            for pattern in self._PAGINATION_PATTERNS:
+                m = re.search(pattern, parsed.path + "?" + parsed.query)
+                if m:
+                    page_num = int(m.group(1))
+                    base = f"{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit('/', 1)[0]}"
+                    if base not in seen_bases:
+                        seen_bases[base] = []
+                    seen_bases[base].append(page_num)
+                    break
+        if not seen_bases:
+            return None
+        best = max(seen_bases.items(), key=lambda x: len(set(x[1])))
+        return {"base": best[0], "pages": sorted(set(best[1]))}
+
     async def crawl(
         self,
         start_url: str,
@@ -188,7 +220,7 @@ class Crawler:
         on_progress: Optional[Callable] = None,
     ) -> CrawlResult:
         """
-        Crawl from start_url using BFS. Returns CrawlResult with all scraped pages.
+        Priority crawl from start_url. Returns CrawlResult with all scraped pages.
 
         Args:
             start_url: URL to start crawling from
@@ -205,9 +237,17 @@ class Crawler:
         base_domain = parsed_start.netloc
         base_path_prefix = parsed_start.path.rstrip("/") if not self.allow_backward else "/"
 
-        # BFS queue: (url, depth)
-        queue: deque = deque()
-        queue.append((start_url, 0))
+        # Priority heap: (priority_score, counter, url, depth)
+        # Lower score = higher priority. same-domain, shallow pages first.
+        counter = 0
+        def url_priority(url: str, depth: int) -> tuple:
+            parsed = urlparse(url)
+            same_domain_penalty = 0 if parsed.netloc == base_domain else 100
+            return (same_domain_penalty, depth, len(url))
+
+        heap: list = []
+        heapq.heappush(heap, (url_priority(start_url, 0), counter, start_url, 0))
+        counter += 1
         result.queued.add(self._normalize_url(start_url))
 
         # Semaphore for concurrency control
@@ -219,12 +259,10 @@ class Crawler:
                 return
 
             async with sem:
-                # Rate limiting delay
                 if self.delay > 0:
                     await asyncio.sleep(self.delay)
 
                 try:
-                    # Scrape the page
                     formats = list(scrape_formats) + [OutputFormat.LINKS]
                     page_data = await self.scraper.scrape(
                         url=url,
@@ -240,7 +278,6 @@ class Crawler:
                             result.visited.add(self._normalize_url(url))
                             return
 
-                    # Add page to results
                     result.pages.append(page_data)
                     result.completed += 1
 
@@ -252,11 +289,11 @@ class Crawler:
                             continue
                         if not self._should_follow(norm_link, base_domain, depth + 1, base_path_prefix=base_path_prefix):
                             continue
-                        if len(result.queued) >= self.max_pages * 2:  # discovery cap
+                        if len(result.queued) >= self.max_pages * 2:
                             continue
-
                         result.queued.add(norm_link)
-                        queue.append((link, depth + 1))
+                        heapq.heappush(heap, (url_priority(link, depth + 1), counter, link, depth + 1))
+                        counter += 1
                         result.total_discovered = len(result.queued)
 
                     if on_progress:
@@ -266,33 +303,38 @@ class Crawler:
                     logger.error(f"Crawl error on {url}: {e}")
                     result.errors.append(f"{url}: {str(e)}")
 
-        # Main BFS loop
-        while queue and not self._cancel:
-            if result.completed >= self.max_pages:
-                logger.info(f"Reached max_pages limit ({self.max_pages})")
-                break
+        # SIGINT handler for graceful shutdown
+        old_handler = signal.signal(signal.SIGINT, lambda s, f: setattr(self, "_cancel", True))
 
-            # Collect batch of pages at next depth level
-            batch = []
-            while queue and len(batch) < self.concurrency:
-                url, depth = queue.popleft()
-                if depth > self.max_depth:
-                    continue
-                norm_url = self._normalize_url(url)
-                if norm_url in result.visited:
-                    continue
-                result.visited.add(norm_url)
-                batch.append((url, depth))
+        try:
+            while heap and not self._cancel:
+                if result.completed >= self.max_pages:
+                    logger.info(f"Reached max_pages limit ({self.max_pages})")
+                    break
 
-            if not batch:
-                break
+                # Collect batch
+                batch = []
+                while heap and len(batch) < self.concurrency:
+                    _, _, url, depth = heapq.heappop(heap)
+                    if depth > self.max_depth:
+                        continue
+                    norm_url = self._normalize_url(url)
+                    if norm_url in result.visited:
+                        continue
+                    result.visited.add(norm_url)
+                    batch.append((url, depth))
 
-            # Process batch concurrently
-            tasks = [process_page(url, depth) for url, depth in batch]
-            await asyncio.gather(*tasks, return_exceptions=True)
+                if not batch:
+                    break
+
+                tasks = [process_page(url, depth) for url, depth in batch]
+                await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            signal.signal(signal.SIGINT, old_handler)
 
         result.total_discovered = len(result.queued)
         return result
+
 
     def _normalize_url(self, url: str) -> str:
         """Normalize URL for deduplication: strip fragment, trailing slash, query sort."""
