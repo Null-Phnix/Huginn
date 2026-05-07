@@ -40,6 +40,11 @@ dependencies = [
     "httpx>=0.25.0",
     "aiosqlite>=0.19.0",
     "pyyaml>=6.0.0",
+    "croniter>=2.0.0",
+    "slowapi>=0.1.0",
+    "python-dotenv>=1.0.0",
+    "chromadb>=0.5.0",
+    "defusedxml>=0.7.0",
 ]
 
 [project.optional-dependencies]
@@ -88,7 +93,7 @@ ignore = ["E501"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not network'"
 asyncio_mode = "auto"
 markers = [
     "integration: marks tests as integration tests",
