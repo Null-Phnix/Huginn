@@ -961,40 +961,43 @@ def _interactive_mode():
     _print_banner()
     while True:
         _menu()
-        choice = console.input("[bold cyan]huginn[/bold cyan] ").strip().lower()
-        if not choice:
+        choice = console.input("[bold cyan]huginn[/bold cyan] ").strip()
+        key = choice.lower()
+        if not key:
             continue
-        if choice == "q":
+        if key in ("q", "quit", "exit"):
             console.print("[dim]Goodbye.[/dim]")
             break
-        elif choice == "s":
+        elif key in ("s", "scrape"):
             _run_async(_i_scrape())
-        elif choice == "c":
+        elif key in ("c", "crawl"):
             _run_async(_i_crawl())
-        elif choice == "e":
+        elif key in ("e", "extract"):
             _run_async(_i_extract())
-        elif choice == "r":
+        elif key in ("r", "search"):
             _run_async(_i_search())
-        elif choice == "m":
+        elif key in ("m", "map"):
             _run_async(_i_map())
-        elif choice == "d":
+        elif key in ("d", "research"):
             _run_async(_i_research())
-        elif choice == "v":
+        elif key in ("v", "serve"):
             _run_async(_i_serve())
-        elif choice == "t":
+        elif key in ("t", "templates"):
             templates_cmd()
-        elif choice == "b":
+        elif key in ("b", "batch"):
             _run_async(_i_batch())
-        elif choice == "M":
+        elif choice in ("M", "memory"):
             _run_async(_i_memory())
-        elif choice == "W":
+        elif choice in ("W", "watch"):
             _run_async(_i_watch())
-        elif choice == "j":
+        elif key in ("j", "jobs"):
             _run_async(_i_jobs())
-        elif choice == "o":
+        elif key in ("o", "config"):
             config_cmd()
-        elif choice == "h":
+        elif key in ("h", "doctor", "health"):
             _run_async(_doctor())
+        else:
+            console.print(f"[red]Unknown command:[/red] {choice}. Type a command name or its key (s=scrape, q=quit, …)")
         console.print()
 
 

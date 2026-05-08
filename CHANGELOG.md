@@ -73,3 +73,13 @@
 - LLM extraction via OpenAI, Anthropic, Google, Ollama
 - Rate limiting, circuit breakers, robots.txt support
 - Docker one-liner deployment
+
+## [1.2.1] - 2026-05-08
+
+### Fixed
+- **Interactive REPL command dispatch**: full command names (`scrape`, `config`, etc.) are now recognised, not only single-letter keys (`s`, `o`)
+- **Case-sensitive dispatch bug**: capital `M` (`memory`) and `W` (`watch`) collided with `.lower()` converting to `m`/`w`, causing those commands to silently fail; now checks uppercase identity for `M`/`W`
+- Unknown commands print an error instead of silently ignoring input
+
+### Added
+- Regression tests for interactive-mode dispatch (`map`, `memory`)
