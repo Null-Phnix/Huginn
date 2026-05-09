@@ -128,6 +128,7 @@ _browser: Optional[BrowserManager] = None
 _job_store: Optional[JobStore] = None
 _crawl_tasks: dict = {}  # job_id -> asyncio.Task
 _scheduler: Optional[Scheduler] = None
+_watcher: Optional[Any] = None
 
 
 @asynccontextmanager
@@ -154,6 +155,12 @@ async def lifespan(app: FastAPI):
     logger.info("Scheduler started")
     _register_scheduler_handlers()
 
+    # Initialize page watcher (shared singleton for all watch endpoints)
+    from .watcher import PageWatcher, get_watch_store
+    global _watcher
+    _watcher = PageWatcher(_browser, get_watch_store())
+    logger.info("Page watcher initialized")
+
     logger.info(f"Huginn started on {_config.server.host}:{_config.server.port}")
     logger.info(f"Browser: backend={_browser.backend}, headless={_config.browser.headless}, stealth={_config.browser.stealth_mode}")
 
@@ -163,6 +170,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Huginn...")
     for task in _crawl_tasks.values():
         task.cancel()
+    # Stop all watch monitoring tasks
+    if _watcher:
+        for url, task in list(_watcher._monitor_tasks.items()):
+            task.cancel()
+            logger.info(f"Stopped monitoring {url}")
     await _browser.stop()
     await _job_store.close()
     if _scheduler:
@@ -792,11 +804,10 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             )
 
         store = get_watch_store()
-        watcher = PageWatcher(_browser, store)
 
         try:
             # Take initial snapshot
-            snapshot = await watcher.check(req.url)
+            snapshot = await _watcher.check(req.url)
         except Exception as e:
             await cb.record_failure(domain)
             return WatchResponse(
@@ -820,7 +831,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
         # Start background monitoring if interval is set
         if req.check_interval_seconds >= 60:
-            await watcher.start_monitoring(req.url, req.check_interval_seconds)
+            await _watcher.start_monitoring(req.url, req.check_interval_seconds)
 
         return WatchResponse(
             success=True,
@@ -876,14 +887,13 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         cb = get_circuit_breaker()
         domain = extract_domain(url)
         store = get_watch_store()
-        watcher = PageWatcher(_browser, store)
 
         entry = await store.get(url)
         if not entry:
             raise HTTPException(status_code=404, detail="URL is not being watched")
 
         try:
-            snapshot = await watcher.check_and_notify(url)
+            snapshot = await _watcher.check_and_notify(url)
         except Exception as e:
             await cb.record_failure(domain)
             return WatchResponse(
@@ -895,26 +905,22 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
                 error_code=_map_exception_to_error_code(e),
             )
 
-        entry = await store.get(url)
         return WatchResponse(
             success=True,
             url=url,
             domain=domain,
             content_hash=snapshot.content_hash,
-            change_count=entry.change_count if entry else 0,
+            change_count=entry.change_count,
             last_check=snapshot.created_at,
-            last_change=entry.last_change if entry else None,
-            message=f"{len(snapshot.detected_changes)} changes detected" if snapshot.detected_changes else "No changes detected",
+            last_change=entry.last_change,
+            message="No changes detected" if not snapshot.detected_changes else f"Detected {len(snapshot.detected_changes)} change(s)",
         )
 
     @app.delete("/v1/watch/{url:path}", tags=["Watch"])
     async def unwatch_page(url: str, auth=Depends(verify_api_key)):
         """Stop watching a page."""
-        from .watcher import PageWatcher
-
         store = get_watch_store()
-        watcher = PageWatcher(_browser, store)
-        await watcher.stop_monitoring(url)
+        await _watcher.stop_monitoring(url)
         removed = await store.unwatch(url)
 
         return {"success": removed, "url": url}
