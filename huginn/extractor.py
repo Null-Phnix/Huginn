@@ -20,9 +20,10 @@ import logging
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 from .browser import BrowserManager
 from .models import OutputFormat, ScrapeData
@@ -70,6 +71,8 @@ class Extractor:
         output_format: str = "json",
         template: Optional[Any] = None,
         include_raw: bool = False,
+        examples: Optional[List[Dict[str, Any]]] = None,
+        pydantic_model: Optional[Type[BaseModel]] = None,
     ) -> Dict[str, Any]:
         """
         Extract structured data from one or more URLs.
@@ -82,6 +85,7 @@ class Extractor:
             output_format: "json", "markdown", or "text"
             template: Optional ExtractTemplate for predefined schemas
             include_raw: Whether to include raw LLM response in output
+            examples: Optional list of example extraction results to guide the LLM
 
         Returns:
             Dict with "data", "confidence", "attempts", "sources", "success",
@@ -123,7 +127,7 @@ class Extractor:
 
         # Build extraction prompt
         extraction_prompt = self._build_prompt(
-            combined_text, prompt, effective_schema, page_metadata, output_format, fields_guide
+            combined_text, prompt, effective_schema, page_metadata, output_format, fields_guide, examples=examples
         )
 
         # Extract with guaranteed JSON + retry
@@ -133,6 +137,7 @@ class Extractor:
             effective_system,
             combined_text,
             merge_strategy=merge_strategy,
+            examples=examples,
         )
 
         response: Dict[str, Any] = {
@@ -210,6 +215,7 @@ class Extractor:
         page_metadata: List[Dict],
         output_format: str,
         fields_guide: Optional[Dict[str, str]] = None,
+        examples: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Build the LLM extraction prompt with schema and field guides."""
         parts: List[str] = []
@@ -229,6 +235,12 @@ class Extractor:
             parts.append("\n🔍 FIELD GUIDES (where to find each piece of data on the page):\n")
             for field, guide in fields_guide.items():
                 parts.append(f"  • {field}: {guide}\n")
+
+        # Examples: show the LLM what correct output looks like
+        if examples and schema:
+            parts.append(f"\n📋 EXAMPLES (output must match this JSON schema format):\n")
+            for i, ex in enumerate(examples[:3]):  # Cap at 3 examples to avoid bloat
+                parts.append(f"\nExample {i + 1}:\n```json\n{json.dumps(ex, indent=2)}\n```\n")
 
         # Constraints based on output format
         parts.append("\n⚠️ RULES:\n")
@@ -263,6 +275,7 @@ class Extractor:
         system_prompt: Optional[str],
         raw_text: str,
         merge_strategy: str = "concat",
+        examples: Optional[List[Dict[str, Any]]] = None,
     ) -> ExtractionResult:
         """Call LLM for extraction with guaranteed JSON + progressive repair."""
 
@@ -305,7 +318,12 @@ class Extractor:
                 last_raw_response = raw_response
 
                 # Validate
-                if schema:
+                if pydantic_model is not None:
+                    validated = self._validate_with_pydantic(result_data, pydantic_model)
+                    confidence = validated["confidence"]
+                    errors = validated.get("validation_errors", [])
+                    result_data = validated["data"]
+                elif schema:
                     validated = self._validate_schema(result_data, schema)
                     confidence = validated["confidence"]
                     errors = validated.get("validation_errors", [])
@@ -730,6 +748,30 @@ class Extractor:
         if errors:
             result["validation_errors"] = errors
         return result
+
+    def _validate_with_pydantic(
+        self,
+        data: Any,
+        model: Type[BaseModel],
+    ) -> Dict[str, Any]:
+        """Validate extracted data against a Pydantic model with detailed errors.
+
+        Returns dict with "data", "confidence", and optional "validation_errors".
+        """
+        try:
+            validated = model.model_validate(data)
+            return {
+                "data": validated.model_dump(),
+                "confidence": 1.0,
+            }
+        except ValidationError as e:
+            errors = [f"{err['loc']}: {err['msg']}" for err in e.errors()]
+            # Still return the data so retry can fix it
+            return {
+                "data": data if isinstance(data, dict) else {},
+                "confidence": max(0.0, 1.0 - len(errors) * 0.15),
+                "validation_errors": errors,
+            }
 
     def _update_beliefs(
         self,

@@ -1294,6 +1294,7 @@ async def _run_distill(job_id: str, req: DistillRequest):
             system_prompt=req.system_prompt,
             output_format=req.format,
             template=template,
+            examples=req.examples,
         )
 
         await _job_store.update_job(
@@ -1556,6 +1557,7 @@ async def _stream_distill(req: DistillRequest):
             system_prompt=req.system_prompt,
             output_format=req.format,
             template=template,
+            examples=req.examples,
         )
 
         # Send final done event with the result

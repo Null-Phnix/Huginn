@@ -371,3 +371,82 @@ class TestExtractionResult:
         assert result.data == {"title": "Test"}
         assert result.confidence == 0.9
         assert result.attempts == 2
+
+
+class TestPydanticValidation:
+    """Test Pydantic model validation in extraction pipeline."""
+
+    def setup_method(self):
+        self.extractor = Extractor(browser=None, llm_provider="openai")
+
+    def test_pydantic_valid_data(self):
+        from pydantic import BaseModel
+
+        class Product(BaseModel):
+            name: str
+            price: float
+
+        result = self.extractor._validate_with_pydantic(
+            {"name": "Widget", "price": 19.99}, Product
+        )
+        assert result["confidence"] == 1.0
+        assert "validation_errors" not in result
+        assert result["data"]["name"] == "Widget"
+
+    def test_pydantic_invalid_data(self):
+        from pydantic import BaseModel
+
+        class Product(BaseModel):
+            name: str
+            price: float
+
+        result = self.extractor._validate_with_pydantic(
+            {"name": "Widget", "price": "free"}, Product
+        )
+        assert result["confidence"] < 1.0
+        assert "validation_errors" in result
+        assert any("price" in err for err in result["validation_errors"])
+
+    def test_pydantic_non_dict_input(self):
+        from pydantic import BaseModel
+
+        class Product(BaseModel):
+            name: str
+
+        result = self.extractor._validate_with_pydantic("not a dict", Product)
+        assert result["confidence"] < 1.0
+        assert "validation_errors" in result
+
+
+class TestExamplesInPrompt:
+    """Test example-driven extraction prompt building."""
+
+    def setup_method(self):
+        self.extractor = Extractor(browser=None, llm_provider="openai")
+
+    def test_prompt_includes_examples(self):
+        schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+        examples = [{"title": "Example 1"}, {"title": "Example 2"}]
+        prompt = self.extractor._build_prompt(
+            text="Hello World",
+            prompt="Extract the title",
+            schema=schema,
+            page_metadata=[{"url": "https://example.com", "title": "Test", "length": 11}],
+            output_format="json",
+            examples=examples,
+        )
+        assert "EXAMPLES" in prompt
+        assert "Example 1" in prompt
+        assert "Example 2" in prompt
+        assert "Widget" not in prompt  # Sanity
+
+    def test_prompt_without_examples(self):
+        schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+        prompt = self.extractor._build_prompt(
+            text="Hello World",
+            prompt="Extract the title",
+            schema=schema,
+            page_metadata=[{"url": "https://example.com", "title": "Test", "length": 11}],
+            output_format="json",
+        )
+        assert "EXAMPLES" not in prompt

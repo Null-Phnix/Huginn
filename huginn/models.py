@@ -136,6 +136,9 @@ class DistillOptions(BaseModel):
     prompt: Optional[str] = None
     schema_: Optional[Dict[str, Any]] = Field(None)
     system_prompt: Optional[str] = Field(None)
+    examples: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Example extraction results to guide the LLM (max 3)"
+    )
 
 
 class ScrapeOptions(BaseModel):
