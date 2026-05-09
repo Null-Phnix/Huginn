@@ -590,4 +590,89 @@ Huginn had #2 partially (only [1,2,4] second backoffs) but none of the rest.
 
 ---
 
+## 2026-05-08 — Session: Performance & Streaming (v1.2.0 prep)
+
+The user wants Huginn to be a "full on Firecrawl alternative." The biggest
+structural gap was the crawler — it used batch-gather concurrency (collect N
+URLs, scrape all, wait, repeat) which meant if one page was slow, all other
+workers sat idle. Firecrawl uses a continuous worker pool.
+
+### True async worker pool
+
+**File:** `huginn/crawler.py`
+
+Rewrote `Crawler.crawl()` from batch-gather to a real worker pool:
+- N workers consume from an `asyncio.PriorityQueue` continuously
+- When a worker finishes a page, it immediately enqueues discovered links
+  and grabs the next URL
+- If 1 page is slow, other workers keep churning
+
+**The hard bugs:**
+1. **Missing pending increment on discovery** — I incremented `pending` when
+   dequeuing but not when discovering. First worker finished, set `pending=0`,
+   signaled done. Remaining URLs sat in queue unprocessed. Fix: `pending += 1`
+   per new URL.
+2. **Race on max_pages** — 3 workers could all pass the `completed >= max_pages`
+   check simultaneously, scrape 3 pages instead of stopping at limit.
+   Fix: check before scraping, under the same logic that decrements pending.
+3. **Cancel hung forever** — `cancel()` set `_cancel=True` but workers just
+   returned without decrementing pending. Deadlock. Fix: decrement + signal
+   done before returning on cancel.
+
+### Connection pooling
+
+**File:** `huginn/scraper.py`
+
+Replaced 3 ephemeral `httpx.AsyncClient()` creations per scrape call with
+a single lazy-init persistent client:
+- HEAD request for render mode detection
+- PDF download
+- Lightweight scrape (BeautifulSoup path)
+
+Config: `max_keepalive=20`, `max_connections=50`. Added `Scraper.close()`
+and `Crawler.close()` for clean teardown.
+
+### Real-time NDJSON streaming
+
+**File:** `huginn/api.py`, `huginn/models.py`, `huginn/crawler.py`
+
+- Added `CrawlRequest.format` field: `"json"` (default), `"jsonl"`, `"sse"`
+- Added `on_page` callback to `Crawler.crawl()` — fires per-page
+- Added `_jsonl_stream_crawl()` API generator: yields one JSON line per
+  page as it completes, plus `{"type": "__done__", ...}` summary line
+
+This matches Firecrawl's streaming behavior. Clients can start processing
+results before the crawl finishes.
+
+### Benchmark suite
+
+**File:** `benchmarks/bench.py`
+
+Deterministic crawl throughput tests with fake scrapers:
+- Chain graph (linear depth): 50 pages at ~900 p/s with 3 workers
+- Tree graph (branching): 40 pages at ~737 p/s
+- Star graph (hub-spoke): 100 pages at 1671 p/s with 5 workers
+
+Peak memory stays under 0.1MB even for 100-page crawls.
+
+**Poll timeout fix:** Reduced worker idle poll from 500ms to 50ms. The 500ms
+floor was masking actual throughput for small crawls — star-100 went from
+198 p/s to 1671 p/s just from this change.
+
+### Tests added
+
+- `huginn/tests/test_crawler.py`: 5 tests (concurrency, callback, depth limit,
+  cancel, max_pages)
+- `huginn/tests/test_mapper_graph.py` (from previous session, recovered from
+  git commit after checkout bug)
+- Full suite: 326 tests pass
+
+### What I didn't do
+
+- **Live site benchmarks** — Need real domains. TODO for v1.3.0.
+- **Streaming for extract/distill** — NDJSON is only for crawl. Distill is
+  slower (LLM-bound) so streaming matters less.
+
+---
+
 *Last updated: 2026-05-08 by agent*

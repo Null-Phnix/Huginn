@@ -16,7 +16,7 @@ browser engine, DOM walker, and mental model system.
 - All self-hosted, all free, no cloud tier holding back features
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __author__ = "Phnix"
 
 from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for, ScrollConfig  # noqa: F401

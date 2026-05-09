@@ -129,16 +129,16 @@ A Beta release means:
 
 ---
 
-## Milestone 8: Performance & Scale (Priority: Medium) — Future
+## Milestone 8: Performance & Scale (Priority: Medium) — In Progress
 
 **Goal:** Handle large-scale operations efficiently
 
 ### Tasks
-- [ ] 8.1 Streaming JSON lines (jsonl) for batch outputs
-- [ ] 8.2 Concurrent crawl workers (currently sequential)
-- [ ] 8.3 Connection pooling for HTTP requests
+- [x] 8.1 Streaming JSON lines (jsonl) for batch outputs
+- [x] 8.2 Concurrent crawl workers (true async worker pool)
+- [x] 8.3 Connection pooling for HTTP requests
 - [ ] 8.4 Memory pressure handling for long crawls
-- [ ] 8.5 Benchmark suite vs Firecrawl
+- [x] 8.5 Benchmark suite vs Firecrawl
 
 ---
 
@@ -168,7 +168,7 @@ A Beta release means:
 
 ---
 
-## Progress Summary
+**Overall Progress: 85% Beta Complete**
 
 | Milestone | Status | Notes |
 |-----------|--------|-------|
@@ -179,7 +179,7 @@ A Beta release means:
 | 5. CLI/API | ✅ 100% | 15 commands, SSE, batch |
 | 6. Watch | 🔶 50% | CLI done, no daemon |
 | 7. PyPI | 🔶 60% | Wheel + Docker ready, not published |
-| 8. Performance | ❌ 0% | Not started |
+| 8. Performance | 🔶 75% | Worker pool, pooling, benchmarks done |
 | 9. Real-World | ❌ 0% | Not started |
 | 10. Ecosystem | 🔶 30% | MCP exists, needs polish |
 
