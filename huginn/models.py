@@ -220,6 +220,7 @@ class CrawlRequest(BaseModel):
     scrape_options: Optional[ScrapeOptions] = Field(None)
     ignore_robots: bool = Field(False, description="Skip robots.txt checks when True")
     stream: bool = Field(False)
+    format: str = Field("json", description="Response format: json (default), jsonl (NDJSON stream), sse (Server-Sent Events)")
     webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
 
 

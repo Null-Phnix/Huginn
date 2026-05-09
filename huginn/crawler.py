@@ -223,6 +223,7 @@ class Crawler:
         only_main_content: bool = True,
         timeout: int = 30000,
         on_progress: Optional[Callable] = None,
+        on_page: Optional[Callable[[ScrapeData], None]] = None,
     ) -> CrawlResult:
         """
         Priority crawl from start_url using a true async worker pool.
@@ -238,6 +239,9 @@ class Crawler:
             only_main_content: Extract only main content per page
             timeout: Per-page timeout in ms
             on_progress: Optional callback(completed, total) for progress updates
+            on_page: Optional callback(page_data) called for *each* page as it
+                     completes. Use this for real-time streaming without
+                     waiting for the full crawl to finish.
         """
         if scrape_formats is None:
             scrape_formats = [OutputFormat.MARKDOWN]
@@ -283,6 +287,12 @@ class Crawler:
                     continue
 
                 if self._cancel:
+                    # We may have dequeued a URL; decrement pending so other
+                    # workers can finish cleanly.
+                    async with pending_lock:
+                        pending -= 1
+                        if pending == 0:
+                            done_event.set()
                     return
 
                 norm_url = self._normalize_url(url)
@@ -293,6 +303,14 @@ class Crawler:
                             done_event.set()
                     continue
                 result.visited.add(norm_url)
+
+                if result.completed >= self.max_pages:
+                    # Already at limit — skip processing this URL
+                    async with pending_lock:
+                        pending -= 1
+                        if pending == 0:
+                            done_event.set()
+                    return
 
                 async with sem:
                     if self.delay > 0:
@@ -315,9 +333,13 @@ class Crawler:
                             else:
                                 result.pages.append(page_data)
                                 result.completed += 1
+                                if on_page:
+                                    on_page(page_data)
                         else:
                             result.pages.append(page_data)
                             result.completed += 1
+                            if on_page:
+                                on_page(page_data)
 
                         # Discover new links
                         links = page_data.links or []
@@ -345,6 +367,7 @@ class Crawler:
                         heap_item = (url_priority(link, d), counter, link, d)
                         await queue.put(heap_item)
                         counter += 1
+                        pending += 1
                     pending -= 1
                     if pending == 0:
                         done_event.set()

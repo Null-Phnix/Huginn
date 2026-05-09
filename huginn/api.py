@@ -353,11 +353,22 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     @app.post("/v1/sweep", tags=["Crawl"])
     async def start_sweep(req: CrawlRequest, auth=Depends(verify_api_key)):
-        """Start an async crawl job. Returns job ID for polling, or SSE stream if stream=True."""
+        """Start an async crawl job. Returns job ID for polling, or streams if requested."""
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
 
         if req.stream:
+            if req.format == "jsonl":
+                return StreamingResponse(
+                    _jsonl_stream_crawl(req),
+                    media_type="application/x-ndjson",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            # Default: SSE
             return StreamingResponse(
                 _stream_crawl(req),
                 media_type="text/event-stream",
@@ -1518,6 +1529,91 @@ async def _stream_crawl(req: CrawlRequest):
     except Exception as e:
         logger.error(f"SSE crawl stream error: {e}", exc_info=True)
         yield sse_event("done", {"type": "done", "data": {"success": False, "status": "failed", "error": str(e)}})
+
+
+async def _jsonl_stream_crawl(req: CrawlRequest):
+    """NDJSON (JSON Lines) generator — yields one JSON object per line as pages complete.
+
+    Unlike SSE, NDJSON is simpler to parse: each line is a complete JSON object.
+    Clients read line-by-line and parse incrementally without event parsing.
+    """
+    scraper_formats = []
+    if req.scrape_options:
+        scraper_formats = req.scrape_options.formats
+
+    crawler = Crawler(
+        browser=_browser,
+        max_depth=req.max_depth or _config.crawl.max_depth,
+        max_pages=req.limit or _config.crawl.max_pages,
+        concurrency=_config.crawl.concurrency,
+        delay=_config.crawl.delay_between_requests,
+        allow_external=req.allow_external_links,
+        allow_backward=req.allow_backward_crawling,
+        include_paths=req.include_paths,
+        exclude_paths=req.exclude_paths,
+    )
+
+    result_ref: list = [None]
+
+    async def _on_page(page_data):
+        """Called for every page as it completes — stream it immediately."""
+        line = json.dumps(page_data.model_dump(exclude_none=True))
+        yield line + "\n"
+
+    async def _crawl_and_stream():
+        """Run crawl with real-time page callback."""
+        try:
+            page_queue: asyncio.Queue = asyncio.Queue()
+
+            async def _relay(page_data):
+                await page_queue.put(page_data)
+
+            result = await crawler.crawl(
+                start_url=req.url,
+                scrape_formats=scraper_formats or [OutputFormat.MARKDOWN],
+                only_main_content=req.scrape_options.only_main_content if req.scrape_options else True,
+                timeout=_config.browser.navigation_timeout,
+                on_page=_relay,
+            )
+            result_ref[0] = result
+            await page_queue.put(None)  # sentinel
+        except Exception as e:
+            logger.error(f"JSONL crawl failed: {e}", exc_info=True)
+            await page_queue.put(None)
+
+    crawl_task = asyncio.create_task(_crawl_and_stream())
+
+    try:
+        while True:
+            try:
+                page_data = await asyncio.wait_for(page_queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                if crawl_task.done() and page_queue.empty():
+                    break
+                continue
+
+            if page_data is None:
+                break
+
+            line = json.dumps(page_data.model_dump(exclude_none=True))
+            yield line + "\n"
+
+        # Final summary line
+        if result_ref[0]:
+            summary = {
+                "type": "__done__",
+                "success": True,
+                "status": "completed",
+                "completed": result_ref[0].completed,
+                "total": result_ref[0].total_discovered,
+            }
+            yield json.dumps(summary) + "\n"
+        else:
+            yield json.dumps({"type": "__done__", "success": False, "status": "failed"}) + "\n"
+
+    except Exception as e:
+        logger.error(f"JSONL crawl stream error: {e}", exc_info=True)
+        yield json.dumps({"type": "__done__", "success": False, "status": "failed", "error": str(e)}) + "\n"
 
 
 async def _stream_distill(req: DistillRequest):
