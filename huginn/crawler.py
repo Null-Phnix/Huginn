@@ -279,8 +279,10 @@ class Crawler:
             while True:
                 # Wait for work (with timeout so we can check done condition)
                 try:
-                    _, _, url, depth = await asyncio.wait_for(queue.get(), timeout=0.5)
+                    _, _, url, depth = await asyncio.wait_for(queue.get(), timeout=0.05)
                 except asyncio.TimeoutError:
+                    if self._cancel:
+                        return
                     async with pending_lock:
                         if pending == 0 and queue.empty():
                             return

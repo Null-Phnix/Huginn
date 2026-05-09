@@ -1,0 +1,126 @@
+{
+  "timestamp": "2026-05-09T04:14:35.143964",
+  "huginn_version": "1.2.0",
+  "results": [
+    {
+      "name": "chain-10",
+      "pages": 10,
+      "concurrency": 1,
+      "depth": 10,
+      "elapsed_sec": 0.001,
+      "pages_per_sec": 6944.54,
+      "peak_mb": 0.02,
+      "errors": 0
+    },
+    {
+      "name": "chain-10",
+      "pages": 10,
+      "concurrency": 3,
+      "depth": 10,
+      "elapsed_sec": 0.051,
+      "pages_per_sec": 194.27,
+      "peak_mb": 0.02,
+      "errors": 0
+    },
+    {
+      "name": "chain-50",
+      "pages": 50,
+      "concurrency": 3,
+      "depth": 50,
+      "elapsed_sec": 0.056,
+      "pages_per_sec": 898.88,
+      "peak_mb": 0.05,
+      "errors": 0
+    },
+    {
+      "name": "chain-50",
+      "pages": 50,
+      "concurrency": 5,
+      "depth": 50,
+      "elapsed_sec": 0.056,
+      "pages_per_sec": 896.19,
+      "peak_mb": 0.04,
+      "errors": 0
+    },
+    {
+      "name": "tree-2x3",
+      "pages": 15,
+      "concurrency": 1,
+      "depth": 3,
+      "elapsed_sec": 0.052,
+      "pages_per_sec": 287.08,
+      "peak_mb": 0.02,
+      "errors": 0
+    },
+    {
+      "name": "tree-2x3",
+      "pages": 15,
+      "concurrency": 3,
+      "depth": 3,
+      "elapsed_sec": 0.052,
+      "pages_per_sec": 288.61,
+      "peak_mb": 0.02,
+      "errors": 0
+    },
+    {
+      "name": "tree-3x3",
+      "pages": 40,
+      "concurrency": 3,
+      "depth": 3,
+      "elapsed_sec": 0.054,
+      "pages_per_sec": 737.57,
+      "peak_mb": 0.03,
+      "errors": 0
+    },
+    {
+      "name": "tree-3x3",
+      "pages": 40,
+      "concurrency": 5,
+      "depth": 3,
+      "elapsed_sec": 0.054,
+      "pages_per_sec": 737.05,
+      "peak_mb": 0.04,
+      "errors": 0
+    },
+    {
+      "name": "star-20",
+      "pages": 21,
+      "concurrency": 1,
+      "depth": 2,
+      "elapsed_sec": 0.052,
+      "pages_per_sec": 402.02,
+      "peak_mb": 0.02,
+      "errors": 0
+    },
+    {
+      "name": "star-20",
+      "pages": 21,
+      "concurrency": 5,
+      "depth": 2,
+      "elapsed_sec": 0.053,
+      "pages_per_sec": 399.97,
+      "peak_mb": 0.03,
+      "errors": 0
+    },
+    {
+      "name": "star-50",
+      "pages": 51,
+      "concurrency": 5,
+      "depth": 2,
+      "elapsed_sec": 0.055,
+      "pages_per_sec": 924.15,
+      "peak_mb": 0.04,
+      "errors": 0
+    },
+    {
+      "name": "star-100",
+      "pages": 101,
+      "concurrency": 5,
+      "depth": 2,
+      "elapsed_sec": 0.06,
+      "pages_per_sec": 1671.81,
+      "peak_mb": 0.09,
+      "errors": 0
+    }
+  ]
+}
