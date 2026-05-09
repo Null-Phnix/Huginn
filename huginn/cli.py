@@ -568,7 +568,14 @@ def cli(ctx):
 @click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
               default="json", help="Serialization format")
 def scrape_cmd(url, fmt, output, outfmt):
-    """Scrape a single URL."""
+    """Scrape a single URL.
+
+    \b
+    Examples:
+      huginn scrape https://example.com
+      huginn scrape https://example.com -f html
+      huginn scrape https://example.com -o result.json -F json
+    """
     _run_async(_do_scrape(url, fmt, output, outfmt))
 
 
@@ -581,7 +588,14 @@ def scrape_cmd(url, fmt, output, outfmt):
 @click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
               default="json", help="Serialization format")
 def extract_cmd(urls, template, output, outfmt):
-    """Extract structured data from URLs."""
+    """Extract structured data from URLs.
+
+    \b
+    Examples:
+      huginn extract https://example.com -t product
+      huginn extract https://example.com -t article -o article.json
+      huginn extract https://site.com/a https://site.com/b -t person
+    """
     tpl = None
     if template:
         from .templates import get_template
@@ -599,7 +613,14 @@ def extract_cmd(urls, template, output, outfmt):
 @click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
               default="json", help="Serialization format")
 def crawl_cmd(url, depth, limit, output, outfmt):
-    """Crawl a site recursively."""
+    """Crawl a site recursively.
+
+    \b
+    Examples:
+      huginn crawl https://example.com
+      huginn crawl https://example.com -d 3 -l 100
+      huginn crawl https://docs.python.org -d 2 -o crawl.json
+    """
     _run_async(_do_crawl(url, depth, limit, output, outfmt))
 
 
@@ -612,7 +633,13 @@ def crawl_cmd(url, depth, limit, output, outfmt):
 @click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
               default="json", help="Serialization format")
 def search_cmd(query, limit, output, outfmt):
-    """Search the web."""
+    """Search the web.
+
+    \b
+    Examples:
+      huginn search "python web scraping"
+      huginn search "python web scraping" -l 10
+    """
     _run_async(_do_search(query, limit, output, outfmt))
 
 
@@ -640,7 +667,14 @@ def map_cmd(url, limit, search_filter, output, outfmt):
 @click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
               default="json", help="Serialization format")
 def research_cmd(query, depth, sources, output, outfmt):
-    """Run deep autonomous research."""
+    """Run deep autonomous research.
+
+    \b
+    Examples:
+      huginn research "AI alignment trends"
+      huginn research "climate policy 2024" --depth 5
+      huginn research "quantum computing" -o report.md -F markdown
+    """
     _run_async(_do_research(query, depth, sources, output, outfmt))
 
 
@@ -656,7 +690,14 @@ def research_cmd(query, depth, sources, output, outfmt):
 @click.option("--log-level", default="INFO", type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
               show_default=True)
 def serve_cmd(host, port, config, no_stealth, no_headless, api_key, log_level):
-    """Start the API server."""
+    """Start the API server.
+
+    \b
+    Examples:
+      huginn serve                    # Default: localhost:7432
+      huginn serve --port 8080        # Custom port
+      huginn serve --api-key secret   # Require auth
+    """
     try:
         from dotenv import load_dotenv
         load_dotenv()
@@ -949,9 +990,32 @@ async def _doctor():
 
     from .config import load_config
     cfg = load_config()
-    table.add_row("Data dir", "[green]OK[/green]", str(cfg.data_dir))
-    table.add_row("DB path", "[green]OK[/green]", str(cfg.db_path))
+    data_dir = Path(cfg.data_dir) if not isinstance(cfg.data_dir, Path) else cfg.data_dir
+    db_path = Path(cfg.db_path) if not isinstance(cfg.db_path, Path) else cfg.db_path
+    table.add_row("Data dir", "[green]OK[/green]", str(data_dir))
+    table.add_row("DB path", "[green]OK[/green]", str(db_path))
     table.add_row("Default port", "[green]OK[/green]", str(cfg.server.port))
+
+    # Quickstart validation
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind((cfg.server.host, cfg.server.port))
+        table.add_row("Port free", "[green]OK[/green]", f"{cfg.server.host}:{cfg.server.port}")
+    except OSError:
+        table.add_row("Port free", "[yellow]IN USE[/yellow]", f"{cfg.server.host}:{cfg.server.port}")
+    finally:
+        s.close()
+
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        test_file = data_dir / ".write_test"
+        test_file.write_text("ok")
+        test_file.unlink()
+        table.add_row("Data dir writable", "[green]OK[/green]", "")
+    except OSError as e:
+        table.add_row("Data dir writable", "[red]FAIL[/red]", str(e)[:40])
+
     console.print(table)
 
 

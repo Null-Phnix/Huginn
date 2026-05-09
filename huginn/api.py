@@ -176,8 +176,23 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     app = FastAPI(
         title="Huginn",
         description="Autonomous web scraping API — Firecrawl-compatible, stealth-first, self-hosted",
-        version="1.0.0",
+        version="1.1.0",
         lifespan=lifespan,
+        openapi_tags=[
+            {"name": "Health", "description": "Server health, readiness, and metrics"},
+            {"name": "Scrape", "description": "Single-page scraping in multiple formats (markdown, HTML, links, screenshot)"},
+            {"name": "Crawl", "description": "Recursive site crawling with depth limits and job tracking"},
+            {"name": "Map", "description": "URL discovery and site mapping"},
+            {"name": "Extract", "description": "Structured data extraction with templates or LLM prompts"},
+            {"name": "Search", "description": "Web search and search-driven scraping"},
+            {"name": "Batch", "description": "Batch / flock operations for multiple URLs"},
+            {"name": "Watch", "description": "Page change detection and monitoring"},
+            {"name": "Schedule", "description": "Scheduled / recurring scraping jobs"},
+            {"name": "Research", "description": "Deep autonomous research with memory and citations"},
+            {"name": "Memory", "description": "ChromaDB research memory query and management"},
+            {"name": "Templates", "description": "Extraction template registry"},
+            {"name": "Jobs", "description": "Job lifecycle management (list, cancel)"},
+        ],
     )
 
     app.state.config = config
@@ -212,7 +227,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─--- Health ───────────────────────────────────────────────────────────
 
-    @app.get("/health")
+    @app.get("/health", tags=["Health"])
     async def health():
         """Comprehensive health check endpoint."""
         return {
@@ -222,7 +237,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             "scheduler": "running" if (_scheduler and _scheduler._running) else "stopped",
         }
 
-    @app.get("/health/detailed")
+    @app.get("/health/detailed", tags=["Health"])
     async def health_detailed():
         """Detailed health check with circuit breaker and cache statistics."""
         from .cache import get_response_cache
@@ -240,28 +255,28 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             "cache": await cache.stats(),
         }
 
-    @app.get("/health/ready")
+    @app.get("/health/ready", tags=["Health"])
     async def readiness():
         """Kubernetes readiness probe — returns 503 if not ready."""
         if not _browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
         return {"ready": True}
 
-    @app.get("/health/live")
+    @app.get("/health/live", tags=["Health"])
     async def liveness():
         """Kubernetes liveness probe."""
         return {"alive": True}
 
     # ─── Metrics ───────────────────────────────────────────────────────────────
 
-    @app.get("/v1/metrics")
+    @app.get("/v1/metrics", tags=["Health"])
     async def metrics():
         """Return per-endpoint metrics: call count, avg latency, success rate."""
         return get_per_endpoint_stats()
 
     # ─--- Scrape ────────────────────────────────────────────────────────────
 
-    @app.post("/v1/probe", response_model=ScrapeResponse)
+    @app.post("/v1/probe", response_model=ScrapeResponse, tags=["Scrape"])
     @limiter.limit("100/minute")
     async def scrape(request: Request, req: ScrapeRequest, auth=Depends(verify_api_key)):
         """Scrape a single URL and return content in requested formats."""
@@ -334,7 +349,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─--- Crawl ─────────────────────────────────────────────────────────────
 
-    @app.post("/v1/sweep")
+    @app.post("/v1/sweep", tags=["Crawl"])
     async def start_sweep(req: CrawlRequest, auth=Depends(verify_api_key)):
         """Start an async crawl job. Returns job ID for polling, or SSE stream if stream=True."""
         if not _browser:
@@ -367,7 +382,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
         return CrawlStartResponse(success=True, id=job_id, url=f"/v1/sweep/{job_id}")
 
-    @app.get("/v1/sweep/{job_id}", response_model=CrawlStatusResponse)
+    @app.get("/v1/sweep/{job_id}", response_model=CrawlStatusResponse, tags=["Crawl"])
     @limiter.limit("100/minute")
     async def get_sweep_status(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Get crawl job status and results."""
@@ -403,7 +418,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             error=job.get("error"),
         )
 
-    @app.delete("/v1/sweep/{job_id}")
+    @app.delete("/v1/sweep/{job_id}", tags=["Crawl"])
     @limiter.limit("100/minute")
     async def cancel_crawl(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Cancel a running crawl job."""
@@ -416,7 +431,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─--- Map ──────────────────────────────────────────────────────────────
 
-    @app.post("/v1/chart", response_model=MapResponse)
+    @app.post("/v1/chart", response_model=MapResponse, tags=["Map"])
     @limiter.limit("60/minute")
     async def chart_site(request: Request, req: MapRequest, auth=Depends(verify_api_key)):
         """Fast URL discovery — returns all links without full content extraction."""
@@ -438,7 +453,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─--- Extract ───────────────────────────────────────────────────────────
 
-    @app.post("/v1/distill")
+    @app.post("/v1/distill", tags=["Extract"])
     async def start_distill(req: DistillRequest, auth=Depends(verify_api_key)):
         """Start an async extraction job. Returns job ID for polling, or SSE stream if stream=True."""
         if not _browser:
@@ -469,7 +484,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
         return DistillStartResponse(success=True, id=job_id)
 
-    @app.get("/v1/distill/{job_id}", response_model=DistillStatusResponse)
+    @app.get("/v1/distill/{job_id}", response_model=DistillStatusResponse, tags=["Extract"])
     @limiter.limit("100/minute")
     async def get_distill_status(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Get extraction job status and results."""
@@ -494,7 +509,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─── Deep Research ─────────────────────────────────────────────────────
 
-    @app.post("/v1/research", response_model=ResearchResponse)
+    @app.post("/v1/research", response_model=ResearchResponse, tags=["Research"])
     async def deep_research(req: ResearchRequest, auth=Depends(verify_api_key)):
         """
         Conduct autonomous deep research on any topic.
@@ -566,7 +581,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─── Search ────────────────────────────────────────────────────────────
 
-    @app.post("/v1/seek", response_model=SearchResponse)
+    @app.post("/v1/seek", response_model=SearchResponse, tags=["Search"])
     @limiter.limit("30/minute")
     async def search(request: Request, req: SearchRequest, auth=Depends(verify_api_key)):
         """Search the web and scrape results."""
@@ -595,7 +610,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─--- Jobs ─────────────────────────────────────────────────────────────
 
-    @app.get("/v1/jobs")
+    @app.get("/v1/jobs", tags=["Jobs"])
     @limiter.limit("100/minute")
     async def list_jobs(
         request: Request,
@@ -609,7 +624,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         jobs = await _job_store.list_jobs(status=status, limit=limit)
         return {"success": True, "jobs": jobs}
 
-    @app.delete("/v1/jobs/{job_id}")
+    @app.delete("/v1/jobs/{job_id}", tags=["Jobs"])
     @limiter.limit("100/minute")
     async def delete_job(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Delete a job."""
@@ -620,7 +635,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─--- Batch Scrape ──────────────────────────────────────────────────────────
 
-    @app.post("/v1/flock", response_model=FlockResponse)
+    @app.post("/v1/flock", response_model=FlockResponse, tags=["Batch"])
     @limiter.limit("10/minute")
     async def flock_scrape(request: Request, req: FlockRequest, auth=Depends(verify_api_key)):
         """Scrape multiple URLs concurrently with partial results support."""
@@ -712,7 +727,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     from .watcher import PageWatcher, get_watch_store, compute_content_hash
     from .models import ErrorCode as EC
 
-    @app.post("/v1/watch", response_model=WatchResponse)
+    @app.post("/v1/watch", response_model=WatchResponse, tags=["Watch"])
     async def watch_page(req: WatchRequest, auth=Depends(verify_api_key)):
         """
         Start watching a page for content changes.
@@ -780,7 +795,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             message="Now watching for changes. Webhook will fire on content changes.",
         )
 
-    @app.get("/v1/watch/{url:path}", response_model=WatchStatusResponse)
+    @app.get("/v1/watch/{url:path}", response_model=WatchStatusResponse, tags=["Watch"])
     async def get_watch_status(url: str, auth=Depends(verify_api_key)):
         """Get the current status and history of a watched page."""
         from .watcher import extract_domain
@@ -813,7 +828,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             ],
         )
 
-    @app.post("/v1/watch/{url:path}/check", response_model=WatchResponse)
+    @app.post("/v1/watch/{url:path}/check", response_model=WatchResponse, tags=["Watch"])
     async def check_watch(url: str, auth=Depends(verify_api_key)):
         """
         Manually trigger a check for a watched URL.
@@ -855,7 +870,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             message=f"{len(snapshot.detected_changes)} changes detected" if snapshot.detected_changes else "No changes detected",
         )
 
-    @app.delete("/v1/watch/{url:path}")
+    @app.delete("/v1/watch/{url:path}", tags=["Watch"])
     async def unwatch_page(url: str, auth=Depends(verify_api_key)):
         """Stop watching a page."""
         from .watcher import PageWatcher
@@ -867,7 +882,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
         return {"success": removed, "url": url}
 
-    @app.get("/v1/watches")
+    @app.get("/v1/watches", tags=["Watch"])
     async def list_watches(auth=Depends(verify_api_key)):
         """List all watched URLs."""
         store = get_watch_store()
@@ -881,7 +896,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─── Schedule Endpoints ────────────────────────────────────────────────
 
-    @app.post("/v1/schedule", response_model=ScheduleResponse)
+    @app.post("/v1/schedule", response_model=ScheduleResponse, tags=["Schedule"])
     async def create_schedule(req: ScheduleRequest, auth=Depends(verify_api_key)):
         """Create a new crawl/distill schedule."""
         import uuid
@@ -918,7 +933,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             created_at=datetime.now(timezone.utc),
         )
 
-    @app.get("/v1/schedule", response_model=List[ScheduleResponse])
+    @app.get("/v1/schedule", response_model=List[ScheduleResponse], tags=["Schedule"])
     async def list_schedules(auth=Depends(verify_api_key)):
         """List all schedules."""
         schedules = await _scheduler.list_schedules()
@@ -940,7 +955,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             for s in schedules
         ]
 
-    @app.get("/v1/schedule/{schedule_id}", response_model=ScheduleResponse)
+    @app.get("/v1/schedule/{schedule_id}", response_model=ScheduleResponse, tags=["Schedule"])
     async def get_schedule(schedule_id: str, auth=Depends(verify_api_key)):
         """Get a specific schedule."""
         s = await _scheduler.get_schedule(schedule_id)
@@ -961,19 +976,19 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             next_run=s.get("next_run"),
         )
 
-    @app.delete("/v1/schedule/{schedule_id}")
+    @app.delete("/v1/schedule/{schedule_id}", tags=["Schedule"])
     async def delete_schedule(schedule_id: str, auth=Depends(verify_api_key)):
         """Delete a schedule."""
         await _scheduler.delete_schedule(schedule_id)
         return {"success": True}
 
-    @app.post("/v1/schedule/{schedule_id}/pause")
+    @app.post("/v1/schedule/{schedule_id}/pause", tags=["Schedule"])
     async def pause_schedule(schedule_id: str, auth=Depends(verify_api_key)):
         """Pause a schedule."""
         result = await _scheduler.pause_schedule(schedule_id)
         return {"success": True}
 
-    @app.post("/v1/schedule/{schedule_id}/resume")
+    @app.post("/v1/schedule/{schedule_id}/resume", tags=["Schedule"])
     async def resume_schedule(schedule_id: str, auth=Depends(verify_api_key)):
         """Resume a schedule."""
         result = await _scheduler.resume_schedule(schedule_id)
@@ -981,46 +996,46 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─── Firecrawl-compatible route aliases ─────────────────────────────────────
 
-    @app.post("/v1/scrape", response_model=ScrapeResponse)
+    @app.post("/v1/scrape", response_model=ScrapeResponse, tags=["Scrape"])
     async def scrape_alias(request: Request, req: ScrapeRequest, auth=Depends(verify_api_key)):
         return await scrape(request, req, auth)
 
-    @app.post("/v1/crawl")
+    @app.post("/v1/crawl", tags=["Crawl"])
     async def crawl_alias(req: CrawlRequest, auth=Depends(verify_api_key)):
         return await start_sweep(req, auth)
 
-    @app.get("/v1/crawl/{job_id}")
+    @app.get("/v1/crawl/{job_id}", tags=["Crawl"])
     async def crawl_status_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
         return await get_sweep_status(request, job_id, auth)
 
-    @app.delete("/v1/crawl/{job_id}")
+    @app.delete("/v1/crawl/{job_id}", tags=["Crawl"])
     async def crawl_cancel_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
         return await cancel_crawl(request, job_id, auth)
 
-    @app.post("/v1/map", response_model=MapResponse)
+    @app.post("/v1/map", response_model=MapResponse, tags=["Map"])
     async def map_alias(request: Request, req: MapRequest, auth=Depends(verify_api_key)):
         return await chart_site(request, req, auth)
 
-    @app.post("/v1/extract")
+    @app.post("/v1/extract", tags=["Extract"])
     async def extract_alias(req: DistillRequest, auth=Depends(verify_api_key)):
         return await start_distill(req, auth)
 
-    @app.get("/v1/extract/{job_id}")
+    @app.get("/v1/extract/{job_id}", tags=["Extract"])
     async def extract_status_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
         return await get_distill_status(request, job_id, auth)
 
-    @app.post("/v1/search", response_model=SearchResponse)
+    @app.post("/v1/search", response_model=SearchResponse, tags=["Search"])
     async def search_alias(request: Request, req: SearchRequest, auth=Depends(verify_api_key)):
         return await search(request, req, auth)
 
     # ─── Firecrawl Batch Endpoint Aliases ─────────────────────────────────────────
 
-    @app.post("/v1/batch/scrape", response_model=FlockResponse)
+    @app.post("/v1/batch/scrape", response_model=FlockResponse, tags=["Batch"])
     async def batch_scrape_alias(request: Request, req: FlockRequest, auth=Depends(verify_api_key)):
         """Firecrawl-compatible alias for /v1/flock."""
         return await flock_scrape(request, req, auth)
 
-    @app.get("/v1/batch/scrape/{job_id}")
+    @app.get("/v1/batch/scrape/{job_id}", tags=["Batch"])
     async def batch_scrape_status_alias(job_id: str, auth=Depends(verify_api_key)):
         """Firecrawl-compatible alias for batch scrape status — maps to job store."""
         if not _job_store:
@@ -1039,7 +1054,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     # ─── Firecrawl Crawl Cancel POST Alias ─────────────────────────────────────────
 
-    @app.post("/v1/crawl/{job_id}/cancel")
+    @app.post("/v1/crawl/{job_id}/cancel", tags=["Crawl"])
     async def crawl_cancel_post_alias(request: Request, job_id: str, auth=Depends(verify_api_key)):
         """Firecrawl-compatible alias — POST to cancel a crawl."""
         return await cancel_crawl(request, job_id, auth)
@@ -1048,7 +1063,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 # ─── Templates API ─────────────────────────────────────────────────────────────
 # ─── Templates API ─────────────────────────────────────────────────────────────
 
-    @app.get("/v1/templates")
+    @app.get("/v1/templates", tags=["Templates"])
     async def list_templates_api(auth=Depends(verify_api_key)):
         """List all available extraction templates with schemas."""
         from .templates import get_all_templates
@@ -1064,7 +1079,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             })
         return {"success": True, "templates": result, "count": len(result)}
 
-    @app.get("/v1/templates/{template_name}")
+    @app.get("/v1/templates/{template_name}", tags=["Templates"])
     async def get_template_api(template_name: str, auth=Depends(verify_api_key)):
         """Get a single template's full details."""
         from .templates import get_template
@@ -1088,7 +1103,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
 # ─── Research Memory API ───────────────────────────────────────────────────────
 
-    @app.get("/v1/memory/query")
+    @app.get("/v1/memory/query", tags=["Memory"])
     async def memory_query(
         q: str = Query(..., description="Query text"),
         n: int = Query(5, ge=1, le=50),
@@ -1118,7 +1133,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         }
 
 
-    @app.get("/v1/memory/reports")
+    @app.get("/v1/memory/reports", tags=["Memory"])
     async def memory_reports(auth=Depends(verify_api_key)):
         """List all stored research reports."""
         from .memory import ResearchMemory
@@ -1131,7 +1146,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         return {"success": True, "reports": reports, "count": len(reports)}
 
 
-    @app.delete("/v1/memory/reports/{report_id}")
+    @app.delete("/v1/memory/reports/{report_id}", tags=["Memory"])
     async def memory_delete_report(report_id: str, auth=Depends(verify_api_key)):
         """Delete a research report and all its associated findings/citations."""
         from .memory import ResearchMemory
@@ -1144,7 +1159,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         return {"success": True, "deleted": report_id}
 
 
-    @app.get("/v1/memory/related")
+    @app.get("/v1/memory/related", tags=["Memory"])
     async def memory_related(
         topic: str = Query(...),
         n: int = Query(10, ge=1, le=50),

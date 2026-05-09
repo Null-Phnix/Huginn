@@ -16,7 +16,7 @@ browser engine, DOM walker, and mental model system.
 - All self-hosted, all free, no cloud tier holding back features
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Phnix"
 
 from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for, ScrollConfig  # noqa: F401
@@ -27,7 +27,7 @@ from .models import ActionType, Schedule, ErrorCode  # noqa: F401
 from .research import ResearchAgent, ResearchReport, ResearchSource  # noqa: F401
 from .scraper import RenderMode, detect_render_mode  # noqa: F401
 from .scheduler import Scheduler  # noqa: F401
-from .sdk import HuginnClient, HuginnError  # noqa: F401
+from .sdk import HuginnClient, HuginnSync, HuginnError  # noqa: F401
 from .templates import ExtractTemplate, get_template, list_templates, register_template  # noqa: F401
 from .webhook import send_webhook, send_webhook_with_retry, fire_webhook_for_job  # noqa: F401
 

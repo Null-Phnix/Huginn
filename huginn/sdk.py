@@ -589,3 +589,104 @@ class HuginnClient:
         """Check detailed health including circuit breaker and cache stats."""
         response = await self._request("GET", "/health/detailed")
         return response.json()
+
+
+class HuginnSync:
+    """
+    Synchronous wrapper for the async :class:`HuginnClient`.
+
+    Every method is a thin sync shim that internally runs ``asyncio.run()``.
+    Use this if you don't want to write ``async/await`` code.
+
+    Usage
+    -----
+        from huginn import HuginnSync
+
+        client = HuginnSync("http://localhost:7432", api_key="your-key")
+        result = client.scrape("https://example.com")
+        print(result.markdown)
+
+        with client:
+            result = client.scrape("https://example.com")
+
+    Parameters match :class:`HuginnClient` exactly.
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        api_key: Optional[str] = None,
+        timeout: float = 60.0,
+        max_connections: int = 100,
+        max_keepalive_connections: int = 20,
+    ):
+        self._async = HuginnClient(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=timeout,
+            max_connections=max_connections,
+            max_keepalive_connections=max_keepalive_connections,
+        )
+
+    def close(self) -> None:
+        """Close the underlying HTTP client."""
+        asyncio.run(self._async.close())
+
+    def __enter__(self) -> "HuginnSync":
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+    # ── passthrough helpers ────────────────────────────────────────────────────
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    # ── scrape ─────────────────────────────────────────────────────────────────
+
+    def scrape(self, url: str, formats: Optional[List[OutputFormat]] = None) -> ScrapeResponse:
+        """Scrape a single URL (sync)."""
+        return self._run(self._async.scrape(url, formats))
+
+    # ── crawl ────────────────────────────────────────────────────────────────────
+
+    def crawl(self, url: str, max_depth: int = 2, limit: int = 50) -> List[ScrapeData]:
+        """Crawl a site and collect all pages (sync, blocking)."""
+        return self._run(self._async.crawl(url, max_depth, limit))
+
+    def crawl_status(self, job_id: str) -> CrawlStatusResponse:
+        """Poll a crawl job status (sync)."""
+        return self._run(self._async.crawl_status(job_id))
+
+    # ── flock / batch ────────────────────────────────────────────────────────────
+
+    def flock(self, urls: List[str], max_concurrent: int = 5) -> FlockResponse:
+        """Scrape multiple URLs concurrently (sync)."""
+        return self._run(self._async.flock(urls, max_concurrent))
+
+    # ── map ────────────────────────────────────────────────────────────────────
+
+    def map_site(self, url: str, include_sitemaps: bool = True, **kwargs) -> MapResponse:
+        """Discover URLs on a site (sync)."""
+        return self._run(self._async.map_site(url, include_sitemaps, **kwargs))
+
+    # ── distill / extract ────────────────────────────────────────────────────────
+
+    def distill(self, urls: List[str], prompt: str, schema: Optional[Dict] = None) -> DistillStartResponse:
+        """Extract structured data from URLs (sync)."""
+        return self._run(self._async.distill(urls, prompt, schema))
+
+    def distill_status(self, job_id: str) -> DistillStatusResponse:
+        """Poll extraction job status (sync)."""
+        return self._run(self._async.distill_status(job_id))
+
+    # ── health ───────────────────────────────────────────────────────────────────
+
+    def health(self) -> Dict[str, Any]:
+        """Check basic health (sync)."""
+        return self._run(self._async.health())
+
+    def health_detailed(self) -> Dict[str, Any]:
+        """Check detailed health (sync)."""
+        return self._run(self._async.health_detailed())
