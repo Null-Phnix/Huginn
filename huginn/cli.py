@@ -387,6 +387,17 @@ async def _i_map():
     await _do_map(url, search or None, limit, out)
 
 
+async def _i_graph():
+    url = Prompt.ask("[bold]URL to graph[/bold]", console=console)
+    if not url.strip():
+        console.print("[red]URL required.[/red]"); return
+    limit = int(Prompt.ask("Page limit", default="500", console=console))
+    depth = int(Prompt.ask("Max depth", default="3", console=console))
+    include_subdomains = Prompt.ask("Include subdomains? y/n", default="n", console=console).lower() == "y"
+    out = Prompt.ask("Output file (empty for stdout)", default="", console=console)
+    await _do_graph(url, limit, depth, include_subdomains, out, "json")
+
+
 async def _do_map(url, search, limit, out):
     from .mapper import Mapper
     browser = None
@@ -404,6 +415,30 @@ async def _do_map(url, search, limit, out):
             console.print(f"[green]Wrote {out} ({len(links)} URLs)[/green]")
         else:
             console.print(Syntax(result, "json", theme="monokai"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+    finally:
+        if browser:
+            await _stop_browser(browser)
+
+
+async def _do_graph(url, limit, max_depth, include_subdomains, out, output_format):
+    """Run a graph crawl and print/serialize results."""
+    from .mapper import Mapper
+    browser = None
+    try:
+        with Progress(SpinnerColumn(), TextColumn("[bold cyan]Graph mapping..."),
+                      console=console) as p:
+            p.add_task("graph")
+            browser = await _get_browser()
+            mapper = Mapper(browser)
+            graph = await mapper.map_site_graph(
+                start_url=url,
+                include_subdomains=include_subdomains,
+                limit=limit,
+                max_depth=max_depth,
+            )
+        _write_output(graph.model_dump(mode="json"), out, output_format)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
     finally:
@@ -751,6 +786,28 @@ def search_cmd(query, limit, output, outfmt):
 def map_cmd(url, limit, search_filter, output, outfmt):
     """Map/discover URLs on a site."""
     _run_async(_do_map(url, search_filter, limit, output, outfmt))
+
+
+@cli.command(name="graph")
+@click.argument("url")
+@click.option("-l", "--limit", default=500, show_default=True, help="Max pages to discover")
+@click.option("-d", "--max-depth", default=3, show_default=True, help="BFS depth limit")
+@click.option("--include-subdomains", is_flag=True, help="Include subdomains")
+@click.option("-o", "--output", default="-", help="Output file")
+@click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
+              default="json", help="Serialization format")
+def graph_cmd(url, limit, max_depth, include_subdomains, output, outfmt):
+    """Map a site as a directed graph (pages + links).
+
+    BFS crawl up to max_depth, returning nodes and edges.
+    Useful for site architecture analysis.
+
+    \b
+    Examples:
+      huginn graph https://example.com
+      huginn graph https://example.com --max-depth 5 -o sitemap.json
+    """
+    _run_async(_do_graph(url, limit, max_depth, include_subdomains, output, outfmt))
 
 
 # ─── research ────────────────────────────────────────────────────────────────
@@ -1140,6 +1197,8 @@ def _interactive_mode():
             _run_async(_i_search())
         elif key in ("m", "map"):
             _run_async(_i_map())
+        elif key in ("g", "graph"):
+            _run_async(_i_graph())
         elif key in ("d", "research"):
             _run_async(_i_research())
         elif key in ("v", "serve"):

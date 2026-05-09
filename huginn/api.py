@@ -62,6 +62,8 @@ from .models import (
     WatchResponse,
     WatchStatusResponse,
     WatchSnapshot,
+    GraphRequest,
+    GraphResponse,
 )
 from .job_store import JobStore
 from .scheduler import Scheduler
@@ -451,7 +453,31 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             logger.error(f"Map failed: {e}", exc_info=True)
             return MapResponse(success=False, error=str(e))
 
-    # ─--- Extract ───────────────────────────────────────────────────────────
+    @app.post("/v1/graph", response_model=GraphResponse, tags=["Map"])
+    @limiter.limit("30/minute")
+    async def graph_site(request: Request, req: GraphRequest, auth=Depends(verify_api_key)):
+        """
+        Map a site as a directed graph of pages and links.
+
+        BFS crawl up to max_depth, returning nodes (pages with metadata)
+        and edges (source -> target links). Useful for site architecture
+        analysis, link visualization, and audit.
+        """
+        if not _browser:
+            raise HTTPException(status_code=503, detail="Browser not initialized")
+
+        mapper = Mapper(_browser)
+        try:
+            graph = await mapper.map_site_graph(
+                start_url=req.url,
+                include_subdomains=req.include_subdomains,
+                limit=req.limit,
+                max_depth=req.max_depth,
+            )
+            return GraphResponse(success=True, data=graph)
+        except Exception as e:
+            logger.error(f"Graph failed: {e}", exc_info=True)
+            return GraphResponse(success=False, error=str(e), error_code=ErrorCode.INTERNAL_ERROR)
 
     @app.post("/v1/distill", tags=["Extract"])
     async def start_distill(req: DistillRequest, auth=Depends(verify_api_key)):

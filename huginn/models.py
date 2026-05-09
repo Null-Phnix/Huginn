@@ -267,6 +267,46 @@ class MapResponse(BaseModel):
     error_code: Optional[ErrorCode] = Field(None)
 
 
+class PageNode(BaseModel):
+    """A single page in a crawl graph."""
+    url: str
+    title: Optional[str] = None
+    status_code: Optional[int] = None
+    content_type: Optional[str] = None
+    depth: int = 0  # BFS distance from start_url
+
+
+class PageEdge(BaseModel):
+    """A directed link between two pages."""
+    source: str
+    target: str
+
+
+class CrawlGraph(BaseModel):
+    """Directed graph of discovered pages and their interconnections."""
+    nodes: List[PageNode] = Field(default_factory=list)
+    edges: List[PageEdge] = Field(default_factory=list)
+    start_url: str
+    total_discovered: int = 0
+    total_crawled: int = 0
+
+
+class GraphRequest(BaseModel):
+    """POST /v1/graph request body — BFS site graph mapping."""
+    url: str
+    include_subdomains: bool = Field(False)
+    limit: int = Field(500, ge=1, le=5000)
+    max_depth: int = Field(3, ge=1, le=10, description="BFS depth limit")
+
+
+class GraphResponse(BaseModel):
+    """POST /v1/graph response."""
+    success: bool
+    data: Optional[CrawlGraph] = None
+    error: Optional[str] = None
+    error_code: Optional[ErrorCode] = Field(None)
+
+
 # ─── Distill Endpoint ─────────────────────────────────────────────────────────
 
 class DistillRequest(BaseModel):

@@ -543,6 +543,47 @@ class HuginnClient:
 
         return data.get("links", [])
 
+    # ── graph ──────────────────────────────────────────────────────────────────
+
+    async def graph_site(
+        self,
+        url: str,
+        include_subdomains: bool = False,
+        limit: int = 500,
+        max_depth: int = 3,
+    ) -> CrawlGraph:
+        """
+        Map a site as a directed graph of pages and links.
+
+        Parameters
+        ----------
+        url : str
+            Starting URL.
+        include_subdomains : bool
+            Include links to subdomains. Default: False.
+        limit : int
+            Maximum pages to discover. Default: 500.
+        max_depth : int
+            BFS depth limit. Default: 3.
+
+        Returns
+        -------
+        CrawlGraph
+            Nodes (pages) and edges (links) discovered.
+        """
+        from .models import GraphRequest
+        req = GraphRequest(
+            url=url,
+            include_subdomains=include_subdomains,
+            limit=limit,
+            max_depth=max_depth,
+        )
+        response = await self._request("POST", "/v1/graph", json=req.model_dump())
+        data = response.json()
+        if not data.get("success", False):
+            raise HuginnError(data.get("error", "Graph crawl failed"))
+        return CrawlGraph.model_validate(data.get("data", {}))
+
     # ── distill ─────────────────────────────────────────────────────────────
 
     async def distill(
@@ -706,6 +747,10 @@ class HuginnSync:
         return self._run(self._async.map_site(url, include_sitemaps, **kwargs))
 
     # ── distill / extract ────────────────────────────────────────────────────────
+
+    def graph_site(self, url: str, include_subdomains: bool = False, limit: int = 500, max_depth: int = 3) -> CrawlGraph:
+        """Map a site as a directed graph (sync)."""
+        return self._run(self._async.graph_site(url, include_subdomains, limit, max_depth))
 
     def distill(self, urls: List[str], prompt: str, schema: Optional[Dict] = None) -> DistillStartResponse:
         """Extract structured data from URLs (sync)."""

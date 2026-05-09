@@ -68,10 +68,10 @@ class Mapper:
             all_urls.update(sitemap_urls)
 
         # Strategy 2: Load the page and extract all links via DOM walker
-        page_urls = await self._extract_page_links(url, include_subdomains, base_domain)
-        if page_urls:
-            logger.info(f"Page extraction: found {len(page_urls)} URLs")
-            all_urls.update(page_urls)
+        page_links, _title, _status = await self._extract_page_links(url, include_subdomains, base_domain)
+        if page_links:
+            logger.info(f"Page extraction: found {len(page_links)} URLs")
+            all_urls.update(page_links)
 
         # Strategy 3: If we found URLs on the page, check if they have their own sitemaps
         # (limited to avoid recursion)
@@ -170,9 +170,12 @@ class Mapper:
         return urls
 
     async def _extract_page_links(
-        self, url: str, include_subdomains: bool, base_domain: str
-    ) -> Set[str]:
-        """Load page in browser and extract all links."""
+        self,
+        url: str,
+        include_subdomains: bool,
+        base_domain: str,
+    ) -> tuple[set[str], str | None, int | None]:
+        """Load page in browser and extract all links + metadata."""
         context = None
         try:
             context = await self.browser.new_context()
@@ -180,9 +183,11 @@ class Mapper:
 
             success = await self.browser.navigate(page, url)
             if not success:
-                return set()
+                return (set(), None, None)
 
-            # Extract all links
+            title = await page.title()
+            status_code = self.browser.last_status_code or 200
+
             raw_links = await page.evaluate("""() => {
                 const links = new Set();
                 document.querySelectorAll('a[href]').forEach(a => {
@@ -194,14 +199,102 @@ class Mapper:
                 return Array.from(links);
             }""")
 
-            return set(raw_links)
+            return (set(raw_links), title, status_code)
 
         except Exception as e:
             logger.error(f"Page link extraction failed for {url}: {e}")
-            return set()
+            return (set(), None, None)
         finally:
             if context:
                 try:
                     await context.close()
                 except Exception:
                     pass
+
+    async def map_site_graph(
+        self,
+        start_url: str,
+        include_subdomains: bool = False,
+        limit: int = 500,
+        max_depth: int = 3,
+    ) -> CrawlGraph:
+        """
+        Map a site as a directed graph of pages and links.
+
+        Uses BFS up to max_depth, discovering pages and recording edges
+        (source_page -> discovered_url). Each node stores title, status_code,
+        and crawl depth.
+
+        Returns a CrawlGraph with nodes and edges. Faster than full crawling
+        because only links are extracted, not content.
+        """
+        from .models import PageNode, PageEdge
+
+        parsed = urlparse(start_url)
+        base_domain = parsed.netloc
+        queue: list[tuple[str, int]] = [(start_url, 0)]  # (url, depth)
+        seen: set[str] = {start_url}
+        nodes: dict[str, PageNode] = {}
+        edges: list[PageEdge] = []
+
+        while queue and len(seen) < limit:
+            url, depth = queue.pop(0)
+            if depth > max_depth:
+                continue
+
+            # Extract links from this page
+            links, title, status = await self._extract_page_links(
+                url, include_subdomains, base_domain
+            )
+
+            # Create/update node for this page
+            nodes[url] = PageNode(
+                url=url,
+                title=title or "",
+                status_code=status,
+                depth=depth,
+            )
+
+            for raw_link in links:
+                # Normalize URL
+                try:
+                    link = urljoin(url, raw_link)
+                    parsed_link = urlparse(link)
+                    # Skip non-HTTP schemes, fragments, empty
+                    if parsed_link.scheme not in ("http", "https"):
+                        continue
+                except Exception:
+                    continue
+
+                # Subdomain check
+                link_domain = parsed_link.netloc
+                if not include_subdomains:
+                    if link_domain != base_domain and not link_domain.endswith(f".{base_domain}"):
+                        continue
+
+                # Check same-domain (mapping should stay within scope)
+                is_same_domain = (link_domain == base_domain) or link_domain.endswith(f".{base_domain}")
+                if not is_same_domain:
+                    # Add edge but don't traverse
+                    edges.append(PageEdge(source=url, target=link))
+                    if link not in nodes:
+                        nodes[link] = PageNode(url=link)
+                    continue
+
+                # Record edge
+                edges.append(PageEdge(source=url, target=link))
+
+                # Queue for BFS
+                if link not in seen:
+                    seen.add(link)
+                    if depth < max_depth:
+                        queue.append((link, depth + 1))
+
+        from .models import CrawlGraph
+        return CrawlGraph(
+            start_url=start_url,
+            nodes=list(nodes.values()),
+            edges=edges,
+            total_discovered=len(nodes),
+            total_crawled=sum(1 for n in nodes.values() if n.title is not None),
+        )
