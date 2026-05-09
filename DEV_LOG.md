@@ -440,3 +440,45 @@ Both are written in first person, include code snippets, and explain *why* decis
 ---
 
 *Last updated: 2026-05-07 by agent*
+
+---
+
+## 2026-05-08 — Session: Screenshot capture — full CLI + SDK exposure
+
+### Why I did this
+
+Screenshot capture already existed in the backend (`browser.py:779 take_screenshot()`, `scraper.py:348` requesting `OutputFormat.SCREENSHOT`). But there was zero user-facing way to access it. The CLI `scrape` command only offered `markdown`, `html`, `links`. The SDK `scrape()` accepted `"screenshot"` as a format string but it wasn't documented or convenient. A competitive scraper API without screenshot support is like a browser without a print button — the capability is there, the UI just hides it.
+
+### What I built
+
+1. **Multi-format CLI scraping** — `-f` now accepts comma-separated formats (`markdown,screenshot,links`) and `all`. This matches Firecrawl's behavior where you can request multiple output types in one call.
+
+2. **Screenshot auto-extraction** — When `screenshot` is in the format list, `_do_scrape()` detects it and writes the base64 PNG to a separate `.png` file instead of embedding 500KB of base64 inside JSON. The JSON output gets `screenshot: null` with a note, and the user sees `Wrote example.com.png` in green.
+
+3. **`huginn screenshot` convenience command** — A thin wrapper that just captures a screenshot with zero other overhead. `huginn screenshot https://example.com -o shot.png --viewport`. This is the command I expect most users to reach for when they just want a quick screenshot.
+
+4. **Interactive REPL screenshot mode** — Menu key `[p]` for "screenshot", prompts for URL, full-page vs viewport, and output file. Auto-names the file `<host>.png` if no output given.
+
+5. **SDK screenshot methods** — `HuginnClient.screenshot(url)` returns base64 string. `HuginnSync.screenshot(url)` sync version. Both are thin wrappers around `scrape(formats=["screenshot"])` with validation.
+
+6. **Tests** — `TestCLIScreenshot` with 2 tests: `test_screenshot_help` verifies the new command registers, `test_screenshot_format_option_in_scrape` verifies the format choices expanded.
+
+### Pitfalls
+
+- **Click.Choice doesn't support comma-separated values natively** — The option type is `click.Choice([...])` which validates each token individually. But the user's input `"markdown,screenshot"` is a single string. I had to split and validate manually inside `_do_scrape()` instead of relying on Click's validation. Tradeoff: less strict upfront validation, more flexible UX.
+
+- **Screenshot base64 in JSON is terrible UX** — My first instinct was to leave it in the JSON output. But 500KB base64 strings break terminals, bloat files, and are useless without decoding. Writing to `.png` separately is the only sane default. The base64 is still available via the REST API for programmatic consumers.
+
+- **Path collision on auto-naming** — If you screenshot `https://example.com` twice, the second write overwrites the first. I didn't add numbering (`example.com_1.png`) because that adds complexity for a rare case. Users can specify `-o` to avoid collisions.
+
+- **`_do_scrape()` needs `Scraper` import inside the function** — I kept the existing pattern where `Scraper` is imported lazily inside `_do_scrape()`. This avoids circular imports at module load time but means the function is slightly slower on first call. Acceptable for CLI.
+
+### What I didn't do (and why)
+
+- **Viewport-size presets (mobile, tablet, desktop)** — The `--full-page/--viewport` toggle exists but no preset sizes. Firecrawl has this. I'll add it when I build the "responsive screenshot" feature, not as part of this base capability.
+- **Screenshot comparison / diffing** — Useful for regression testing and watch jobs, but that's a separate feature. Not bundled here.
+- **PDF screenshot** — Playwright supports `type="pdf"` but it's a different code path. Future work.
+
+---
+
+*Last updated: 2026-05-08 by agent*

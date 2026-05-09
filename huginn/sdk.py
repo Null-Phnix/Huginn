@@ -286,6 +286,36 @@ class HuginnClient:
 
         return ScrapeData.model_validate(data.get("data", {}))
 
+    async def screenshot(
+        self,
+        url: str,
+        full_page: bool = True,
+        **kwargs,
+    ) -> str:
+        """
+        Capture a screenshot of a URL and return the base64-encoded PNG.
+
+        Parameters
+        ----------
+        url : str
+            URL to screenshot.
+        full_page : bool
+            Capture the full scrollable page (default) or just the viewport.
+
+        Returns
+        -------
+        str
+            Base64-encoded PNG image data.
+        """
+        data = await self.scrape(
+            url,
+            formats=["screenshot"],
+            **kwargs,
+        )
+        if not data.screenshot:
+            raise HuginnError("Screenshot failed or returned empty")
+        return data.screenshot
+
     # ── crawl ────────────────────────────────────────────────────────────────
 
     async def crawl(
@@ -645,9 +675,13 @@ class HuginnSync:
 
     # ── scrape ─────────────────────────────────────────────────────────────────
 
-    def scrape(self, url: str, formats: Optional[List[OutputFormat]] = None) -> ScrapeResponse:
+    def scrape(self, url: str, formats: Optional[List[OutputFormat]] = None, **kwargs) -> ScrapeResponse:
         """Scrape a single URL (sync)."""
-        return self._run(self._async.scrape(url, formats))
+        return self._run(self._async.scrape(url, formats, **kwargs))
+
+    def screenshot(self, url: str, full_page: bool = True, **kwargs) -> str:
+        """Capture a screenshot of a URL and return base64-encoded PNG (sync)."""
+        return self._run(self._async.screenshot(url, full_page=full_page, **kwargs))
 
     # ── crawl ────────────────────────────────────────────────────────────────────
 

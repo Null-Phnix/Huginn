@@ -113,3 +113,22 @@ class TestInteractiveDispatch:
                 asyncio.run(fake_memory())
         oneshot()
         assert calls["memory"] is True
+
+
+class TestCLIScreenshot:
+    """Test the new screenshot convenience command."""
+
+    def test_screenshot_help(self):
+        result = runner.invoke(cli, ["screenshot", "--help"])
+        assert result.exit_code == 0
+        assert "screenshot" in result.output
+        assert "full-page" in result.output
+        assert "--viewport" in result.output
+
+    def test_screenshot_format_option_in_scrape(self):
+        result = runner.invoke(cli, ["scrape", "--help"])
+        assert result.exit_code == 0
+        assert "screenshot" in result.output
+        assert "raw_html" in result.output
+        assert "metadata" in result.output
+        assert "all" in result.output

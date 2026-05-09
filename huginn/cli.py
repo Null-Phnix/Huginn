@@ -145,21 +145,22 @@ def _menu():
     table.add_column("Command", style="bold white", width=20)
     table.add_column("Description", style="dim")
     items = [
-        ("[s]", "scrape",   "Probe a single URL"),
-        ("[c]", "crawl",    "Sweep a site recursively"),
-        ("[e]", "extract",  "Extract structured data"),
-        ("[b]", "batch",    "Batch process URLs from file"),
-        ("[r]", "search",   "Seek the web"),
-        ("[m]", "map",      "Map site URLs"),
-        ("[d]", "research", "Deep research"),
-        ("[v]", "serve",    "Start API server"),
-        ("[t]", "templates","List extract templates"),
-        ("[M]", "memory",   "Query research memory"),
-        ("[W]", "watch",    "Manage page watches"),
-        ("[j]", "jobs",     "List running jobs"),
-        ("[o]", "config",   "Show config"),
-        ("[h]", "doctor",   "Health check"),
-        ("[q]", "quit",     "Exit"),
+        ("[s]", "scrape",     "Probe a single URL"),
+        ("[p]", "screenshot", "Capture a screenshot"),
+        ("[c]", "crawl",      "Sweep a site recursively"),
+        ("[e]", "extract",    "Extract structured data"),
+        ("[b]", "batch",      "Batch process URLs from file"),
+        ("[r]", "search",     "Seek the web"),
+        ("[m]", "map",        "Map site URLs"),
+        ("[d]", "research",   "Deep research"),
+        ("[v]", "serve",      "Start API server"),
+        ("[t]", "templates",  "List extract templates"),
+        ("[M]", "memory",     "Query research memory"),
+        ("[W]", "watch",      "Manage page watches"),
+        ("[j]", "jobs",       "List running jobs"),
+        ("[o]", "config",     "Show config"),
+        ("[h]", "doctor",     "Health check"),
+        ("[q]", "quit",       "Exit"),
     ]
     for key, cmd, desc in items:
         table.add_row(key, cmd, desc)
@@ -172,17 +173,39 @@ async def _i_scrape():
     url = Prompt.ask("[bold]URL to scrape[/bold]", console=console)
     if not url.strip():
         console.print("[red]URL required.[/red]"); return
-    fmt = Prompt.ask("Format", choices=["markdown", "html", "links"],
-                     default="markdown", console=console)
+    fmt = Prompt.ask(
+        "Format(s)",
+        choices=["markdown", "html", "links", "screenshot", "raw_html", "metadata", "all"],
+        default="markdown", console=console)
     out = Prompt.ask("Output file (empty for stdout)", default="", console=console)
+    # Screenshot convenience: default to .png when screenshot is selected and no output given
+    if fmt in ("screenshot", "all") and not out.strip():
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.replace(":", "_") or "screenshot"
+        out = f"{host}.png"
     await _do_scrape(url, fmt, out)
 
 
 async def _do_scrape(url: str, fmt: str, out: str, outfmt: str = "json"):
     from .scraper import Scraper
-    from .models import OutputFormat
-    fmt_map = {"markdown": OutputFormat.MARKDOWN, "html": OutputFormat.HTML,
-               "links": OutputFormat.LINKS}
+    from .models import OutputFormat, ScrapeData
+    fmt_map = {
+        "markdown": OutputFormat.MARKDOWN,
+        "html": OutputFormat.HTML,
+        "links": OutputFormat.LINKS,
+        "screenshot": OutputFormat.SCREENSHOT,
+        "raw_html": OutputFormat.RAW_HTML,
+        "metadata": OutputFormat.METADATA,
+    }
+    # Parse comma-separated or "all"
+    if fmt.strip().lower() == "all":
+        formats = list(fmt_map.values())
+    else:
+        parts = [p.strip().lower() for p in fmt.split(",")]
+        formats = [fmt_map[p] for p in parts if p in fmt_map]
+        if not formats:
+            console.print(f"[red]Unknown format(s): {fmt}[/red]"); return
+
     browser = None
     try:
         with Progress(SpinnerColumn(), TextColumn("[bold cyan]Scraping..."),
@@ -190,13 +213,37 @@ async def _do_scrape(url: str, fmt: str, out: str, outfmt: str = "json"):
             p.add_task("scrape")
             browser = await _get_browser()
             scraper = Scraper(browser)
-            data = await scraper.scrape(url=url, formats=[fmt_map[fmt]])
+            data = await scraper.scrape(url=url, formats=formats)
+
+        # If screenshot was requested and we have one, write it separately
+        if data.screenshot:
+            png_path = out if out and (out.endswith(".png") or out.endswith(".jpg")) else None
+            if not png_path and OutputFormat.SCREENSHOT in formats:
+                from urllib.parse import urlparse
+                host = urlparse(url).netloc.replace(":", "_") or "screenshot"
+                png_path = f"{host}.png"
+            if png_path:
+                import base64
+                Path(png_path).write_bytes(base64.b64decode(data.screenshot))
+                console.print(f"[green]Wrote screenshot {Path(png_path).resolve()}[/green]")
+                data.screenshot = None  # Remove from JSON output since it's on disk
+
         _write_output(data.model_dump(exclude_none=True), out, outfmt)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
     finally:
         if browser:
             await _stop_browser(browser)
+
+
+async def _i_screenshot():
+    url = Prompt.ask("[bold]URL to screenshot[/bold]", console=console)
+    if not url.strip():
+        console.print("[red]URL required.[/red]"); return
+    full_page = Prompt.ask("Full page or viewport", choices=["full", "viewport"],
+                             default="full", console=console) == "full"
+    out = Prompt.ask("Output file (empty for auto-named .png)", default="", console=console)
+    await _do_screenshot(url, out, full_page)
 
 
 async def _i_extract():
@@ -562,9 +609,10 @@ def cli(ctx):
 
 @cli.command(name="scrape")
 @click.argument("url")
-@click.option("-f", "--format", "fmt", type=click.Choice(["markdown", "html", "links"]),
-              default="markdown", help="Output format")
-@click.option("-o", "--output", default="-", help="Output file (default: stdout)")
+@click.option("-f", "--format", "fmt",
+              type=click.Choice(["markdown", "html", "links", "screenshot", "raw_html", "metadata", "all"]),
+              default="markdown", help="Output format(s). Comma-separated or 'all' for every format.")
+@click.option("-o", "--output", default="-", help="Output file (default: stdout; auto-named .png for screenshots)")
 @click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
               default="json", help="Serialization format")
 def scrape_cmd(url, fmt, output, outfmt):
@@ -574,9 +622,57 @@ def scrape_cmd(url, fmt, output, outfmt):
     Examples:
       huginn scrape https://example.com
       huginn scrape https://example.com -f html
-      huginn scrape https://example.com -o result.json -F json
+      huginn scrape https://example.com -f screenshot -o shot.png
+      huginn scrape https://example.com -f markdown,screenshot,links
+      huginn scrape https://example.com -f all -o result.json
     """
     _run_async(_do_scrape(url, fmt, output, outfmt))
+
+
+# ─── screenshot (convenience) ────────────────────────────────────────────────
+
+@cli.command(name="screenshot")
+@click.argument("url")
+@click.option("-o", "--output", default=None, help="Output PNG file (default: <host>.png)")
+@click.option("--full-page/--viewport", "full_page", default=True, help="Full page or viewport only")
+def screenshot_cmd(url, output, full_page):
+    """Take a screenshot of a URL.
+
+    \b
+    Examples:
+      huginn screenshot https://example.com
+      huginn screenshot https://example.com -o homepage.png
+      huginn screenshot https://example.com --viewport -o mobile.png
+    """
+    _run_async(_do_screenshot(url, output, full_page))
+
+
+async def _do_screenshot(url: str, out: str, full_page: bool = True):
+    from .models import OutputFormat
+    browser = None
+    try:
+        with Progress(SpinnerColumn(), TextColumn("[bold cyan]Capturing..."),
+                      console=console) as p:
+            p.add_task("screenshot")
+            browser = await _get_browser()
+            scraper = Scraper(browser)
+            data = await scraper.scrape(url=url, formats=[OutputFormat.SCREENSHOT])
+
+        if not data.screenshot:
+            console.print("[red]Screenshot failed or returned empty.[/red]"); return
+
+        import base64
+        from urllib.parse import urlparse
+        if not out:
+            host = urlparse(url).netloc.replace(":", "_") or "screenshot"
+            out = f"{host}.png"
+        Path(out).write_bytes(base64.b64decode(data.screenshot))
+        console.print(f"[green]Wrote {Path(out).resolve()}[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+    finally:
+        if browser:
+            await _stop_browser(browser)
 
 
 # ─── extract ───────────────────────────────────────────────────────────────
@@ -1034,6 +1130,8 @@ def _interactive_mode():
             break
         elif key in ("s", "scrape"):
             _run_async(_i_scrape())
+        elif key in ("p", "screenshot"):
+            _run_async(_i_screenshot())
         elif key in ("c", "crawl"):
             _run_async(_i_crawl())
         elif key in ("e", "extract"):
