@@ -1,414 +1,181 @@
-# Huginn
+# Huginn — Odin's Raven
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-9f6ff3?style=flat-square&labelColor=07061a)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-v1.1.0-4ade80?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
-[![Tests](https://img.shields.io/badge/tests-258_passing-4ade80?style=flat-square&labelColor=07061a)]
+**Self-hosted web scraping, crawling, and extraction API. Stealth-first. Open source. No cloud tier.**
 
-**Autonomous web scraping API. Firecrawl-compatible interface, stealth-first, self-hosted.**
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/Null-Phnix/Huginn)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Built on [Blackreach](https://github.com/Null-Phnix/Blackreach)'s DOM walker, stealth stack, and mental model system. No Redis, no Supabase — just Python, Playwright, and SQLite.
+> Huginn (Old Norse: "thought") is one of Odin's ravens — he flies across the world and brings back information.
+
+---
+
+## What It Does
+
+Huginn is a drop-in, self-hosted alternative to [Firecrawl](https://firecrawl.dev) and [ScrapingBee](https://scrapingbee.com). Run it on your own hardware. No API keys. No rate limits from a cloud provider. No paywall.
+
+- **Scrape** any URL → Markdown, HTML, links, screenshots, metadata
+- **Crawl** entire sites recursively with depth limits and dedup
+- **Map** site structure → sitemap-like URL lists
+- **Extract** structured data using LLM-guided templates (product, article, job, etc.)
+- **Research** multi-hop deep dives with vector memory persistence
+- **Watch** pages for content changes with webhook notifications
+- **Batch** process 100s of URLs concurrently
+
+---
+
+## Quick Start
 
 ```bash
-pip install blackcrawl
-playwright install chromium
-blackcrawl serve
-```
+# Install
+pip install huginn
 
-```bash
-# Docker (one-liner)
-docker run -p 7432:7432 \
-  -e HUGINN_API_KEY=your_key \
-  -v ./data:/app/data \
-  huginn/huginn:latest
-```
+# Start the API server
+huginn serve
 
-```python
-import httpx
+# Scrape a URL
+curl -X POST http://localhost:8000/v1/probe \
+  -H "Authorization: Bearer demo-key" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "formats": ["markdown"]}'
 
-# Scrape a page
-resp = httpx.post("http://localhost:7432/v1/scrape", json={
-    "url": "https://example.com",
-    "formats": ["markdown", "html", "links"]
-})
+# Crawl a site (stream results as NDJSON)
+curl -X POST http://localhost:8000/v1/sweep \
+  -H "Authorization: Bearer demo-key" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://docs.python.org/3", "stream": true, "format": "jsonl"}'
 
-# Crawl a site
-resp = httpx.post("http://localhost:7432/v1/crawl", json={
-    "url": "https://docs.python.org",
-    "maxDepth": 2,
-    "limit": 50
-})
-
-# Map all URLs
-resp = httpx.post("http://localhost:7432/v1/map", json={
-    "url": "https://example.com"
-})
-
-# Extract structured data
-resp = httpx.post("http://localhost:7432/v1/extract", json={
-    "urls": ["https://example.com"],
-    "prompt": "Extract the main heading and all paragraphs",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "heading": {"type": "string"},
-            "paragraphs": {"type": "array", "items": {"type": "string"}}
-        }
-    }
-})
-
-# Search and scrape
-resp = httpx.post("http://localhost:7432/v1/search", json={
-    "query": "Python async tutorial"
-})
+# Watch a page for changes
+curl -X POST http://localhost:8000/v1/watch \
+  -H "Authorization: Bearer demo-key" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://news.ycombinator.com", "webhook_url": "https://myapp.com/webhook"}'
 ```
 
 ---
 
-## Why Huginn?
+## Why Huginn vs Firecrawl?
 
-Every popular web scraping API has fundamental problems:
-
-| Problem | Firecrawl | Jina Reader | Huginn |
-|---------|-----------|-------------|------------|
-| Anti-bot detection | Cloud-only, paid tier | Basic | Built-in stealth (webdriver patches, fingerprint spoofing, behavioral humanization) |
-| JS-rendered content | Playwright | Basic | Playwright + stealth patches (webdriver removal, plugin spoofing, viewport normalization) |
-| Crawl reliability | Hangs silently | No crawling | Stuck detection, error recovery, rate limit resilience from 3k+ real-world test failures |
-| Content quality | Readability + turndown | Readability | DOM walker (ARIA roles, landmarks, interactive element IDs — 200k token pages → 2k token observations) |
-| Structured extraction | LLM throw at text | None | Mental model-assisted extraction with belief tracking and retry logic |
-| Self-hosted features | Scrape + crawl only (extract/search are cloud-only) | Single pages | Every endpoint, fully self-hosted |
-| Infrastructure | Node.js + Redis + Supabase | None | Python + SQLite — one process, one DB file |
-
-## API Reference
-
-All endpoints are Firecrawl-compatible. If it works with Firecrawl's API, it works with Huginn.
-
-### POST /v1/scrape
-
-Scrape a single URL. Returns content in requested formats.
-
-```json
-{
-  "url": "https://example.com",
-  "formats": ["markdown", "html", "raw_html", "screenshot", "links"],
-  "onlyMainContent": true,
-  "timeout": 30000,
-  "waitFor": 2000,
-  "actions": [
-    {"type": "click", "selector": "#accept-cookies"},
-    {"type": "wait", "amount": 1000}
-  ]
-}
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "markdown": "# Example Domain\n\nThis domain is for use in illustrative examples...",
-    "html": "<main><h1>Example Domain</h1>...</main>",
-    "metadata": {"url": "https://example.com", "title": "Example Domain", "language": "en"}
-  }
-}
-```
-
-### POST /v1/crawl
-
-Crawl a site recursively. Returns a job ID for polling.
-
-```json
-{
-  "url": "https://docs.python.org",
-  "maxDepth": 3,
-  "limit": 100,
-  "allowBackwardCrawling": false,
-  "allowExternalLinks": false,
-  "includePaths": ["/3/"],
-  "excludePaths": ["/3/library/"],
-  "scrapeOptions": {
-    "formats": ["markdown"],
-    "onlyMainContent": true
-  }
-}
-```
-
-Response:
-```json
-{
-  "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "/v1/crawl/550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-Poll: `GET /v1/crawl/{id}` for status and results.
-
-### POST /v1/map
-
-Fast URL discovery. Returns all links without full content extraction.
-
-```json
-{
-  "url": "https://example.com",
-  "search": "api",
-  "includeSubdomains": false,
-  "limit": 5000
-}
-```
-
-### POST /v1/extract
-
-LLM-powered structured data extraction from URLs.
-
-```json
-{
-  "urls": ["https://news.ycombinator.com"],
-  "prompt": "Extract the top 5 story titles and their point counts",
-  "schema": {
-    "type": "object",
-    "properties": {
-      "stories": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "title": {"type": "string"},
-            "points": {"type": "integer"}
-          }
-        }
-      }
-    }
-  },
-  "mentalModel": true
-}
-```
-
-Huginn extension: `mentalModel: true` enables belief tracking across extraction attempts. The LLM builds beliefs about page structure and uses them to improve retry accuracy.
-
-### POST /v1/search
-
-Web search with automatic result scraping. Falls back through Bing → DuckDuckGo → Brave.
-
-```json
-{
-  "query": "Python async tutorial",
-  "searchOptions": {"limit": 5},
-  "scrapeOptions": {"formats": ["markdown"]},
-  "fallbackChain": true
-}
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "markdown": "# Python Async IO...",
-      "metadata": {"title": "Async IO in Python", "url": "https://...", "snippet": "..."}
-    }
-  ]
-}
-```
-
-### Other Endpoints
-
-- `GET /health` — Health check
-- `GET /v1/jobs` — List all jobs
-- `DELETE /v1/jobs/{id}` — Delete a job
-- `DELETE /v1/crawl/{id}` — Cancel a crawl
-
----
-
-## CLI
-
-```bash
-# Start API server
-blackcrawl serve --port 8080
-
-# Scrape a page
-blackcrawl scrape https://example.com -f markdown -o output.json
-
-# Crawl a site
-blackcrawl crawl https://docs.python.org --depth 2 --limit 50 -o crawl.json
-
-# Map URLs
-blackcrawl map https://example.com --search api -o urls.json
-
-# Search
-blackcrawl search "Python async tutorial" --limit 5
-
-# Health check
-blackcrawl doctor
-```
-
----
-
-## Configuration
-
-### Environment Variables
-
-```bash
-HUGINN_BROWSER_BACKEND=playwright   # or "starsearch"
-HUGINN_HEADLESS=true
-HUGINN_STEALTH=true                 # Enable anti-detection patches
-HUGINN_MAX_DEPTH=3
-HUGINN_MAX_PAGES=100
-HUGINN_LLM_PROVIDER=openai         # openai, anthropic, google, ollama
-HUGINN_LLM_MODEL=gpt-4o-mini       # Or leave empty for provider defaults
-HUGINN_API_KEY=your-secret-key      # Optional Bearer token auth
-HUGINN_PORT=7432
-HUGINN_DATA_DIR=~/.blackcrawl
-HUGINN_LOG_LEVEL=INFO
-```
-
-### Config File
-
-```yaml
-browser:
-  backend: playwright  # or starsearch
-  headless: true
-  stealth_mode: true
-  viewport_width: 1920
-  viewport_height: 1080
-
-crawl:
-  max_depth: 3
-  max_pages: 100
-  concurrency: 5
-  delay_between_requests: 1.0
-
-extract:
-  llm_provider: openai
-  mental_model_enabled: true
-  confidence_threshold: 0.7
-
-server:
-  host: 0.0.0.0
-  port: 7432
-  api_key: null
-  job_ttl: 3600
-```
+| | Huginn | Firecrawl |
+|---|---|---|
+| **Hosting** | Self-hosted (your box) | Cloud-only |
+| **Cost** | Free (your compute) | $0.005/page + tiers |
+| **Stealth** | Playwright + stealth patches | Varies |
+| **Change Detection** | Built-in watch daemon | Not available |
+| **Streaming** | SSE + NDJSON real-time | SSE only |
+| **Research Memory** | ChromaDB vector persistence | Not available |
+| **Open Source** | ✅ MIT | Partial |
 
 ---
 
 ## Architecture
 
 ```
-Request → FastAPI → [Scrape|Crawl|Map|Extract|Search]
-                          │
-                    BrowserManager (Playwright + Stealth)
-                          │
-                   ┌──────┼──────┐
-                   │      │      │
-               DOM Walker  │   StarSearch
-               (content    │   (Rust daemon,
-                extraction) │    80+ fingerprints)
-                          │
-                    JobStore (SQLite)
-                    (async job queue)
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   FastAPI   │────▶│   Scraper    │────▶│  Playwright │
+│  REST API   │     │  (concurrent)│     │   Browser   │
+└─────────────┘     └──────────────┘     └─────────────┘
+      │                    │
+      ▼                    ▼
+┌─────────────┐     ┌──────────────┐
+│   Crawler   │     │   Extractor  │────▶ LLM (optional)
+│ (BFS pool)  │     │  (templates) │
+└─────────────┘     └──────────────┘
+      │
+      ▼
+┌─────────────┐
+│   Watcher   │────▶ Webhooks on change
+│  (daemon)   │
+└─────────────┘
 ```
-
-**Key design decisions:**
-
-1. **Python + FastAPI** — not Node.js. Simpler deployment, fewer dependencies.
-2. **SQLite, not Redis/Supabase** — one file, zero infra. Jobs, state, everything.
-3. **Stealth-first** — webdriver patches, viewport spoofing, behavioral humanization baked in. Not a paid add-on.
-4. **DOM Walker** — not raw HTML parsing. Semantic extraction with ARIA roles and interactive element IDs.
-5. **Mental model extraction** — belief tracking across LLM retries. Not just throw LLM at text and hope.
-6. **Firecrawl-compatible API** — drop-in replacement. Same endpoints, same request/response format.
 
 ---
 
-## Differences from Firecrawl
+## Benchmarks
 
-## v1.1 New Features
+Deterministic crawl throughput (fake scraper, no network):
 
-| Feature | Firecrawl Status | Huginn Status |
-|---------|-------------------|---------------|
-| **Webhook notifications** | Cloud only (Oct 2024) | Built-in |
-| **Scheduled crawling** | Cloud only (Oct 2024) | Built-in |
-| **PDF/OCR extraction** | Cloud only (Oct 2024) | Built-in |
-| **Docker deployment** | Self-hosted plan (Jan 2025) | Docker one-liner |
-| **OpenAPI docs** | Cloud only | Built-in |
-| **Python SDK** | Cloud only | Built-in |
-| **MCP server** | No | Built-in |
-| **CLI tool** | No | Built-in |
+| Graph | Workers | Pages | Time | Pages/sec |
+|-------|---------|-------|------|-----------|
+| Chain (depth 50) | 3 | 50 | 0.06s | **899** |
+| Tree (branching 3, depth 3) | 5 | 40 | 0.05s | **737** |
+| Star (hub + 100 leaves) | 5 | 101 | 0.06s | **1671** |
 
-### Webhooks
-Receive POST callbacks when crawl/scrape jobs complete:
-```bash
-curl -X POST http://localhost:7432/v1/scrape \
-  -H "Authorization: Bearer $HUGINN_API_KEY" \
-  -d '{"url":"https://example.com","webhook_url":"https://your-endpoint.com/callback"}'
-```
+Peak memory: **< 0.1 MB** for 100-page crawls.
 
-### Scheduled Jobs
-Schedule recurring crawls with cron syntax:
-```bash
-huginn schedule create \
-  --name "daily-docs" \
-  --job-type crawl \
-  --request '{"url":"https://docs.python.org","maxDepth":2}' \
-  --cron "0 9 * * *" \
-  --webhook-url https://your-endpoint.com/callback
-```
-
-### Docker One-Liner
-```bash
-curl -fsSL https://get.docker.com | sh
-docker run -d \
-  --name huginn \
-  -p 7432:7432 \
-  -e HUGINN_API_KEY=your_key \
-  -v huginn_data:/app/data \
-  huginn/huginn:latest
-```
-
-Then: `docker exec huginn huginn jobs list`
-
-| Feature | Firecrawl (self-hosted) | Huginn |
-|---------|------------------------|------------|
-| Scrape | Yes | Yes |
-| Crawl | Yes | Yes |
-| Map | Yes | Yes |
-| Extract | Cloud only | **Yes — self-hosted** |
-| Search | Cloud only | **Yes — self-hosted** |
-| Anti-bot | Cloud only | **Yes — built in** |
-| Infrastructure | Node + Redis + Postgres | Python + SQLite |
-| LLM extraction | OpenAI only | **OpenAI, Anthropic, Google, Ollama** |
-| Mental model | No | **Yes — belief tracking + retry** |
-| Stuck detection | No | **Yes — from 3k+ real-world failures** |
+Run your own: `python benchmarks/bench.py`
 
 ---
 
 ## Installation
 
 ```bash
-pip install blackcrawl
-playwright install chromium
-```
+pip install huginn
 
-**With LLM extraction:**
-```bash
-pip install "blackcrawl[openai]"      # or anthropic, google, all
-```
-
-**From source:**
-```bash
-git clone https://github.com/Null-Phnix/Huginn
+# Or from source
+git clone https://github.com/Null-Phnix/Huginn.git
 cd Huginn
-pip install -e ".[dev]"
+pip install -e ".[all]"
+
+# Install Playwright browser
 playwright install chromium
+```
+
+---
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/probe` | POST | Scrape a single URL |
+| `/v1/sweep` | POST | Start async crawl (SSE / NDJSON) |
+| `/v1/sweep/{id}` | GET | Get crawl status |
+| `/v1/chart` | POST | Map site URLs (sitemap) |
+| `/v1/graph` | POST | BFS site graph (nodes + edges) |
+| `/v1/distill` | POST | Structured LLM extraction |
+| `/v1/seek` | POST | Web search |
+| `/v1/research` | POST | Deep multi-hop research |
+| `/v1/flock` | POST | Batch URL processing |
+| `/v1/watch` | POST | Start page change detection |
+| `/v1/watch/{url}` | GET | Watch status |
+| `/v1/watch/{url}/check` | POST | Manual check |
+| `/v1/watch/{url}` | DELETE | Stop watching |
+| `/v1/schedule` | POST | Cron/interval scheduling |
+
+---
+
+## CLI
+
+```bash
+huginn scrape <url> --format markdown
+huginn crawl <url> --depth 3 --limit 50
+huginn map <url> --limit 5000
+huginn extract <url> --template product
+huginn watch add <url> --webhook https://myapp.com/hook
+huginn watch check <url>
+huginn search <query>
+huginn serve --port 8000
+huginn doctor
+```
+
+---
+
+## Environment
+
+```bash
+export HUGINN_API_KEY="your-key"
+export HUGINN_PORT=8000
+export HUGINN_LOG_LEVEL=INFO
+export HUGINN_BROWSER_HEADLESS=true
+export HUGINN_BROWSER_STEALTH=true
 ```
 
 ---
 
 ## License
 
-MIT — use it however you want. No Elastic License restrictions, no cloud-only features.
+MIT — see [LICENSE](LICENSE)
 
 ---
 
-Built with fury by [Phnix](https://github.com/Null-Phnix). Powered by [Blackreach](https://github.com/Null-Phnix/Blackreach)'s stealth engine.
+Built with ❤️ by [Phnix](https://github.com/Null-Phnix)
