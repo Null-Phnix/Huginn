@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-05-09T05:16:44.593279+00:00",
+  "huginn_version": "1.2.0",
+  "passed": 5,
+  "total": 5,
+  "results": [
+    {
+      "url": "http://127.0.0.1:8765/static",
+      "category": "static",
+      "passed": true,
+      "markdown_ok": true,
+      "links_ok": true,
+      "metadata_ok": true,
+      "elapsed_sec": 0.61,
+      "render_mode": "unknown",
+      "error": null,
+      "markdown_preview": "# Static Test Page  # Welcome to the static test  This is a simple static page with minimal HTML.  [Link to page 2](/page2)",
+      "title": "Static Test Page"
+    },
+    {
+      "url": "http://127.0.0.1:8765/spa",
+      "category": "spa",
+      "passed": true,
+      "markdown_ok": true,
+      "links_ok": true,
+      "metadata_ok": true,
+      "elapsed_sec": 0.55,
+      "render_mode": "unknown",
+      "error": null,
+      "markdown_preview": "# SPA Shell  Content loaded via JS  This is a single-page application shell. The real content is loaded dynamically.",
+      "title": "SPA Shell"
+    },
+    {
+      "url": "http://127.0.0.1:8765/minimal",
+      "category": "minimal",
+      "passed": true,
+      "markdown_ok": true,
+      "links_ok": true,
+      "metadata_ok": true,
+      "elapsed_sec": 0.57,
+      "render_mode": "unknown",
+      "error": null,
+      "markdown_preview": "# Tiny  hi",
+      "title": "Tiny"
+    },
+    {
+      "url": "http://127.0.0.1:8765/empty",
+      "category": "empty",
+      "passed": true,
+      "markdown_ok": false,
+      "links_ok": true,
+      "metadata_ok": true,
+      "elapsed_sec": 0.56,
+      "render_mode": "unknown",
+      "error": null,
+      "markdown_preview": "# Empty ",
+      "title": "Empty"
+    },
+    {
+      "url": "http://127.0.0.1:8765/json",
+      "category": "json",
+      "passed": true,
+      "markdown_ok": true,
+      "links_ok": true,
+      "metadata_ok": false,
+      "elapsed_sec": 0.56,
+      "render_mode": "unknown",
+      "error": null,
+      "markdown_preview": "``` {\"message\": \"This is JSON content\", \"status\": \"ok\"} ```",
+      "title": ""
+    }
+  ]
+}
