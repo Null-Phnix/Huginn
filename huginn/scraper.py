@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup, Tag
 
 from .browser import BrowserManager, WaitStrategy, parse_wait_for
 from .circuit_breaker import CircuitBreaker, CircuitOpenError, extract_domain, get_circuit_breaker
+from .domain_rate_limiter import DomainRateLimiter, get_domain_rate_limiter
 from .models import OutputFormat, ScrapeData
 from .pdf import extract_pdf_text, is_pdf_content
 
@@ -114,7 +115,7 @@ def detect_render_mode(
 # ── Retry configuration ──────────────────────────────────────────────────────
 
 DEFAULT_MAX_RETRIES = 2  # Total attempts = max_retries + 1
-RETRY_BACKOFFS = [1, 2, 4]  # Seconds: 1s, 2s, 4s (exponential)
+RETRY_BACKOFFS = [1, 2, 4, 8, 16, 32]  # Seconds: exponential up to 32s
 
 
 def classify_error(error: Exception) -> tuple:
@@ -122,21 +123,59 @@ def classify_error(error: Exception) -> tuple:
 
     Used to decide whether to retry and what status code to report.
     """
+    msg = str(error).lower()
+
+    # CAPTCHA / bot detection indicators (check message text first)
+    captcha_indicators = [
+        "captcha", "recaptcha", "hcaptcha", "please verify", "are you human",
+        "verification required", "challenge", "blocked by", "automated access",
+        "bot detected", "unusual traffic",
+    ]
+    for indicator in captcha_indicators:
+        if indicator in msg:
+            return ("captcha", 403)
+
+    # Paywall / auth wall indicators
+    paywall_indicators = [
+        "subscribe", "subscription required", "login required", "sign in to",
+        "premium content", "members only", "paywall",
+    ]
+    for indicator in paywall_indicators:
+        if indicator in msg:
+            return ("paywall", 402)
+
     if isinstance(error, asyncio.TimeoutError):
         return ("timeout", 408)
     if isinstance(error, (ConnectionRefusedError, ConnectionError, ConnectionResetError)):
         return ("connection", 502)
     if isinstance(error, OSError):
         return ("connection", 502)
+    # 429 and 503 are retriable; 403/401/402 generally are not
+    if "429" in msg or "too many requests" in msg:
+        return ("rate_limited", 429)
+    if "503" in msg or "service unavailable" in msg:
+        return ("server_error", 503)
+    if "502" in msg or "bad gateway" in msg:
+        return ("server_error", 502)
+    if "504" in msg or "gateway timeout" in msg:
+        return ("server_error", 504)
     return ("unknown", 500)
 
 
 class Scraper:
     """Scrapes a single URL and returns content in requested formats."""
 
-    def __init__(self, browser: BrowserManager, circuit_breaker: Optional[CircuitBreaker] = None):
+    def __init__(
+        self,
+        browser: BrowserManager,
+        circuit_breaker: Optional[CircuitBreaker] = None,
+        rate_limiter: Optional[DomainRateLimiter] = None,
+        proxy_pool: Optional[List[Dict[str, str]]] = None,
+    ):
         self.browser = browser
         self._cb = circuit_breaker
+        self._rl = rate_limiter
+        self._proxy_pool = proxy_pool or []
         self._cb_domain_failures: dict[str, int] = {}  # domain -> consecutive failures
 
     async def scrape(
@@ -160,6 +199,7 @@ class Scraper:
         Retries up to max_retries times with exponential backoff on timeout,
         connection, and server errors. Client errors (4xx) are not retried.
 
+        Per-domain rate limiting waits politely before requesting.
         The circuit breaker (if configured) prevents hammering domains that are
         returning persistent errors, protecting both the target and our resources.
         """
@@ -168,8 +208,14 @@ class Scraper:
 
         domain = extract_domain(url)
         cb = self._cb or get_circuit_breaker()
+        rl = self._rl or get_domain_rate_limiter()
 
-        # Check circuit before any request
+        # 1. Rate limit: acquire token (waits if bucket empty)
+        wait_time = await rl.acquire_or_wait(domain)
+        if wait_time > 1.0:
+            logger.info(f"Rate-limited on {domain}, waited {wait_time:.1f}s before scraping {url}")
+
+        # 2. Circuit breaker check
         if cb.is_open(domain):
             logger.debug(f"Circuit open for {domain}, returning fast-fail for {url}")
             return ScrapeData(
@@ -181,12 +227,16 @@ class Scraper:
                 }
             )
 
-        # Wrap the actual scrape in the circuit breaker
+        # 3. Wrap the actual scrape in the circuit breaker
         try:
-            return await cb.call(domain, self._scrape_impl, url, formats, headers,
-                                  wait_for, actions, include_tags, exclude_tags,
-                                  only_main_content, timeout, proxy, max_retries, scroll,
-                                  render_mode)
+            return await cb.call(
+                domain,
+                self._scrape_impl,
+                url, formats, headers,
+                wait_for, actions, include_tags, exclude_tags,
+                only_main_content, timeout, proxy, max_retries, scroll,
+                render_mode,
+            )
         except CircuitOpenError:
             return ScrapeData(
                 metadata={
@@ -371,29 +421,67 @@ class Scraper:
                 logger.warning(f"Scrape attempt {attempt + 1}/{max_retries + 1} failed for {url}: {error_type} ({status})")
                 if attempt < max_retries:
                     backoff = RETRY_BACKOFFS[min(attempt, len(RETRY_BACKOFFS) - 1)]
+                    # Rotate proxy if pool available
+                    if self._proxy_pool:
+                        proxy = self._proxy_pool[attempt % len(self._proxy_pool)]
+                        logger.info(f"Rotating to proxy {proxy.get('server', 'unknown')} for retry")
                     logger.info(f"Retrying in {backoff}s...")
                     await asyncio.sleep(backoff)
                     continue
-                return ScrapeData(metadata={"url": url, "error": "Request timed out", "status_code": 408})
+                return ScrapeData(metadata={"url": url, "error": "Request timed out", "status_code": 408, "error_type": error_type})
 
             except Exception as e:
                 error_type, status = classify_error(e)
                 last_error = e
                 logger.warning(f"Scrape attempt {attempt + 1}/{max_retries + 1} failed for {url}: {error_type} ({status})")
-                # Don't retry client errors or rate limits with no backoff benefit
-                if error_type in ("client_error", "rate_limited"):
-                    resolved_status = status
-                    if self.browser.last_status_code and self.browser.last_status_code > status:
-                        resolved_status = self.browser.last_status_code
-                    return ScrapeData(metadata={"url": url, "error": str(e), "status_code": resolved_status})
+                # Don't retry captcha, paywall, or client errors
+                if error_type in ("captcha", "paywall", "client_error"):
+                    resolved_status = self.browser.last_status_code if self.browser.last_status_code else status
+                    return ScrapeData(
+                        metadata={
+                            "url": url,
+                            "error": str(e),
+                            "status_code": resolved_status,
+                            "error_type": error_type,
+                        }
+                    )
+                if error_type == "rate_limited":
+                    resolved_status = self.browser.last_status_code if self.browser.last_status_code else status
+                    # Rate limited: still retry, but with longer backoff and proxy rotation
+                    if attempt < max_retries:
+                        backoff = RETRY_BACKOFFS[min(attempt + 1, len(RETRY_BACKOFFS) - 1)]
+                        if self._proxy_pool:
+                            proxy = self._proxy_pool[attempt % len(self._proxy_pool)]
+                            logger.info(f"Rate-limited; rotating to proxy {proxy.get('server', 'unknown')} and waiting {backoff}s")
+                        logger.info(f"Rate-limited; retrying in {backoff}s...")
+                        await asyncio.sleep(backoff)
+                        continue
+                    return ScrapeData(
+                        metadata={
+                            "url": url,
+                            "error": str(e),
+                            "status_code": resolved_status,
+                            "error_type": error_type,
+                        }
+                    )
                 if attempt < max_retries:
                     backoff = RETRY_BACKOFFS[min(attempt, len(RETRY_BACKOFFS) - 1)]
+                    if self._proxy_pool:
+                        proxy = self._proxy_pool[attempt % len(self._proxy_pool)]
+                        logger.info(f"Rotating to proxy {proxy.get('server', 'unknown')} for retry")
                     logger.info(f"Retrying in {backoff}s...")
                     await asyncio.sleep(backoff)
                     continue
                 # All retries exhausted
                 resolved_status = self.browser.last_status_code if self.browser.last_status_code else status
-                return ScrapeData(metadata={"url": url, "error": str(e), "status_code": resolved_status})
+                return ScrapeData(
+                    metadata={
+                        "url": url,
+                        "error": str(e),
+                        "status_code": resolved_status,
+                        "error_type": error_type,
+                    }
+                )
 
             finally:
                 if context:

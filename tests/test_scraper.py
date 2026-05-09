@@ -271,3 +271,50 @@ class TestLightweightScrape:
         from huginn.models import ScrapeOptions
         opts = ScrapeOptions(render_mode="full")
         assert opts.render_mode == "full"
+
+
+class TestErrorClassification:
+    """Test enhanced classify_error with text-pattern detection."""
+
+    def test_captcha_detection(self):
+        from huginn.scraper import classify_error
+        assert classify_error(RuntimeError("Blocked by CAPTCHA")) == ("captcha", 403)
+        assert classify_error(RuntimeError("recaptcha challenge")) == ("captcha", 403)
+        assert classify_error(RuntimeError("Are you human?")) == ("captcha", 403)
+
+    def test_paywall_detection(self):
+        from huginn.scraper import classify_error
+        assert classify_error(RuntimeError("Subscription required")) == ("paywall", 402)
+        assert classify_error(RuntimeError("Login to view premium content")) == ("paywall", 402)
+
+    def test_rate_limit_from_text(self):
+        from huginn.scraper import classify_error
+        assert classify_error(RuntimeError("429 Too Many Requests")) == ("rate_limited", 429)
+        assert classify_error(RuntimeError("Server returned 503")) == ("server_error", 503)
+        assert classify_error(RuntimeError("502 bad gateway")) == ("server_error", 502)
+        assert classify_error(RuntimeError("504 gateway timeout")) == ("server_error", 504)
+
+
+class TestBackoffArray:
+    """Test retry backoff configuration."""
+
+    def test_backoff_extended(self):
+        from huginn.scraper import RETRY_BACKOFFS
+        assert len(RETRY_BACKOFFS) == 6
+        assert RETRY_BACKOFFS == [1, 2, 4, 8, 16, 32]
+
+
+class TestScraperResilienceConstructor:
+    """Test Scraper accepts rate_limiter and proxy_pool."""
+
+    def test_constructor_accepts_optional_params(self):
+        from huginn.scraper import Scraper
+        scraper = Scraper(browser=None)
+        assert scraper._rl is None
+        assert scraper._proxy_pool == []
+
+    def test_constructor_with_proxy_pool(self):
+        from huginn.scraper import Scraper
+        pool = [{"server": "http://proxy1:8080"}, {"server": "http://proxy2:8080"}]
+        scraper = Scraper(browser=None, proxy_pool=pool)
+        assert scraper._proxy_pool == pool
