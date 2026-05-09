@@ -169,6 +169,11 @@ class Crawler:
         self._cancel = False
         self._seen_hashes: Set[str] = set()
 
+    async def close(self) -> None:
+        """Close crawler resources (browser, scraper HTTP pool)."""
+        await self.scraper.close()
+        await self.browser.stop()
+
     def cancel(self):
         """Signal cancellation."""
         self._cancel = True
@@ -220,7 +225,12 @@ class Crawler:
         on_progress: Optional[Callable] = None,
     ) -> CrawlResult:
         """
-        Priority crawl from start_url. Returns CrawlResult with all scraped pages.
+        Priority crawl from start_url using a true async worker pool.
+
+        N workers consume from a priority queue continuously. When a worker
+        finishes a page, it immediately puts discovered links on the queue and
+        grabs the next URL. No batch-gather dead time — if 1 page is slow,
+        the other workers keep churning.
 
         Args:
             start_url: URL to start crawling from
@@ -237,98 +247,125 @@ class Crawler:
         base_domain = parsed_start.netloc
         base_path_prefix = parsed_start.path.rstrip("/") if not self.allow_backward else "/"
 
-        # Priority heap: (priority_score, counter, url, depth)
-        # Lower score = higher priority. same-domain, shallow pages first.
-        counter = 0
+        # Priority: same-domain first, then shallow depth, then shorter URL
         def url_priority(url: str, depth: int) -> tuple:
             parsed = urlparse(url)
             same_domain_penalty = 0 if parsed.netloc == base_domain else 100
             return (same_domain_penalty, depth, len(url))
 
-        heap: list = []
-        heapq.heappush(heap, (url_priority(start_url, 0), counter, start_url, 0))
+        # Shared state (all access via lock)
+        queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        pending_lock = asyncio.Lock()
+        pending = 1  # start URL is already "in flight"
+        done_event = asyncio.Event()
+        counter = 0  # tie-breaker for priority queue
+
+        # Seed the queue
+        heap_item = (url_priority(start_url, 0), counter, start_url, 0)
+        await queue.put(heap_item)
         counter += 1
         result.queued.add(self._normalize_url(start_url))
 
-        # Semaphore for concurrency control
+        # Semaphore limits concurrent page processing
         sem = asyncio.Semaphore(self.concurrency)
 
-        async def process_page(url: str, depth: int):
-            """Process a single page: scrape it and discover new links."""
-            if self._cancel:
-                return
-
-            async with sem:
-                if self.delay > 0:
-                    await asyncio.sleep(self.delay)
-
+        async def worker():
+            """Consume URLs from queue, scrape, discover, repeat."""
+            nonlocal pending, counter
+            while True:
+                # Wait for work (with timeout so we can check done condition)
                 try:
-                    formats = list(scrape_formats) + [OutputFormat.LINKS]
-                    page_data = await self.scraper.scrape(
-                        url=url,
-                        formats=formats,
-                        only_main_content=only_main_content,
-                        timeout=timeout,
-                    )
-
-                    # Skip duplicate content
-                    if self.skip_duplicates and page_data.markdown:
-                        if self.is_duplicate(page_data.markdown, self._seen_hashes):
-                            logger.info(f"Skipping duplicate content: {url}")
-                            result.visited.add(self._normalize_url(url))
+                    _, _, url, depth = await asyncio.wait_for(queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    async with pending_lock:
+                        if pending == 0 and queue.empty():
                             return
+                    continue
 
-                    result.pages.append(page_data)
-                    result.completed += 1
+                if self._cancel:
+                    return
 
-                    # Discover new links
-                    links = page_data.links or []
-                    for link in links:
-                        norm_link = self._normalize_url(link)
-                        if norm_link in result.visited or norm_link in result.queued:
-                            continue
-                        if not self._should_follow(norm_link, base_domain, depth + 1, base_path_prefix=base_path_prefix):
-                            continue
-                        if len(result.queued) >= self.max_pages * 2:
-                            continue
-                        result.queued.add(norm_link)
-                        heapq.heappush(heap, (url_priority(link, depth + 1), counter, link, depth + 1))
+                norm_url = self._normalize_url(url)
+                if norm_url in result.visited:
+                    async with pending_lock:
+                        pending -= 1
+                        if pending == 0:
+                            done_event.set()
+                    continue
+                result.visited.add(norm_url)
+
+                async with sem:
+                    if self.delay > 0:
+                        await asyncio.sleep(self.delay)
+
+                    new_urls: List[str] = []
+                    try:
+                        formats = list(scrape_formats) + [OutputFormat.LINKS]
+                        page_data = await self.scraper.scrape(
+                            url=url,
+                            formats=formats,
+                            only_main_content=only_main_content,
+                            timeout=timeout,
+                        )
+
+                        # Skip duplicate content
+                        if self.skip_duplicates and page_data.markdown:
+                            if self.is_duplicate(page_data.markdown, self._seen_hashes):
+                                logger.info(f"Skipping duplicate content: {url}")
+                            else:
+                                result.pages.append(page_data)
+                                result.completed += 1
+                        else:
+                            result.pages.append(page_data)
+                            result.completed += 1
+
+                        # Discover new links
+                        links = page_data.links or []
+                        for link in links:
+                            norm_link = self._normalize_url(link)
+                            if norm_link in result.visited or norm_link in result.queued:
+                                continue
+                            if not self._should_follow(norm_link, base_domain, depth + 1, base_path_prefix=base_path_prefix):
+                                continue
+                            if len(result.queued) >= self.max_pages * 2:
+                                continue
+                            result.queued.add(norm_link)
+                            new_urls.append((link, depth + 1))
+
+                        if on_progress:
+                            on_progress(result.completed, len(result.queued))
+
+                    except Exception as e:
+                        logger.error(f"Crawl error on {url}: {e}")
+                        result.errors.append(f"{url}: {str(e)}")
+
+                # Update pending count: new URLs in, this one out
+                async with pending_lock:
+                    for link, d in new_urls:
+                        heap_item = (url_priority(link, d), counter, link, d)
+                        await queue.put(heap_item)
                         counter += 1
-                        result.total_discovered = len(result.queued)
+                    pending -= 1
+                    if pending == 0:
+                        done_event.set()
 
-                    if on_progress:
-                        on_progress(result.completed, result.total_discovered)
-
-                except Exception as e:
-                    logger.error(f"Crawl error on {url}: {e}")
-                    result.errors.append(f"{url}: {str(e)}")
+                if result.completed >= self.max_pages:
+                    # Drain remaining work without processing
+                    async with pending_lock:
+                        pending = 0
+                        done_event.set()
+                    return
 
         # SIGINT handler for graceful shutdown
         old_handler = signal.signal(signal.SIGINT, lambda s, f: setattr(self, "_cancel", True))
 
         try:
-            while heap and not self._cancel:
-                if result.completed >= self.max_pages:
-                    logger.info(f"Reached max_pages limit ({self.max_pages})")
-                    break
-
-                # Collect batch
-                batch = []
-                while heap and len(batch) < self.concurrency:
-                    _, _, url, depth = heapq.heappop(heap)
-                    if depth > self.max_depth:
-                        continue
-                    norm_url = self._normalize_url(url)
-                    if norm_url in result.visited:
-                        continue
-                    result.visited.add(norm_url)
-                    batch.append((url, depth))
-
-                if not batch:
-                    break
-
-                tasks = [process_page(url, depth) for url, depth in batch]
-                await asyncio.gather(*tasks, return_exceptions=True)
+            # Spawn worker pool
+            workers = [asyncio.create_task(worker()) for _ in range(self.concurrency)]
+            # Wait for completion or cancellation
+            await done_event.wait()
+            self._cancel = True
+            await asyncio.gather(*workers, return_exceptions=True)
         finally:
             signal.signal(signal.SIGINT, old_handler)
 

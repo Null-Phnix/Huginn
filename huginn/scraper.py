@@ -163,7 +163,11 @@ def classify_error(error: Exception) -> tuple:
 
 
 class Scraper:
-    """Scrapes a single URL and returns content in requested formats."""
+    """Scrapes a single URL and returns content in requested formats.
+
+    Uses a persistent httpx client for connection pooling on lightweight
+    fetches. Call ``await scraper.close()`` when done to release resources.
+    """
 
     def __init__(
         self,
@@ -177,6 +181,29 @@ class Scraper:
         self._rl = rate_limiter
         self._proxy_pool = proxy_pool or []
         self._cb_domain_failures: dict[str, int] = {}  # domain -> consecutive failures
+        # Persistent HTTP client for connection pooling
+        self._http_client: Optional[httpx.AsyncClient] = None
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Lazy-init shared httpx client with keep-alive / connection pooling."""
+        if self._http_client is None:
+            limits = httpx.Limits(
+                max_keepalive_connections=20,
+                max_connections=50,
+                keepalive_expiry=30.0,
+            )
+            self._http_client = httpx.AsyncClient(
+                limits=limits,
+                follow_redirects=True,
+                timeout=httpx.Timeout(30.0, connect=5.0),
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        """Close persistent HTTP client. Safe to call multiple times."""
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def scrape(
         self,
@@ -277,12 +304,12 @@ class Scraper:
         if mode != RenderMode.FULL:
             try:
                 # Quick HEAD request to detect JS requirements
-                async with httpx.AsyncClient(timeout=10000, follow_redirects=True) as client:
-                    head_resp = await client.head(
-                        url,
-                        headers={"User-Agent": "Huginn/Bot (+https://huginn.dev/bot)"},
-                    )
-                    head_headers = dict(head_resp.headers)
+                client = self._get_http_client()
+                head_resp = await client.head(
+                    url,
+                    headers={"User-Agent": "Huginn/Bot (+https://huginn.dev/bot)"},
+                )
+                head_headers = dict(head_resp.headers)
 
                 detected = detect_render_mode(url, head_headers, force=mode)
 
@@ -340,20 +367,20 @@ class Scraper:
 
                     if url.lower().endswith(".pdf") or "application/pdf" in content_type:
                         logger.info(f"PDF detected for {url}, using PDF extractor")
-                        # Download PDF bytes via a fetch
-                        async with httpx.AsyncClient(timeout=timeout) as pdf_client:
-                            pdf_resp = await pdf_client.get(url)
-                            if pdf_resp.status_code == 200:
-                                pdf_text = await extract_pdf_text(pdf_resp.content)
-                                return ScrapeData(
-                                    markdown=pdf_text,
-                                    metadata={
-                                        "url": url,
-                                        "title": url.split("/")[-1],
-                                        "status_code": pdf_resp.status_code,
-                                        "content_type": "pdf",
-                                    },
-                                )
+                        # Download PDF bytes via persistent client
+                        pdf_client = self._get_http_client()
+                        pdf_resp = await pdf_client.get(url)
+                        if pdf_resp.status_code == 200:
+                            pdf_text = await extract_pdf_text(pdf_resp.content)
+                            return ScrapeData(
+                                markdown=pdf_text,
+                                metadata={
+                                    "url": url,
+                                    "title": url.split("/")[-1],
+                                    "status_code": pdf_resp.status_code,
+                                    "content_type": "pdf",
+                                },
+                            )
                 except Exception as e:
                     logger.warning(f"PDF extraction attempt failed for {url}: {e}")
                     # Fall through to normal HTML extraction
@@ -566,10 +593,10 @@ class Scraper:
         if headers:
             request_headers.update(headers)
 
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            resp = await client.get(url, headers=request_headers)
-            resp.raise_for_status()
-            html_content = resp.text
+        client = self._get_http_client()
+        resp = await client.get(url, headers=request_headers)
+        resp.raise_for_status()
+        html_content = resp.text
 
         # Parse with BeautifulSoup
         soup = BeautifulSoup(html_content, "html.parser")
