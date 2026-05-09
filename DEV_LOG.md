@@ -530,3 +530,64 @@ Huginn's extractor had schema validation and retry, but two critical gaps vs Fir
 ---
 
 *Last updated: 2026-05-08 by agent*
+
+---
+
+## 2026-05-08 — Session: Crawl resilience — rate limits, backoff, proxy rotation, error classification
+
+### Why I did this
+
+Huginn had a `DomainRateLimiter` module that was essentially a ghost — fully implemented, fully tested, but never wired to the scraper. It was like building a traffic light and never connecting it to the intersection. Meanwhile, Firecrawl's resilience comes from:
+1. Per-domain rate limiting
+2. Smart retry with exponential backoff
+3. Proxy rotation on blocked/rate-limited
+4. Error classification that distinguishes retriable vs permanent failures
+
+Huginn had #2 partially (only [1,2,4] second backoffs) but none of the rest.
+
+### What I built
+
+1. **Wired `DomainRateLimiter` into `Scraper`** — Every `scrape()` call now:
+   a. Acquires a rate-limit token via `rl.acquire_or_wait(domain)` — waits politely if the domain is being hammered
+   b. Checks circuit breaker (existing behavior, now step 2)
+   c. Executes the scrape through the circuit breaker wrapper (existing behavior, now step 3)
+
+2. **Extended backoff** — `RETRY_BACKOFFS` went from `[1, 2, 4]` to `[1, 2, 4, 8, 16, 32]`. The old 3-step backoff maxed out at 4s, which is insufficient for sites that temporarily throttle. 32s gives enough breathing room without being absurd.
+
+3. **`classify_error()` overhaul** — Replaced bare exception-type matching with a two-layer classifier:
+   - **Text pattern layer first**: CAPTCHA keywords ("captcha", "recaptcha", "are you human", "bot detected"), paywall keywords ("subscribe", "premium content", "members only"), HTTP status codes from error text ("429", "503", etc.)
+   - **Exception type layer second**: asyncio.TimeoutError, ConnectionError, OSError
+   - Returns `(error_type, status_code)` where error_type is one of: `captcha`, `paywall`, `rate_limited`, `server_error`, `timeout`, `connection`, `unknown`
+
+4. **Proxy rotation on retry** — `Scraper` constructor accepts `proxy_pool: List[Dict[str, str]]`. On every retry, it rotates to the next proxy in the pool (`proxy_pool[attempt % len(pool)]`). This handles IP-based rate limiting by distributing requests across proxies. Only wired for retries — initial request uses the single proxy if provided.
+
+5. **`error_type` in metadata** — `ScrapeData.metadata.error_type` now carries the classified error string. Downstream consumers can react: skip CAPTCHA sites, cache paywall metadata, log rate_limit to analytics.
+
+6. **Smarter retry decisions** — `rate_limited` is retriable (with longer backoff + proxy rotation), but `captcha`, `paywall`, and `client_error` are not retried. This prevents wasting retries on fundamentally blocked pages.
+
+7. **Tests** — 8 new scraper tests covering:
+   - `test_captcha_detection` — 3 CAPTCHA message patterns
+   - `test_paywall_detection` — 2 paywall message patterns
+   - `test_rate_limit_from_text` — 429/503/502/504 status code extraction from text
+   - `test_backoff_extended` — 6-step backoff array verification
+   - `test_constructor_accepts_optional_params` — rate_limiter + proxy_pool as optional
+   - `test_constructor_with_proxy_pool` — proxy pool is stored
+
+### Pitfalls
+
+- **Constructor signature breakage** — Adding `rate_limiter` and `proxy_pool` to `Scraper.__init__()` as optional keyword args is backwards-compatible, but any code using positional args would shift. The existing call sites in `api.py` and `cli.py` use keyword or no extra args, so safe.
+
+- **Proxy rotation for rate_limited** — I considered rotating proxy on the first rate_limit hit instead of waiting for retry. But that would cost a proxy per request even when the site wasn't rate-limiting. The current behavior: first request fails with rate_limit → retry with new proxy. This is the right tradeoff.
+
+- **Rate limiter before circuit breaker** — `acquire_or_wait()` blocks before `cb.is_open()` check. This means a rate-limited domain will wait even if the circuit is open. Is that right? Yes — if the site is down (circuit open) but was recently active, the rate limiter still has tokens. The wait is typically <1s (token refill rate is 1/sec). Acceptable overhead.
+
+- **`DomainRateLimiter` singleton gotcha** — `get_domain_rate_limiter()` returns a process-level singleton. If someone creates two `Scraper` instances with different limiters, they fight over the singleton. This is the existing pattern used by `get_circuit_breaker()`. Not ideal, but consistent.
+
+### What I didn't do (and why)
+
+- **Per-domain proxy routing** — Some users want "use Proxy A for Amazon, Proxy B for Google." That's a proxy strategy, not a scraper concern. Future work in a `ProxyRouter` class.
+- **Adaptive backoff** — Reducing backoff when a site recovers quickly. The fixed exponential is simple and proven. Adaptive backoff adds complexity without clear benefit for scraping.
+
+---
+
+*Last updated: 2026-05-08 by agent*
