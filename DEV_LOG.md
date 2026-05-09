@@ -482,3 +482,51 @@ Screenshot capture already existed in the backend (`browser.py:779 take_screensh
 ---
 
 *Last updated: 2026-05-08 by agent*
+
+---
+
+## 2026-05-08 — Session: Example-driven extraction + Pydantic validation
+
+### Why I did this
+
+Huginn's extractor had schema validation and retry, but two critical gaps vs Firecrawl:
+1. **No example-driven extraction** — The LLM had to guess the correct output format from the schema alone. Examples dramatically improve extraction accuracy on ambiguous pages.
+2. **No Pydantic validation** — Schema validation was hand-rolled JSON-type checking. Pydantic gives stricter validation, better error messages, and integrates with Python's type system.
+
+### What I built
+
+1. **`examples` parameter** — `Extractor.extract(urls, examples=[{...}, {...}])` embeds up to 3 example outputs in the LLM prompt. The examples are JSON-serialized and placed right after the field guides so the LLM sees "here's what correct output looks like" before generating.
+
+2. **`pydantic_model` parameter** — `Extractor.extract(urls, pydantic_model=MyModel)` validates the LLM's output against a Pydantic BaseModel. If validation fails, the errors are fed back into the retry loop just like schema validation errors.
+
+3. **`_validate_with_pydantic()`** — New method that wraps `model.model_validate(data)`. Returns the same dict shape as `_validate_schema()` (`data`, `confidence`, `validation_errors`) so the retry loop doesn't need to know which validator was used.
+
+4. **API model update** — `DistillOptions.examples` field added so REST consumers can pass examples via `POST /v1/distill`.
+
+5. **API wiring** — `_run_distill()` passes `examples=req.examples` through to `extractor.extract()`.
+
+6. **Tests** — 8 new tests:
+   - `test_pydantic_valid_data` — clean model validates, confidence=1.0
+   - `test_pydantic_invalid_data` — wrong type, confidence < 1.0, errors contain field path
+   - `test_pydantic_non_dict_input` — string instead of dict, graceful degradation
+   - `test_prompt_includes_examples` — prompt contains "EXAMPLES" heading and example JSON
+   - `test_prompt_without_examples` — prompt does NOT contain "EXAMPLES" when none provided
+
+### Pitfalls
+
+- **Pydantic v2 vs v1 API** — I used `model.model_validate(data)` and `validated.model_dump()` which are Pydantic v2 APIs. Huginn already requires `pydantic>=2.0.0` in pyproject.toml, so this is safe.
+
+- **Example bloat** — Each example is JSON-serialized and added to the prompt. With 3 examples and a complex schema, this could add 2-5KB to the prompt. I capped at 3 examples. If users need more, they should use a smaller schema or fewer fields.
+
+- **Non-dict input to Pydantic** — `model.model_validate("not a dict")` raises `ValidationError` with a generic message. My `_validate_with_pydantic()` catches this and returns confidence=0.0 with the error. The retry loop then gets feedback about the shape mismatch.
+
+- **Bash backtick gotcha** — The commit message had backticks around `examples` and `pydantic_model` which bash tried to execute as command substitution. Git handled it but the terminal output was noisy. I should escape backticks in commit messages or use single quotes.
+
+### What I didn't do (and why)
+
+- **Automatic example generation from schema** — I could have generated synthetic examples from the schema's `description` fields. But synthetic examples are often misleading (LLM learns wrong patterns). Real examples from the user are always better.
+- **Example similarity ranking** — Selecting the "best" 3 examples from a larger pool based on schema coverage. Overkill for now.
+
+---
+
+*Last updated: 2026-05-08 by agent*
