@@ -228,7 +228,7 @@ class Mapper:
         Returns a CrawlGraph with nodes and edges. Faster than full crawling
         because only links are extracted, not content.
         """
-        from .models import PageNode, PageEdge
+        from .models import CrawlGraph, PageNode, PageEdge
 
         parsed = urlparse(start_url)
         base_domain = parsed.netloc
