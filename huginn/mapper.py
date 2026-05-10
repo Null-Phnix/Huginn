@@ -24,6 +24,7 @@ except ImportError:
 import httpx
 
 from .browser import BrowserManager
+from .models import CrawlGraph
 
 logger = logging.getLogger(__name__)
 
