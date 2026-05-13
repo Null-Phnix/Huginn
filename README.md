@@ -1,28 +1,95 @@
-# Huginn — Odin's Raven
+# Huginn — Odin's Raven 🜏
+
+> *Huginn (Old Norse: "thought") is one of Odin's ravens — he flies across the world and brings back information.*
 
 [![Version](https://img.shields.io/badge/version-1.2.0-7c3aed?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
 [![Python](https://img.shields.io/badge/python-3.10%2B-4ade80?style=flat-square&labelColor=07061a)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-343_passing-22d3ee?style=flat-square&labelColor=07061a)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-facc15?style=flat-square&labelColor=07061a)](LICENSE)
 
-> Huginn (Old Norse: "thought") is one of Odin's ravens — he flies across the world and brings back information.
-
 **Self-hosted web scraping, crawling, and extraction API. Stealth-first. Open source. No cloud tier.**
+
+---
+
+## Table of Contents
+
+- [Why I Built This](#why-i-built-this)
+- [What It Does](#what-it-does)
+- [Current Pain Points](#current-pain-points)
+- [End Goals](#end-goals--where-this-is-headed)
+- [Quick Start](#quick-start)
+- [Why Huginn vs Firecrawl?](#why-huginn-vs-firecrawl)
+- [Architecture](#architecture)
+- [Benchmarks](#benchmarks)
+- [CLI](#cli)
+- [API Endpoints](#api-endpoints)
+- [Templates](#templates)
+- [Installation](#installation)
+- [Environment](#environment)
+- [License](#license)
+
+---
+
+## Why I Built This
+
+Huginn started as **BlackCrawl** — a stripped-down Blackreach focused on structured data extraction. I needed to scrape mythology texts for Bifrost (my knowledge base project) and Firecrawl wanted $0.005 per page. For a 10,000-page crawl that's $50. Per crawl. I do this weekly.
+
+The rebrand to Huginn wasn't just a name change — it was a product positioning shift. BlackCrawl was trying to be everything (autonomous agent + scraper + researcher). Huginn is specifically a **self-hosted Firecrawl alternative**: structured scraping API with a REST interface, CLI, templates, and streaming output. Nothing more, nothing less.
+
+Blackreach handles "go find me state space model papers from 2024." Huginn handles "scrape this product page and give me structured JSON with price, availability, and specs." Both use the same Playwright stealth backend, but Huginn is the API you call, Blackreach is the agent you delegate to.
 
 ---
 
 ## What It Does
 
-Huginn is a drop-in, self-hosted alternative to [Firecrawl](https://firecrawl.dev) and [ScrapingBee](https://scrapingbee.com). Run it on your own hardware. No API keys. No rate limits from a cloud provider. No paywall.
+| Feature | What It Does |
+|---------|-------------|
+| **Scrape** | Any URL → Markdown, HTML, links, screenshots, metadata |
+| **Crawl** | Entire sites recursively with depth limits, dedup, robots.txt respect |
+| **Map** | Site structure → sitemap-like URL lists with BFS graph (nodes + edges) |
+| **Extract** | Structured data via LLM-guided templates (10 built-in schemas) |
+| **Research** | Multi-hop deep dives with ChromaDB vector memory persistence |
+| **Watch** | Page change detection with webhook notifications |
+| **Batch** | 100s of URLs processed concurrently |
+| **Stream** | Real-time NDJSON or SSE output during crawls |
 
-- **Scrape** any URL → Markdown, HTML, links, screenshots, metadata
-- **Crawl** entire sites recursively with depth limits and dedup
-- **Map** site structure → sitemap-like URL lists
-- **Extract** structured data using LLM-guided templates (product, article, job, real estate, person, event, review, FAQ, recipe, research paper)
-- **Research** multi-hop deep dives with vector memory persistence (ChromaDB)
-- **Watch** pages for content changes with webhook notifications
-- **Batch** process 100s of URLs concurrently
-- **Stream** crawl results in real-time as NDJSON or SSE
+---
+
+## Current Pain Points
+
+These are the battles I'm actively fighting:
+
+1. **Per-page pricing is a scam** — Firecrawl at $0.005/page sounds cheap until you crawl 50,000 pages. That's $250. Per month if you do it weekly. My electricity costs less than that.
+
+2. **The `robotparser` from stdlib is garbage** — No wildcard support, no caching, no async. I wrapped it in an async layer with caching, but it's still a liability. If a site uses complex `robots.txt` rules, Huginn might miss pages or over-crawl.
+
+3. **LLMs return garbage JSON half the time** — Even GPT-4o sometimes outputs malformed JSON with trailing commas, unescaped newlines, or markdown wrappers. I built a 6-step repair pipeline (direct parse → bracket matching → regex extraction → auto-repair → graceful fallback), but it's defensive code I wish I didn't need.
+
+4. **Playwright stealth is an arms race** — Sites add new fingerprinting every month. The `playwright-stealth` package helps but it's not magic. Some sites still detect automation and serve different content. I patch what I can, but it's whack-a-mole.
+
+5. **SPA vs static site detection** — Every page needs the right wait strategy. `domContentLoaded` is fast but misses SPA content. `networkIdle` is thorough but slow. `selector` waits are precise but require knowing the selector in advance. Huginn defaults to `networkIdle` which is safe but slow. Auto-detecting the right strategy per-site is unsolved.
+
+6. **Memory grows with crawl size** — ChromaDB research memory and SQLite job queue both grow unbounded. For a 10,000-page research crawl, the vector DB can hit 2GB+. I need auto-pruning or pagination, but it's not built yet.
+
+---
+
+## End Goals — Where This Is Headed
+
+### Short Term (now → 3 months)
+- **Auto wait strategy detection** — analyze page structure and choose `domContentLoaded` vs `networkIdle` vs `selector` automatically
+- **Better robots.txt parser** — replace stdlib `robotparser` with something that handles wildcards and caches properly
+- **Memory pruning** — auto-cleanup of old research reports and vector chunks
+- **Huginn ↔ Blackreach state sharing** — both tools should share the same research memory and crawl history
+
+### Medium Term (3–6 months)
+- **Unified agent swarm** — Huginn feeds scraped data into Blackreach research, which feeds findings into Deep Video Watcher comprehension, all sharing one ChromaDB instance
+- **Persistent knowledge graph** — every scrape and crawl adds to a cumulative understanding, not isolated reports
+- **Self-healing extraction** — when a template fails, the system tries alternative schemas or asks the user, not just returns garbage
+
+### Long Term (6–12 months)
+- **Fully autonomous research pipeline** — "Find every paper on X from the last 2 years, extract key findings, compare with my existing knowledge, flag contradictions, write a summary"
+- **Distributed crawling** — split large crawls across my Linux desktop and MacBook, one brain across two machines
+- **Zero cloud dependencies** — every feature that currently needs an API key (LLM extraction) should have a local fallback
 
 ---
 
