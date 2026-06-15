@@ -1097,9 +1097,52 @@ def config_cmd(output, outfmt):
 # ─── doctor ──────────────────────────────────────────────────────────────────
 
 @cli.command(name="doctor")
-def doctor_cmd():
-    """Check system health."""
-    _run_async(_doctor())
+@click.option("--check", is_flag=True, help="Run deep checks (LLM creds, change tracking round-trip, webhook HMAC, API server probe).")
+def doctor_cmd(check: bool) -> None:
+    """Check system health. Use --check for deep verification."""
+    if check:
+        _run_async(_doctor_deep())
+    else:
+        _run_async(_doctor())
+
+
+async def _doctor_deep():
+    """Deep health checks (change tracking, HMAC, LLM creds, API server)."""
+    from .doctor import (
+        CheckStatus,
+        summarize,
+        run_all_checks,
+    )
+    from rich.console import Console as RichConsole
+
+    console = RichConsole()
+    table = Table(title="[bold]Huginn Doctor — Deep Check[/bold]", border_style="cyan")
+    table.add_column("Component", style="bold")
+    table.add_column("Status", style="bold")
+    table.add_column("Details", style="dim")
+
+    status_colors = {
+        CheckStatus.OK: "[green]OK[/green]",
+        CheckStatus.WARN: "[yellow]WARN[/yellow]",
+        CheckStatus.FAIL: "[red]FAIL[/red]",
+        CheckStatus.SKIP: "[dim]SKIP[/dim]",
+    }
+
+    results = await run_all_checks()
+    for r in results:
+        table.add_row(r.component, status_colors[r.status], r.details)
+
+    counts = summarize(results)
+    console.print(table)
+    console.print(
+        f"\nSummary: [green]{counts['ok']} OK[/green], "
+        f"[yellow]{counts['warn']} WARN[/yellow], "
+        f"[red]{counts['fail']} FAIL[/red], "
+        f"[dim]{counts['skip']} SKIP[/dim]"
+    )
+    # Non-zero exit if any FAIL (lets scripts use doctor --check in CI)
+    if counts["fail"] > 0:
+        raise SystemExit(1)
 
 
 async def _doctor():
