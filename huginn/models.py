@@ -310,10 +310,20 @@ class CrawlStatusResponse(BaseModel):
 class MapRequest(BaseModel):
     """POST /v1/map request body."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     url: str
     search: Optional[str] = None
     include_subdomains: bool = Field(False)
     limit: int = 5000
+    # Firecrawl parity: sitemap mode.
+    #   "include" (default) — discover URLs from sitemap.xml + crawl from the page
+    #   "skip"              — ignore sitemap.xml, only crawl from the page
+    #   "only"              — return ONLY sitemap.xml URLs, no page crawling
+    sitemap: Optional[str] = Field(
+        "include",
+        description='Sitemap mode: "include" (default), "skip", or "only".',
+    )
 
 
 class MapResponse(BaseModel):

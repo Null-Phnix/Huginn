@@ -539,6 +539,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
                 search=req.search,
                 include_subdomains=req.include_subdomains,
                 limit=req.limit,
+                sitemap=req.sitemap or "include",
             )
             return MapResponse(success=True, links=links)
         except Exception as e:
