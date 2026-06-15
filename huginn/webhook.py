@@ -20,6 +20,9 @@ Usage:
 """
 
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -33,23 +36,55 @@ DEFAULT_MAX_RETRIES = 3
 RETRY_DELAYS = [1, 3, 10]  # seconds between retries
 
 
+def _compute_signature(body: bytes, secret: str) -> str:
+    """Compute HMAC-SHA256 signature of `body` using `secret`.
+
+    Returns a 64-char hex digest. The caller is responsible for
+    prefixing with `sha256=` when assembling the header value.
+
+    Receiver verification (Firecrawl parity):
+        body = await request.body()  # raw bytes
+        expected = hmac.new(secret.encode(), body, sha256).hexdigest()
+        assert request.headers["X-Huginn-Signature"] == f"sha256={expected}"
+    """
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+
 async def send_webhook(
     url: str,
     payload: dict,
     secret: Optional[str] = None,
     timeout: float = DEFAULT_WEBHOOK_TIMEOUT,
 ) -> bool:
-    """Send a webhook POST. Returns True on success, False on any failure."""
+    """Send a webhook POST with optional HMAC-SHA256 signature.
+
+    When `secret` is set:
+      - Computes HMAC-SHA256 over the JSON-serialized body
+      - Adds `X-Huginn-Signature: sha256=<hex>` header
+      - Also sends the legacy `X-Huginn-Webhook-Secret` header for
+        backward compatibility with endpoints that pre-date signatures
+
+    Returns True on 2xx response, False on any failure.
+    """
     if not url:
         return False
 
-    headers = {"Content-Type": "application/json"}
+    # Serialize the body once — used for both HMAC and the HTTP POST
+    body_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Huginn-Webhook/1.0",
+    }
     if secret:
+        sig = _compute_signature(body_bytes, secret)
+        headers["X-Huginn-Signature"] = f"sha256={sig}"
+        # Legacy header — kept for backward compat
         headers["X-Huginn-Webhook-Secret"] = secret
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await client.post(url, content=body_bytes, headers=headers)
             resp.raise_for_status()
             logger.info(f"Webhook delivered to {url}")
             return True
