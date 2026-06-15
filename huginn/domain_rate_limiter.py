@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -32,6 +33,20 @@ class DomainLimitConfig:
     @property
     def tokens_per_second(self) -> float:
         return self.requests_per_minute / 60.0
+
+    def with_rate_multiplier(self, multiplier: float) -> "DomainLimitConfig":
+        """Return a new config with the rate scaled by `multiplier`.
+
+        The result is clamped: burst_size >= 1, tokens_per_second >= 0.01.
+        Used by adaptive throttling to back off / recover dynamically.
+        """
+        new_rpm = max(self.requests_per_minute * multiplier, 0.01)
+        new_burst = max(int(self.burst_size * multiplier), 1)
+        return DomainLimitConfig(
+            requests_per_minute=new_rpm,
+            burst_size=new_burst,
+            window_seconds=self.window_seconds,
+        )
 
 
 @dataclass
@@ -58,6 +73,12 @@ class DomainRateLimiter:
     4. If under window limit → allow, record timestamp
     5. If over window limit → wait or reject
 
+    Plus adaptive throttling (record_outcome):
+    - On 429/5xx/timeout → back off (halve the rate multiplier, down to 0.1)
+    - On 2xx → gradually recover (increment by 0.1, up to 1.0)
+    - Decisions are based on the sliding window of recent outcomes
+      (default: last 20 requests per domain)
+
     Never raises — waits instead of blocking.
     """
 
@@ -67,19 +88,93 @@ class DomainRateLimiter:
         window_seconds=60.0,
     )
 
+    # Adaptive throttling thresholds (per-event adjustment — no windowing)
+    ADAPTIVE_BACKOFF_FACTOR = 0.7      # each failure multiplies rate by 0.7
+    ADAPTIVE_RECOVERY_STEP = 0.05      # each success adds 0.05 to multiplier
+    ADAPTIVE_MIN_MULTIPLIER = 0.1       # floor — never go below 10% of configured rate
+    ADAPTIVE_MAX_MULTIPLIER = 1.0       # ceiling — never exceed configured rate
+
     def __init__(self):
         self._buckets: Dict[str, DomainBucket] = {}
         self._lock = asyncio.Lock()
         self._domain_configs: Dict[str, DomainLimitConfig] = {}
+        # Adaptive throttling state: per-domain sliding window of recent
+        # outcomes (True = success, False = failure) and current rate
+        # multiplier (1.0 = full rate, 0.1 = heavily backed off).
+        self._outcome_history: Dict[str, deque] = {}
+        self._rate_multipliers: Dict[str, float] = {}
 
     def set_domain_config(self, domain: str, config: DomainLimitConfig):
         """Set custom rate limit for a domain."""
         self._domain_configs[domain] = config
+        # Reset adaptive state when config changes — old rate multiplier
+        # was calibrated for the old config.
+        self._rate_multipliers[domain] = 1.0
+        self._outcome_history.pop(domain, None)
+        # If a bucket already exists, refresh it to use the new config
+        if domain in self._buckets:
+            self._buckets[domain].config = config
+
+    def _get_effective_config(self, domain: str) -> DomainLimitConfig:
+        """Get the current effective config for a domain, applying the adaptive multiplier."""
+        base = self._domain_configs.get(domain, self.DEFAULT_DOMAIN_CONFIG)
+        multiplier = self._rate_multipliers.get(domain, 1.0)
+        if multiplier >= 1.0:
+            return base
+        return base.with_rate_multiplier(multiplier)
+
+    def get_current_rate(self, domain: str) -> float:
+        """Return the current rate multiplier (1.0 = full, 0.1 = 10%)."""
+        return self._rate_multipliers.get(domain, 1.0)
+
+    def get_outcome_history(self, domain: str):
+        """Return a copy of the recent outcomes deque (True=success, False=failure)."""
+        return list(self._outcome_history.get(domain, deque()))
+
+    async def record_outcome(
+        self,
+        domain: str,
+        success: bool,
+        status_code: Optional[int] = None,
+    ) -> None:
+        """Record a request outcome and adjust the adaptive rate.
+
+        Per-event adjustment — each outcome nudges the multiplier:
+          - failure → multiply by ADAPTIVE_BACKOFF_FACTOR (0.7), floor 0.1
+          - success → add ADAPTIVE_RECOVERY_STEP (0.05), ceiling 1.0
+
+        Why per-event (not windowed): simpler, more predictable, no
+        "stuck in backoff" state from old failures lingering in a
+        window. 3 consecutive failures → 0.7³ ≈ 0.34 (clearly backed
+        off). 14 consecutive successes after that → 0.34 + 14×0.05 = 1.04,
+        capped at 1.0 (fully recovered).
+
+        `status_code` is currently informational only — caller decides
+        success/failure classification. Most callers will treat 4xx/5xx
+        and timeouts as failure.
+        """
+        history = self._outcome_history.setdefault(
+            domain, deque(maxlen=100)  # bounded log, useful for diagnostics
+        )
+        history.append(success)
+
+        current = self._rate_multipliers.get(domain, 1.0)
+
+        if success:
+            new_rate = min(current + self.ADAPTIVE_RECOVERY_STEP, self.ADAPTIVE_MAX_MULTIPLIER)
+        else:
+            new_rate = max(current * self.ADAPTIVE_BACKOFF_FACTOR, self.ADAPTIVE_MIN_MULTIPLIER)
+
+        if abs(new_rate - current) > 1e-9:
+            self._rate_multipliers[domain] = new_rate
+            # Refresh the bucket's config so the next acquire() uses the new rate
+            if domain in self._buckets:
+                self._buckets[domain].config = self._get_effective_config(domain)
 
     def _get_bucket(self, domain: str) -> DomainBucket:
         """Get or create bucket for domain."""
         if domain not in self._buckets:
-            config = self._domain_configs.get(domain, self.DEFAULT_DOMAIN_CONFIG)
+            config = self._get_effective_config(domain)
             self._buckets[domain] = DomainBucket(
                 tokens=float(config.burst_size),
                 last_update=time.monotonic(),
@@ -117,6 +212,12 @@ class DomainRateLimiter:
 
             # Bucket empty — check sliding window
             self._clean_window(bucket)
+            # If window_seconds=0 (no window fallback configured), the bucket
+            # is the only constraint. Skipping the window check here is what
+            # the user opted in to.
+            if bucket.config.window_seconds <= 0:
+                bucket.blocked_count += 1
+                return False
             if len(bucket.request_timestamps) < bucket.config.requests_per_minute:
                 bucket.tokens -= 1.0
                 bucket.total_requests += 1
