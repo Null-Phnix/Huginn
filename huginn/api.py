@@ -12,12 +12,8 @@ Run:
 """
 
 import asyncio
-import hmac
-import hashlib
-import httpx
 import json
 import logging
-import os
 import time
 from contextlib import asynccontextmanager
 from typing import List, Optional, Any
@@ -76,62 +72,17 @@ from .webhook import fire_webhook_for_job
 from .browser import BrowserManager
 from .scraper import Scraper
 
-# ─── Module-level LLM helpers ──────────────────────────────────────────────────
+# ─── Module-level LLM helpers (re-exported from huginn.llm) ───────────────────
+# The actual implementation lives in huginn.llm for testability and reuse.
+# Re-exported here so existing callers (e.g. tests) can keep importing
+# from huginn.api without breaking.
 
-_LLM_PROVIDER_CONFIG = {
-    "openai": {"base_url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY", "default_model": "gpt-4o-mini"},
-    "xai": {"base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY", "default_model": "grok-3-mini"},
-    "ollama": {"base_url": os.getenv("OLLAMA_BASE_URL", "https://ollama.com/api"), "key_env": "OLLAMA_API_KEY", "default_model": "llama3.3"},
-    "anthropic": {"base_url": "https://api.anthropic.com/v1", "key_env": "ANTHROPIC_API_KEY", "default_model": "claude-3-5-haiku-20250620"},
-    "google": {"base_url": "https://generativelanguage.googleapis.com/v1beta", "key_env": "GOOGLE_API_KEY", "default_model": "gemini-2.0-flash"},
-}
-
-
-async def _summarize_text(
-    text: str,
-    llm_provider: str = "openai",
-    llm_model: Optional[str] = None,
-) -> Optional[str]:
-    """Generate a 1-2 sentence summary of page text using the configured LLM.
-
-    Best-effort: returns None on failure (no API key, network error, etc.)
-    """
-    if not text or len(text.strip()) < 20:
-        return None
-
-    config = _LLM_PROVIDER_CONFIG.get(llm_provider, _LLM_PROVIDER_CONFIG["openai"])
-    api_key = os.environ.get(config["key_env"], "")
-    model = llm_model or config["default_model"]
-
-    if llm_provider not in ("ollama",) and not api_key:
-        return None  # No key — skip silently
-
-    prompt = (
-        "Provide a very brief summary (1-2 sentences maximum) of the following page content.\n"
-        "Be concise and informative.\n\nContent:\n" + text[:8000]
-    )
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            if llm_provider == "anthropic":
-                headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-                body = {"model": model, "max_tokens": 128, "messages": [{"role": "user", "content": prompt}]}
-                resp = await client.post(f"{config['base_url']}/messages", headers=headers, json=body)
-                resp.raise_for_status()
-                data = resp.json()
-                return data.get("content", [{}])[0].get("text", "").strip()
-            else:
-                headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
-                body = {"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 128, "temperature": 0.3}
-                resp = await client.post(f"{config['base_url']}/chat/completions", headers=headers, json=body)
-                resp.raise_for_status()
-                data = resp.json()
-                choices = data.get("choices", [])
-                if choices:
-                    return choices[0].get("message", {}).get("content", "").strip()
-    except Exception:
-        pass
-    return None
+from .llm import (  # noqa: E402, F401
+    LLM_PROVIDER_CONFIG,
+    _LLM_PROVIDER_CONFIG,  # back-compat alias
+    summarize_text,
+    _summarize_text,  # back-compat alias
+)
 
 
 from .crawler import Crawler
