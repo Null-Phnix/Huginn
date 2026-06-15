@@ -2,7 +2,7 @@
 Huginn Python SDK — Clean, typed client for the Huginn API.
 
 Usage:
-    client = Huginn("http://localhost:8000", api_key="...")
+    client = Huginn("http://localhost:7432", api_key="...")
     result = await client.scrape("https://example.com")
     async for page in client.crawl("https://example.com"):
         print(page.markdown)
@@ -71,7 +71,7 @@ class HuginnClient:
     Parameters
     ----------
     base_url : str
-        Base URL of the Huginn API server. Default: ``http://localhost:8000``.
+        Base URL of the Huginn API server. Default: ``http://localhost:7432``.
     api_key : str, optional
         API key for authentication. Can also be set via ``HUGINN_API_KEY``
         environment variable.
@@ -85,7 +85,7 @@ class HuginnClient:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000",
+        base_url: str = "http://localhost:7432",
         api_key: Optional[str] = None,
         timeout: float = 60.0,
         max_connections: int = 100,
@@ -685,7 +685,7 @@ class HuginnSync:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000",
+        base_url: str = "http://localhost:7432",
         api_key: Optional[str] = None,
         timeout: float = 60.0,
         max_connections: int = 100,

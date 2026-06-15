@@ -10,11 +10,11 @@ from huginn.sdk import HuginnClient, HuginnError
 class TestHuginnClientInit:
     def test_default_base_url(self):
         client = HuginnClient()
-        assert client.base_url == "http://localhost:8000"
+        assert client.base_url == "http://localhost:7432"
 
     def test_base_url_trailing_slash_stripped(self):
-        client = HuginnClient(base_url="http://localhost:8000/")
-        assert client.base_url == "http://localhost:8000"
+        client = HuginnClient(base_url="http://localhost:7432/")
+        assert client.base_url == "http://localhost:7432"
 
     def test_api_key_from_env(self, monkeypatch):
         monkeypatch.setenv("HUGINN_API_KEY", "test-key-123")
