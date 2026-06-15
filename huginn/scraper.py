@@ -7,6 +7,7 @@ execute optional actions, then extract content in requested formats.
 
 import asyncio
 import logging
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
@@ -46,6 +47,65 @@ _FALLBACK_IPHONE_DEVICE: Dict[str, Any] = {
 }
 
 _MOBILE_DEVICE: Dict[str, Any] = _FALLBACK_IPHONE_DEVICE
+
+
+# ─── Ad blocking (Firecrawl parity) ────────────────────────────────────────────
+# Well-known ad network domains. When blockAds=True, the Scraper registers
+# a Playwright route handler for each domain that aborts matching requests
+# before they reach the page. Wildcard globs (**) match any path under the
+# domain so ad creatives, beacons, and pixels are all caught.
+#
+# Sources: EasyPrivacy list, Firecrawl default, and the most common
+# doubleclick / googlesyndication / amazon-aax / criteo endpoints.
+
+_AD_DOMAINS: List[str] = [
+    "**/doubleclick.net/**",
+    "**/googlesyndication.com/**",
+    "**/googleadservices.com/**",
+    "**/googletagservices.com/**",
+    "**/google-analytics.com/**",
+    "**/googletagmanager.com/**",
+    "**/adsystem.amazon.com/**",
+    "**/amazon-adsystem.com/**",
+    "**/criteo.com/**",
+    "**/criteo.net/**",
+    "**/outbrain.com/**",
+    "**/taboola.com/**",
+    "**/scorecardresearch.com/**",
+    "**/adsrvr.org/**",
+    "**/adnxs.com/**",
+    "**/rubiconproject.com/**",
+    "**/pubmatic.com/**",
+    "**/openx.net/**",
+    "**/moatads.com/**",
+    "**/facebook.com/tr/**",
+    "**/connect.facebook.net/**",
+    "**/analytics.twitter.com/**",
+    "**/ads.yahoo.com/**",
+    "**/ads.linkedin.com/**",
+    "**/adform.net/**",
+]
+
+
+# ─── Base64 image stripping (Firecrawl parity) ────────────────────────────────
+# Matches `data:image/<type>;base64,<payload>` URIs. Captures the full URI
+# so .sub("", md) strips it entirely. The payload is non-greedy and stops
+# at any of: whitespace, ), ", ', <, >, end of string.
+#
+# Examples that match:
+#   data:image/png;base64,iVBOR...
+#   data:image/jpeg;base64,/9j/4AAQ...
+#   data:image/svg+xml;base64,PHN2Zy...
+#   data:image/webp;base64,UklGR...
+#
+# Examples that DO NOT match:
+#   data:application/octet-stream;base64,XXXX (intentionally — only images)
+#   data:text/plain,Hello (no ;base64 segment)
+
+_BASE64_IMAGE_REGEX = re.compile(
+    r"data:image/[a-zA-Z0-9+.\-]+;base64,[^\s\)\"'<>]+",
+    re.IGNORECASE,
+)
 
 
 class RenderMode(str, Enum):
@@ -247,6 +307,8 @@ class Scraper:
         skip_tls_verification: bool = True,
         summary: bool = False,
         mobile: bool = False,
+        block_ads: bool = False,
+        remove_base64_images: bool = False,
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -296,6 +358,7 @@ class Scraper:
                 wait_for, actions, include_tags, exclude_tags,
                 only_main_content, timeout, proxy, max_retries, scroll,
                 render_mode, skip_tls_verification, summary, mobile,
+                block_ads, remove_base64_images,
             )
         except CircuitOpenError:
             return ScrapeData(
@@ -329,6 +392,8 @@ class Scraper:
         skip_tls_verification: bool,
         summary: bool = False,
         mobile: bool = False,
+        block_ads: bool = False,
+        remove_base64_images: bool = False,
     ) -> ScrapeData:
         """Internal implementation — wrapped by circuit breaker."""
 
@@ -385,6 +450,21 @@ class Scraper:
             try:
                 context = await self.browser.new_context(proxy=proxy, device=device)
                 page = await self.browser.new_page(context)
+
+                # Firecrawl parity: block ad network requests at the network
+                # layer. Each ad domain gets a route handler that aborts the
+                # request before it reaches the page — saves bandwidth + speeds
+                # up the scrape. We register synchronously here so the routes
+                # are active before any subresource loads.
+                if block_ads:
+                    async def _abort_route(route):
+                        await route.abort()
+                    for pattern in _AD_DOMAINS:
+                        # MagicMock-based tests don't await page.route(); in real
+                        # Playwright the call returns a coroutine, so we await it.
+                        route_call = page.route(pattern, _abort_route)
+                        if asyncio.iscoroutine(route_call):
+                            await route_call
 
                 # Set extra headers if provided
                 if headers:
@@ -461,6 +541,12 @@ class Scraper:
                 for fmt in formats:
                     if fmt == OutputFormat.MARKDOWN:
                         result.markdown = await self.browser.to_markdown(page, content)
+                        # Firecrawl parity: strip inline base64 image data URIs
+                        # from the extracted markdown. Pages with inlined SVG or
+                        # canvas screenshots can blow up token counts and payload
+                        # size; this is a one-line post-process to clean them up.
+                        if remove_base64_images and result.markdown:
+                            result.markdown = _BASE64_IMAGE_REGEX.sub("", result.markdown)
                     elif fmt == OutputFormat.HTML:
                         result.html = await self.browser.to_html(page, only_main=only_main_content)
                     elif fmt == OutputFormat.RAW_HTML:

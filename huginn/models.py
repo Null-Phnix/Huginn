@@ -205,6 +205,22 @@ class ScrapeRequest(BaseModel):
         alias="mobile",
         description="Emulate a mobile device (iPhone 13) for the scrape.",
     )
+    # Firecrawl parity: block known ad network requests via Playwright
+    # route interception. When True, requests to ad domains (doubleclick.net,
+    # googlesyndication.com, etc.) are aborted before they reach the page.
+    block_ads: bool = Field(
+        False,
+        alias="blockAds",
+        description="Block requests to known ad network domains.",
+    )
+    # Firecrawl parity: strip inline base64 image data URIs from the
+    # extracted markdown. Saves tokens + payload size for pages with
+    # inlined SVG/data-URI images.
+    remove_base64_images: bool = Field(
+        False,
+        alias="removeBase64Images",
+        description="Strip data:image/...;base64,... URIs from extracted markdown.",
+    )
 
 
 class ScrapeData(BaseModel):
