@@ -35,16 +35,19 @@ jobs:
         run: playwright install chromium
 
       - name: Run unit tests
+        # Use bare `pytest` (no path arg) so it picks up both tests/ and
+        # huginn/tests/ via pyproject.toml's testpaths config. Hardcoding
+        # `pytest tests/` would silently skip the 32 tests in huginn/tests/.
+        # The single ignore below is real (test_integration.py requires a
+        # live network + Playwright chromium); the other three ignores from
+        # earlier versions reference files that no longer exist.
         run: |
-          pytest tests/ \
+          pytest \
             --timeout=30 \
             -x \
             -q \
             --tb=short \
             --ignore=tests/test_integration.py \
-            --ignore=tests/test_agent_e2e.py \
-            --ignore=tests/test_integration_browser.py \
-            --ignore=tests/test_integration_agent.py \
             --cov=huginn \
             --cov-report=term-missing \
             --cov-report=xml
