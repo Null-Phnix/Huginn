@@ -471,6 +471,8 @@ class SearchResponse(BaseModel):
 class FlockRequest(BaseModel):
     """POST /v1/batch/scrape request body."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     urls: List[str] = Field(..., min_length=1, max_length=50)
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     only_main_content: bool = Field(True)
@@ -478,6 +480,13 @@ class FlockRequest(BaseModel):
     exclude_tags: Optional[List[str]] = Field(None)
     timeout: int = 30000
     webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
+    # Firecrawl parity: when True, invalid URLs (bad scheme, missing host, etc.)
+    # are skipped with a warning instead of failing the entire batch.
+    ignore_invalid_urls: bool = Field(
+        False,
+        alias="ignoreInvalidURLs",
+        description="Skip invalid URLs (bad scheme, missing host) with a warning instead of failing.",
+    )
 
 
 

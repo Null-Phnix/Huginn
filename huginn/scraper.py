@@ -108,6 +108,25 @@ _BASE64_IMAGE_REGEX = re.compile(
 )
 
 
+def _is_valid_http_url(url: str) -> bool:
+    """Return True if `url` is a syntactically valid http(s) URL.
+
+    Used by FlockRequest / batch_scrape to decide whether to skip an
+    invalid URL (when ignoreInvalidURLs=True) or 422 the request.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return False
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if not parsed.netloc:
+        return False
+    return True
+
+
 class RenderMode(str, Enum):
     """Rendering mode for page content extraction."""
     AUTO = "auto"    # Detect automatically

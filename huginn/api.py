@@ -772,6 +772,22 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         warnings: List[str] = []
 
         async def scrape_one(url: str) -> FlockResultItem:
+            # Firecrawl parity: ignoreInvalidURLs — skip syntactically invalid
+            # URLs with a warning instead of failing the whole batch.
+            from .scraper import _is_valid_http_url
+            if not _is_valid_http_url(url):
+                if req.ignore_invalid_urls:
+                    warnings.append(f"Skipped invalid URL: {url}")
+                    return FlockResultItem(
+                        url=url, success=False,
+                        error=f"Invalid URL (bad scheme or missing host): {url}",
+                        error_code=ErrorCode.INVALID_URL,
+                    )
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid URL (bad scheme or missing host): {url}",
+                )
+
             async with sem:
                 domain = extract_domain(url)
 
