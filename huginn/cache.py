@@ -19,7 +19,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from .models import ScrapeData
 
@@ -116,6 +116,12 @@ class AsyncTTLCache:
 _response_cache: Optional[AsyncTTLCache] = None
 _cache_lock = asyncio.Lock()
 
+# Reverse index: URL → set of cache keys for that URL.
+# Used by invalidate_cache(url=X) to delete only X's entries
+# without nuking the whole cache. Populated on cache_scrape_result,
+# cleaned on invalidate_cache.
+_url_to_keys: Dict[str, set] = {}
+
 
 async def get_response_cache() -> AsyncTTLCache:
     global _response_cache
@@ -155,6 +161,8 @@ async def cache_scrape_result(
     cache = await get_response_cache()
     key = make_cache_key(url, tuple(formats))
     await cache.set(key, result.model_dump_json(), ttl=ttl)
+    # Track URL → key for efficient per-URL invalidation
+    _url_to_keys.setdefault(url, set()).add(key)
 
 
 async def get_cached_scrape_result(
@@ -174,13 +182,22 @@ async def get_cached_scrape_result(
 
 
 async def invalidate_cache(url: Optional[str] = None):
-    """Invalidate cache for url (or all if url is None)."""
+    """Invalidate cache for url (or all if url is None).
+
+    When url is None, the entire cache is cleared. When url is given,
+    only that URL's entries are removed (via the _url_to_keys reverse
+    index populated by cache_scrape_result). The previous version of
+    this function nuked the whole cache even when a URL was given,
+    which is a real bug — it meant invalidating one stale entry wiped
+    every cached page.
+    """
     if url is None:
         cache = await get_response_cache()
         await cache.clear()
+        _url_to_keys.clear()
     else:
-        # We can't know all format combinations, so we clear the whole cache
-        # when invalidation is requested. In production, use a per-key approach.
         cache = await get_response_cache()
-        await cache.clear()
-        logger.debug(f"Cache invalidated for URL: {url}")
+        keys_to_delete = _url_to_keys.pop(url, set())
+        for key in keys_to_delete:
+            await cache.delete(key)
+        logger.debug(f"Cache invalidated for URL: {url} ({len(keys_to_delete)} entries)")
