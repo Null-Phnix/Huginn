@@ -224,12 +224,14 @@ async def check_api_server() -> CheckResult:
 # ─── Orchestrator ──────────────────────────────────────────────────────────
 
 
-# Registry of all checks. Add new checks here to have them run by default.
-ALL_CHECKS: List[Callable[[], Awaitable[CheckResult]]] = [
-    check_change_tracking,
-    check_webhook_signature,
-    check_llm_credentials,
-    check_api_server,
+# Registry of all checks. Functions are looked up by name at call time
+# (not stored as direct references) so tests can monkeypatch individual
+# check_* functions and have their overrides take effect.
+ALL_CHECK_NAMES: List[str] = [
+    "check_change_tracking",
+    "check_webhook_signature",
+    "check_llm_credentials",
+    "check_api_server",
 ]
 
 
@@ -238,16 +240,24 @@ async def run_all_checks() -> List[CheckResult]:
 
     Sequential rather than concurrent because each check is fast (<100ms)
     and the doctor output reads cleaner as a single ordered table.
+
+    Checks are looked up via globals() so monkeypatching a check_*
+    function in tests takes effect.
     """
     results: List[CheckResult] = []
-    for check in ALL_CHECKS:
+    module_globals = globals()
+    for name in ALL_CHECK_NAMES:
+        check = module_globals.get(name)
+        if check is None:
+            # Defensive: skip if a check function is missing
+            continue
         try:
             result = await check()
         except Exception as e:
             # Last-resort safety net — a check that raises should never crash doctor
-            logger.exception("Check %s raised", check.__name__)
+            logger.exception("Check %s raised", name)
             result = CheckResult(
-                component=check.__name__,
+                component=name,
                 status=CheckStatus.FAIL,
                 details=f"unhandled exception: {type(e).__name__}: {e}",
             )
