@@ -10,6 +10,13 @@ from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 
+from . import __version__
+
+
+def _default_user_agent() -> str:
+    """Default browser UA tracks the package version."""
+    return f"Huginn/{__version__} (+https://huginn.dev/bot)"
+
 
 @dataclass
 class BrowserConfig:
@@ -22,7 +29,7 @@ class BrowserConfig:
     navigation_timeout: int = 30000  # ms
     wait_for_timeout: int = 5000  # ms
     stealth_mode: bool = True
-    user_agent: Optional[str] = "Huginn/1.1 (+https://huginn.dev/bot)"
+    user_agent: Optional[str] = field(default_factory=_default_user_agent)
 
 
 @dataclass

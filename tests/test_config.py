@@ -104,3 +104,31 @@ class TestLoadConfig:
             assert config.browser.headless is False
             assert config.crawl.max_depth == 7
             assert config.extract.llm_provider == "anthropic"
+
+
+class TestUserAgentDefaults:
+    """The default User-Agent must track the package version.
+
+    huginn/__version__ is the source of truth. If a user constructs
+    HuginnConfig() with no env override, BrowserConfig.user_agent must
+    embed the current version (e.g. 'Huginn/1.2.0 (...)'), not a stale
+    hardcoded 'Huginn/1.1' that drifted when the version was bumped.
+    """
+
+    def test_default_user_agent_contains_current_version(self):
+        from huginn import __version__
+        from huginn.config import HuginnConfig
+        config = HuginnConfig()
+        ua = config.browser.user_agent
+        assert ua is not None, "user_agent default should not be None"
+        assert __version__ in ua
+        assert ua.startswith("Huginn/")
+
+    def test_default_user_agent_does_not_have_stale_version(self):
+        from huginn import __version__
+        from huginn.config import HuginnConfig
+        config = HuginnConfig()
+        ua = config.browser.user_agent or ""
+        # Must not contain a version that isn't the current one
+        for stale in ("1.0.0", "1.1.0", "1.1"):
+            assert f"/{stale}" not in ua or stale == __version__
