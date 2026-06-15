@@ -146,10 +146,17 @@ class DomainRateLimiter:
             bucket.request_timestamps.pop(0)
 
     def get_stats(self, domain: str) -> Optional[Dict]:
-        """Get rate limit stats for a domain."""
-        if domain not in self._buckets:
+        """Get rate limit stats for a domain.
+
+        Returns None only if the domain has never been configured.
+        Returns a stats dict for any configured domain (even one
+        that hasn't had acquire() called yet) so monitoring tools can
+        distinguish 'unconfigured' from 'configured-but-idle'.
+        """
+        if domain not in self._domain_configs:
             return None
-        bucket = self._buckets[domain]
+        # Lazily create the bucket if it doesn't exist yet
+        bucket = self._get_bucket(domain)
         self._clean_window(bucket)
         config = bucket.config
         return {
@@ -165,9 +172,13 @@ class DomainRateLimiter:
         }
 
     def get_all_stats(self) -> Dict[str, Dict]:
-        """Get stats for all tracked domains."""
+        """Get stats for all configured domains.
+
+        Iterates over _domain_configs (not _buckets) so configured-but-idle
+        domains show up too.
+        """
         stats = {}
-        for domain in self._buckets:
+        for domain in self._domain_configs:
             s = self.get_stats(domain)
             if s:
                 stats[domain] = s
