@@ -194,3 +194,30 @@ class TestAPICreation:
         assert "/v1/distill" in routes
         assert "/v1/distill/{job_id}" in routes
         assert "/v1/seek" in routes
+
+
+class TestApiVersionConsistency:
+    """The FastAPI app's version + /health version must match huginn.__version__.
+
+    This guards against the recurring 'hardcoded 1.1.0' drift that the
+    Nüwa pass found (api.py, health endpoint, health_detailed endpoint).
+    """
+
+    def test_app_version_matches_package_version(self):
+        from huginn import __version__
+        from huginn.api import create_app
+        app = create_app(HuginnConfig())
+        assert app.version == __version__
+
+    @pytest.mark.asyncio
+    async def test_health_endpoint_reports_package_version(self):
+        from huginn import __version__
+        from huginn.api import create_app
+        config = HuginnConfig()
+        app = create_app(config)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/health")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["version"] == __version__

@@ -27,6 +27,7 @@ from starlette.responses import StreamingResponse
 
 from .config import HuginnConfig, load_config
 from .metrics import MetricsMiddleware, get_per_endpoint_stats
+from . import __version__
 from .models import (
     Action,
     FlockRequest,
@@ -190,7 +191,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     app = FastAPI(
         title="Huginn",
         description="Autonomous web scraping API — Firecrawl-compatible, stealth-first, self-hosted",
-        version="1.1.0",
+        version=__version__,
         lifespan=lifespan,
         openapi_tags=[
             {"name": "Health", "description": "Server health, readiness, and metrics"},
@@ -246,7 +247,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         """Comprehensive health check endpoint."""
         return {
             "status": "ok",
-            "version": "1.1.0",
+            "version": __version__,
             "browser": "running" if _browser else "stopped",
             "scheduler": "running" if (_scheduler and _scheduler._running) else "stopped",
         }
@@ -262,7 +263,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
         return {
             "status": "ok",
-            "version": "1.1.0",
+            "version": __version__,
             "browser": "running" if _browser else "stopped",
             "scheduler": "running" if (_scheduler and _scheduler._running) else "stopped",
             "circuit_breaker": await cb.get_stats(),
