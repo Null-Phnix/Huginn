@@ -56,45 +56,8 @@ class TestCLIDoctor:
         assert "System Health" in result.output
         assert "Python" in result.output
 
-    def test_doctor_check_runs_deep_checks(self):
-        """`huginn doctor --check` runs the deep checks (LLM, change tracking, etc)."""
-        result = runner.invoke(cli, ["doctor", "--check"])
-        # Exit code: 0 (no FAIL — change tracking + HMAC should pass;
-        # LLM creds may WARN; API server should SKIP).
-        assert result.exit_code == 0, f"unexpected exit code: {result.output}"
-        # Verify the deep-check UI is rendered
-        assert "Deep Check" in result.output
-        # Verify the new checks are present
-        assert "Change tracking" in result.output
-        assert "Webhook HMAC" in result.output
-        assert "LLM credentials" in result.output
-        assert "API server" in result.output
-        # Summary line is shown
-        assert "Summary:" in result.output
-
-    def test_doctor_check_exit_code_nonzero_on_failure(self, monkeypatch):
-        """`huginn doctor --check` returns non-zero exit code if any check FAILS.
-
-        Sabotage a check function to force a FAIL, verify the exit code.
-        """
-        from huginn import doctor
-
-        # Replace the change tracking check with one that always returns FAIL
-        async def always_fail():
-            from huginn.doctor import CheckResult, CheckStatus
-            return CheckResult(
-                component="Change tracking",
-                status=CheckStatus.FAIL,
-                details="sabotaged for test",
-            )
-        monkeypatch.setattr(doctor, "check_change_tracking", always_fail)
-
-        result = runner.invoke(cli, ["doctor", "--check"])
-        # Exit code should be 1 because of the FAIL
-        assert result.exit_code == 1
-        # And the output should mention the failed component
-        assert "Change tracking" in result.output
-        assert "FAIL" in result.output
+    # Note: the `huginn doctor --check` deep-check tests live in PR 3
+    # (the layer 3 primitives PR) along with the --check flag itself.
 
 
 class TestCLIConfig:
