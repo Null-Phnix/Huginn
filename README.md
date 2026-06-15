@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.2.0-7c3aed?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
 [![Python](https://img.shields.io/badge/python-3.10%2B-4ade80?style=flat-square&labelColor=07061a)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-343_passing-22d3ee?style=flat-square&labelColor=07061a)](tests/)
+[![Tests](https://img.shields.io/badge/tests-348_passing-22d3ee?style=flat-square&labelColor=07061a)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-facc15?style=flat-square&labelColor=07061a)](LICENSE)
 
 **Self-hosted web scraping, crawling, and extraction API. Stealth-first. Open source. No cloud tier.**
