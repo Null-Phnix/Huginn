@@ -361,6 +361,7 @@ class BrowserManager:
         self,
         proxy: Optional[Dict[str, str]] = None,
         ignore_https_errors: Optional[bool] = None,
+        device: Optional[Dict[str, Any]] = None,
     ) -> BrowserContext:
         """Create a new browser context with stealth config.
 
@@ -386,6 +387,13 @@ class BrowserManager:
         }
         if proxy:
             context_kwargs["proxy"] = proxy
+
+        # Firecrawl parity: when a device descriptor is provided (mobile emulation),
+        # its fields override the default viewport / user_agent / etc. The device
+        # dict comes from playwright.devices[...] (e.g. "iPhone 13") and includes
+        # viewport, user_agent, is_mobile, has_touch, device_scale_factor.
+        if device:
+            context_kwargs.update(device)
 
         context = await self._browser.new_context(**context_kwargs)
         context.set_default_navigation_timeout(self.navigation_timeout)

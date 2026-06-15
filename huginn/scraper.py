@@ -24,6 +24,30 @@ from .pdf import extract_pdf_text, is_pdf_content
 logger = logging.getLogger(__name__)
 
 
+# ─── Mobile device emulation (Firecrawl parity) ────────────────────────────────
+# iPhone 13 device descriptor for mobile=True. Matches the official
+# playwright.devices["iPhone 13"] descriptor so behavior is identical whether
+# we use Playwright's lookup or this hand-rolled fallback.
+#
+# We keep the dict at module level so it's looked up once at import time and
+# re-used across all scrape() calls (no per-request device-table lookup).
+
+_FALLBACK_IPHONE_DEVICE: Dict[str, Any] = {
+    "is_mobile": True,
+    "has_touch": True,
+    "device_scale_factor": 3,
+    "viewport": {"width": 390, "height": 844},
+    "user_agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+    ),
+    "is_ios": True,
+    "locale": "en-US",
+}
+
+_MOBILE_DEVICE: Dict[str, Any] = _FALLBACK_IPHONE_DEVICE
+
+
 class RenderMode(str, Enum):
     """Rendering mode for page content extraction."""
     AUTO = "auto"    # Detect automatically
@@ -221,6 +245,8 @@ class Scraper:
         scroll: bool = False,
         render_mode: str = "auto",
         skip_tls_verification: bool = True,
+        summary: bool = False,
+        mobile: bool = False,
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -269,7 +295,7 @@ class Scraper:
                 url, formats, headers,
                 wait_for, actions, include_tags, exclude_tags,
                 only_main_content, timeout, proxy, max_retries, scroll,
-                render_mode, skip_tls_verification,
+                render_mode, skip_tls_verification, summary, mobile,
             )
         except CircuitOpenError:
             return ScrapeData(
@@ -301,6 +327,8 @@ class Scraper:
         scroll: bool,
         render_mode: str,
         skip_tls_verification: bool,
+        summary: bool = False,
+        mobile: bool = False,
     ) -> ScrapeData:
         """Internal implementation — wrapped by circuit breaker."""
 
@@ -348,11 +376,14 @@ class Scraper:
         # Stored on BrowserManager so new_context() can read it via getattr()
         # without needing the param threaded through every call site.
         self.browser.ignore_https_errors = skip_tls_verification
-
+        # Firecrawl parity: mobile device emulation. When mobile=True,
+        # pass the iPhone 13 device descriptor to Playwright's
+        # new_context() so the browser uses mobile viewport / UA / touch.
+        device = _MOBILE_DEVICE if mobile else None
         for attempt in range(max_retries + 1):
             context = None
             try:
-                context = await self.browser.new_context(proxy=proxy)
+                context = await self.browser.new_context(proxy=proxy, device=device)
                 page = await self.browser.new_page(context)
 
                 # Set extra headers if provided

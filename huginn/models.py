@@ -197,6 +197,14 @@ class ScrapeRequest(BaseModel):
         alias="summary",
         description="Generate a 1-2 sentence summary of the page using LLM.",
     )
+    # Firecrawl parity: mobile device emulation. When True, the browser
+    # is launched with a Playwright device descriptor (iPhone 13 by default)
+    # so the page renders with mobile viewport, mobile UA, and touch support.
+    mobile: bool = Field(
+        False,
+        alias="mobile",
+        description="Emulate a mobile device (iPhone 13) for the scrape.",
+    )
 
 
 class ScrapeData(BaseModel):
