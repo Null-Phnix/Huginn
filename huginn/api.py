@@ -12,8 +12,12 @@ Run:
 """
 
 import asyncio
+import hmac
+import hashlib
+import httpx
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import List, Optional, Any
@@ -71,6 +75,65 @@ from .scheduler import Scheduler
 from .webhook import fire_webhook_for_job
 from .browser import BrowserManager
 from .scraper import Scraper
+
+# ─── Module-level LLM helpers ──────────────────────────────────────────────────
+
+_LLM_PROVIDER_CONFIG = {
+    "openai": {"base_url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY", "default_model": "gpt-4o-mini"},
+    "xai": {"base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY", "default_model": "grok-3-mini"},
+    "ollama": {"base_url": os.getenv("OLLAMA_BASE_URL", "https://ollama.com/api"), "key_env": "OLLAMA_API_KEY", "default_model": "llama3.3"},
+    "anthropic": {"base_url": "https://api.anthropic.com/v1", "key_env": "ANTHROPIC_API_KEY", "default_model": "claude-3-5-haiku-20250620"},
+    "google": {"base_url": "https://generativelanguage.googleapis.com/v1beta", "key_env": "GOOGLE_API_KEY", "default_model": "gemini-2.0-flash"},
+}
+
+
+async def _summarize_text(
+    text: str,
+    llm_provider: str = "openai",
+    llm_model: Optional[str] = None,
+) -> Optional[str]:
+    """Generate a 1-2 sentence summary of page text using the configured LLM.
+
+    Best-effort: returns None on failure (no API key, network error, etc.)
+    """
+    if not text or len(text.strip()) < 20:
+        return None
+
+    config = _LLM_PROVIDER_CONFIG.get(llm_provider, _LLM_PROVIDER_CONFIG["openai"])
+    api_key = os.environ.get(config["key_env"], "")
+    model = llm_model or config["default_model"]
+
+    if llm_provider not in ("ollama",) and not api_key:
+        return None  # No key — skip silently
+
+    prompt = (
+        "Provide a very brief summary (1-2 sentences maximum) of the following page content.\n"
+        "Be concise and informative.\n\nContent:\n" + text[:8000]
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if llm_provider == "anthropic":
+                headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+                body = {"model": model, "max_tokens": 128, "messages": [{"role": "user", "content": prompt}]}
+                resp = await client.post(f"{config['base_url']}/messages", headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("content", [{}])[0].get("text", "").strip()
+            else:
+                headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
+                body = {"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 128, "temperature": 0.3}
+                resp = await client.post(f"{config['base_url']}/chat/completions", headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "").strip()
+    except Exception:
+        pass
+    return None
+
+
 from .crawler import Crawler
 from .mapper import Mapper
 from .extractor import Extractor
@@ -289,7 +352,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         """Return per-endpoint metrics: call count, avg latency, success rate."""
         return get_per_endpoint_stats()
 
-    # ─--- Scrape ────────────────────────────────────────────────────────────
+    # ─── Scrape ────────────────────────────────────────────────────────────
 
     @app.post("/v1/probe", response_model=ScrapeResponse, tags=["Scrape"])
     @limiter.limit("100/minute")
@@ -343,7 +406,12 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             await cache_scrape_result(req.url, formats, data)
             # Record success for circuit breaker
             await cb.record_success(domain)
-            return ScrapeResponse(success=True, data=data)
+            # Generate LLM summary if requested
+            summary = None
+            if req.summary:
+                text = (data.markdown or "").strip() or (data.html or "").strip()
+                summary = await _summarize_text(text)
+            return ScrapeResponse(success=True, data=data, summary=summary)
         except CBCircuitOpen:
             return ScrapeResponse(
                 success=False,

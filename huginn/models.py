@@ -191,6 +191,12 @@ class ScrapeRequest(BaseModel):
         alias="skipTlsVerification",
         description="Skip TLS certificate verification. Default True (matches Firecrawl).",
     )
+    # Firecrawl parity: auto-generate a 1-2 sentence summary of the page
+    summary: bool = Field(
+        False,
+        alias="summary",
+        description="Generate a 1-2 sentence summary of the page using LLM.",
+    )
 
 
 class ScrapeData(BaseModel):
@@ -214,6 +220,8 @@ class ScrapeResponse(BaseModel):
     error_code: Optional[ErrorCode] = Field(None, description="Machine-readable error code")
     cached: bool = Field(False, description="Whether result was served from cache")
     warnings: Optional[List[str]] = Field(default_factory=list)
+    # Firecrawl parity: LLM-generated 1-2 sentence summary of the page
+    summary: Optional[str] = Field(None, description="Auto-generated 1-2 sentence summary")
 
 
 # ─── Crawl Endpoint ───────────────────────────────────────────────────────────
