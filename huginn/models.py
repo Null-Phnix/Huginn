@@ -253,6 +253,8 @@ class ScrapeResponse(BaseModel):
 class CrawlRequest(BaseModel):
     """POST /v1/crawl request body."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     url: str
     max_depth: Optional[int] = Field(None)
     limit: Optional[int] = None  # max pages
@@ -265,6 +267,17 @@ class CrawlRequest(BaseModel):
     stream: bool = Field(False)
     format: str = Field("json", description="Response format: json (default), jsonl (NDJSON stream), sse (Server-Sent Events)")
     webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
+    # Firecrawl parity: per-job maxConcurrency. When set, overrides the
+    # global _config.crawl.concurrency for this specific crawl. Useful for
+    # one-off fast scrapes (high concurrency) or slow / careful scrapes
+    # (low concurrency).
+    max_concurrency: Optional[int] = Field(
+        None,
+        alias="maxConcurrency",
+        ge=1,
+        le=100,
+        description="Per-job override of crawl concurrency (1-100).",
+    )
 
 
 class CrawlStartResponse(BaseModel):
