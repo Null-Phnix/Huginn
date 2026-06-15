@@ -27,7 +27,7 @@ from starlette.responses import StreamingResponse
 
 from .config import HuginnConfig, load_config
 from .metrics import MetricsMiddleware, get_per_endpoint_stats
-from . import __version__
+from . import _branding, __version__
 from .models import (
     Action,
     FlockRequest,
@@ -189,8 +189,8 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         config = HuginnConfig()
 
     app = FastAPI(
-        title="Huginn",
-        description="Autonomous web scraping API — Firecrawl-compatible, stealth-first, self-hosted",
+        title=_branding.name,
+        description=f"{_branding.name} — {_branding.description}. Firecrawl-compatible, stealth-first, self-hosted.",
         version=__version__,
         lifespan=lifespan,
         openapi_tags=[
