@@ -33,12 +33,25 @@ class ChangeTracker:
 
     @staticmethod
     def compute_hash(content: str) -> str:
-        """SHA-256 hash of content, hex prefix (16 chars).
+        """Compute a content hash, delegating to watcher's normalization.
 
-        16 hex chars = 64 bits = 16^16 = effectively collision-free for the
-        number of URLs any single Huginn instance will see in its lifetime.
+        Uses `huginn.watcher.compute_content_hash` so:
+          - URLs are normalized to [URL] (URL changes don't trigger false alerts)
+          - Dates/times are normalized to [DATE]/[TIME]
+          - Case is folded (lowercase)
+          - Whitespace is collapsed
+
+        Returns a 16-char prefix of the SHA-256 hex digest.
+        16 hex chars = 64 bits = effectively collision-free for the URLs
+        any single Huginn instance will see in its lifetime.
+
+        **Why not raw SHA-256?** A raw hash would treat a page-load timestamp
+        change or an analytics-URL rotation as a content change — useless
+        noise. The watcher's normalization is the same logic the /v1/watch
+        endpoint uses, so the two features stay consistent.
         """
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        from .watcher import compute_content_hash
+        return compute_content_hash(content)[:16]
 
     @staticmethod
     def compute_diff(old: str, new: str, n: int = 3) -> str:
