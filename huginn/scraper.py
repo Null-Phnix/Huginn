@@ -286,6 +286,9 @@ class Scraper:
         self._cb_domain_failures: dict[str, int] = {}  # domain -> consecutive failures
         # Persistent HTTP client for connection pooling
         self._http_client: Optional[httpx.AsyncClient] = None
+        # ChangeTracker for /v1/scrape changeTracking=True. Lazily initialized
+        # on first use; tests can override `self._change_tracker` directly.
+        self._change_tracker = None  # type: ignore[assignment]
 
     def _get_http_client(self) -> httpx.AsyncClient:
         """Lazy-init shared httpx client with keep-alive / connection pooling."""
@@ -328,6 +331,7 @@ class Scraper:
         mobile: bool = False,
         block_ads: bool = False,
         remove_base64_images: bool = False,
+        change_tracking: bool = False,
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -377,7 +381,7 @@ class Scraper:
                 wait_for, actions, include_tags, exclude_tags,
                 only_main_content, timeout, proxy, max_retries, scroll,
                 render_mode, skip_tls_verification, summary, mobile,
-                block_ads, remove_base64_images,
+                block_ads, remove_base64_images, change_tracking,
             )
         except CircuitOpenError:
             return ScrapeData(
@@ -413,6 +417,7 @@ class Scraper:
         mobile: bool = False,
         block_ads: bool = False,
         remove_base64_images: bool = False,
+        change_tracking: bool = False,
     ) -> ScrapeData:
         """Internal implementation — wrapped by circuit breaker."""
 
@@ -566,6 +571,18 @@ class Scraper:
                         # size; this is a one-line post-process to clean them up.
                         if remove_base64_images and result.markdown:
                             result.markdown = _BASE64_IMAGE_REGEX.sub("", result.markdown)
+                        # Firecrawl parity: change tracking. After extracting
+                        # markdown, compare against the ChangeTracker's stored
+                        # state for this URL and store the new state. Returns
+                        # {previous_hash, current_hash, diff, changed} so the
+                        # client can detect content drift between scrapes.
+                        if change_tracking and result.markdown:
+                            if self._change_tracker is None:
+                                from .change_tracker import get_change_tracker
+                                self._change_tracker = get_change_tracker()
+                            result.change_tracking = await self._change_tracker.check_and_store(
+                                url, result.markdown
+                            )
                     elif fmt == OutputFormat.HTML:
                         result.html = await self.browser.to_html(page, only_main=only_main_content)
                     elif fmt == OutputFormat.RAW_HTML:

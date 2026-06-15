@@ -221,6 +221,15 @@ class ScrapeRequest(BaseModel):
         alias="removeBase64Images",
         description="Strip data:image/...;base64,... URIs from extracted markdown.",
     )
+    # Firecrawl parity: when True, the response includes a `change_tracking`
+    # field with previous_hash, current_hash, diff, and changed flag.
+    # The ChangeTracker module stores the last-seen content per URL so
+    # subsequent scrapes can detect content drift.
+    change_tracking: bool = Field(
+        False,
+        alias="changeTracking",
+        description="Track content changes — response includes previous_hash, current_hash, diff.",
+    )
 
 
 class ScrapeData(BaseModel):
@@ -234,6 +243,12 @@ class ScrapeData(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     extract: Optional[Dict[str, Any]] = None
     pdf_text: Optional[str] = None
+    # Firecrawl parity: change tracking result (when changeTracking=True).
+    # Contains {previous_hash, current_hash, diff, changed} when populated.
+    change_tracking: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Change tracking result: {previous_hash, current_hash, diff, changed}.",
+    )
 
 
 class ScrapeResponse(BaseModel):
