@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 # ─── Enums ───────────────────────────────────────────────────────────────────
@@ -162,6 +162,8 @@ class ScrapeOptions(BaseModel):
 class ScrapeRequest(BaseModel):
     """POST /v1/scrape request body."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     url: str
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     headers: Optional[Dict[str, str]] = None
@@ -180,6 +182,15 @@ class ScrapeRequest(BaseModel):
     max_retries: int = Field(2, ge=0, le=5, description="Max retry attempts on transient errors")
     scroll: bool = Field(False, description="Auto-scroll page to load dynamic content before extraction")
     render_mode: str = Field("auto", description="Rendering mode: auto, full (browser), light (httpx)")
+    # Firecrawl parity: skip TLS certificate verification. Default True
+    # to match Huginn's historical hardcoded `ignore_https_errors=True`
+    # (self-signed certs and broken CA chains have always worked in
+    # Huginn; this keeps that working). Set False for stricter security.
+    skip_tls_verification: bool = Field(
+        True,
+        alias="skipTlsVerification",
+        description="Skip TLS certificate verification. Default True (matches Firecrawl).",
+    )
 
 
 class ScrapeData(BaseModel):

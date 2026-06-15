@@ -220,6 +220,7 @@ class Scraper:
         max_retries: int = DEFAULT_MAX_RETRIES,
         scroll: bool = False,
         render_mode: str = "auto",
+        skip_tls_verification: bool = True,
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -229,6 +230,12 @@ class Scraper:
         Per-domain rate limiting waits politely before requesting.
         The circuit breaker (if configured) prevents hammering domains that are
         returning persistent errors, protecting both the target and our resources.
+
+        ``skip_tls_verification`` defaults to True for Firecrawl parity
+        + backward compat with Huginn's historical hardcoded
+        ``ignore_https_errors=True``. Pass False for stricter TLS
+        verification (e.g. when scraping sites you don't control and
+        don't want to be MITM'd).
         """
         if formats is None:
             formats = [OutputFormat.MARKDOWN]
@@ -262,7 +269,7 @@ class Scraper:
                 url, formats, headers,
                 wait_for, actions, include_tags, exclude_tags,
                 only_main_content, timeout, proxy, max_retries, scroll,
-                render_mode,
+                render_mode, skip_tls_verification,
             )
         except CircuitOpenError:
             return ScrapeData(
@@ -293,6 +300,7 @@ class Scraper:
         max_retries: int,
         scroll: bool,
         render_mode: str,
+        skip_tls_verification: bool,
     ) -> ScrapeData:
         """Internal implementation — wrapped by circuit breaker."""
 
@@ -336,6 +344,11 @@ class Scraper:
 
         last_error = None
         pdf_text: Optional[str] = None  # extracted if page is PDF
+        # Firecrawl parity: skip TLS certificate verification.
+        # Stored on BrowserManager so new_context() can read it via getattr()
+        # without needing the param threaded through every call site.
+        self.browser.ignore_https_errors = skip_tls_verification
+
         for attempt in range(max_retries + 1):
             context = None
             try:
