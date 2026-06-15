@@ -97,7 +97,7 @@ class BrowserAction(BaseModel):
 **Problem**: Firecrawl's Docker is famously broken. Ours must be trivial.
 **Plan**:
 - Write clean `Dockerfile` — multi-stage build, minimal image
-- `docker run -p 8000:8000 -e HUGINN_API_KEY=xxx huginn/huginn`
+- `docker run -p 7432:7432 -e HUGINN_API_KEY=xxx huginn/huginn`
 - Include Playwright install in image
 - Docker Compose for Redis-optional setup
 - Test: `docker build && docker run && curl /health`

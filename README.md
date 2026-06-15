@@ -108,19 +108,19 @@ huginn
 
 ```bash
 # Scrape a URL
-curl -X POST http://localhost:8000/v1/probe \
+curl -X POST http://localhost:7432/v1/probe \
   -H "Authorization: Bearer $HUGINN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com", "formats": ["markdown"]}'
 
 # Crawl a site (stream results as NDJSON)
-curl -X POST http://localhost:8000/v1/sweep \
+curl -X POST http://localhost:7432/v1/sweep \
   -H "Authorization: Bearer $HUGINN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://docs.python.org/3", "stream": true, "format": "jsonl"}'
 
 # Watch a page for changes
-curl -X POST http://localhost:8000/v1/watch \
+curl -X POST http://localhost:7432/v1/watch \
   -H "Authorization: Bearer $HUGINN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://news.ycombinator.com", "webhook_url": "https://myapp.com/webhook"}'
@@ -195,7 +195,7 @@ huginn watch check <url>
 huginn search <query>
 huginn research "your research question"
 huginn templates                # List all 10 extraction schemas
-huginn serve --port 8000
+huginn serve --port 7432
 huginn doctor                   # Check Playwright + system health
 huginn config                   # Show current config
 ```
@@ -285,7 +285,7 @@ playwright install chromium
 
 ```bash
 export HUGINN_API_KEY="your-key"
-export HUGINN_PORT=8000
+export HUGINN_PORT=7432
 export HUGINN_LOG_LEVEL=INFO
 export HUGINN_BROWSER_HEADLESS=true
 export HUGINN_BROWSER_STEALTH=true
