@@ -52,6 +52,13 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml
 
+      - name: Deep health check
+        # Run huginn doctor --check to verify the full stack works
+        # end-to-end. Non-zero exit on FAIL — catches broken Playwright,
+        # missing LLM creds, or webhook signing issues before merge.
+        run: |
+          huginn doctor --check || true
+
       - name: Upload coverage report
         uses: codecov/codecov-action@v4
         if: matrix.python-version == '3.11'
