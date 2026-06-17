@@ -156,16 +156,16 @@ class TestAPIRoutes:
     def test_schedule_routes_exist(self):
         from huginn.api import create_app
         app = create_app()
-        routes = {r.path for r in app.routes if hasattr(r, "path")}
-        assert "/v1/schedule" in routes
-        assert "/health" in routes
-        assert "/health/ready" in routes
-        assert "/health/live" in routes
+        paths = set(app.openapi()["paths"].keys())
+        assert "/v1/schedule" in paths
+        assert "/health" in paths
+        assert "/health/ready" in paths
+        assert "/health/live" in paths
 
     def test_all_schedule_sub_routes(self):
         from huginn.api import create_app
         app = create_app()
-        paths = {r.path for r in app.routes if hasattr(r, "path")}
+        paths = set(app.openapi()["paths"].keys())
         assert any("/v1/schedule/" in p for p in paths)
 
     def test_rate_limit_middleware(self):

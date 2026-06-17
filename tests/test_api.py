@@ -185,15 +185,15 @@ class TestAPICreation:
     def test_app_has_all_routes(self):
         from huginn.api import create_app
         app = create_app(HuginnConfig())
-        routes = [r.path for r in app.routes]
-        assert "/health" in routes
-        assert "/v1/probe" in routes
-        assert "/v1/sweep" in routes
-        assert "/v1/sweep/{job_id}" in routes
-        assert "/v1/chart" in routes
-        assert "/v1/distill" in routes
-        assert "/v1/distill/{job_id}" in routes
-        assert "/v1/seek" in routes
+        paths = set(app.openapi()["paths"].keys())
+        assert "/health" in paths
+        assert "/v1/probe" in paths
+        assert "/v1/sweep" in paths
+        assert "/v1/sweep/{job_id}" in paths
+        assert "/v1/chart" in paths
+        assert "/v1/distill" in paths
+        assert "/v1/distill/{job_id}" in paths
+        assert "/v1/seek" in paths
 
 
 class TestApiVersionConsistency:
