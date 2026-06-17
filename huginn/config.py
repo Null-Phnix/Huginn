@@ -10,6 +10,15 @@ from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 
+from . import _branding, __version__
+
+
+def _default_user_agent() -> str:
+    """Default browser UA. Reads template from _branding so a rebrand
+    of the UA template (e.g. dropping the URL, adding a contact email)
+    is a one-file change."""
+    return _branding.ua()
+
 
 @dataclass
 class BrowserConfig:
@@ -22,7 +31,7 @@ class BrowserConfig:
     navigation_timeout: int = 30000  # ms
     wait_for_timeout: int = 5000  # ms
     stealth_mode: bool = True
-    user_agent: Optional[str] = "Huginn/1.1 (+https://huginn.dev/bot)"
+    user_agent: Optional[str] = field(default_factory=_default_user_agent)
 
 
 @dataclass
@@ -142,26 +151,33 @@ def _merge_config(config: HuginnConfig, data: dict):
 
 
 def _apply_env(config: HuginnConfig):
-    """Apply environment variable overrides."""
+    """Apply environment variable overrides.
+
+    Every env var key is built from ``_branding.env_prefix`` so a rebrand
+    that changes the prefix (e.g. ``HUGINN_`` → ``RAVEN_``) is a one-line
+    edit. The mapping itself is computed at call time so the prefix change
+    takes effect without restarting the process.
+    """
+    _P = _branding.env_prefix  # local alias to keep the table readable
     env_map = {
-        "HUGINN_BROWSER_BACKEND": ("browser", "backend"),
-        "HUGINN_HEADLESS": ("browser", "headless"),
-        "HUGINN_STEALTH": ("browser", "stealth_mode"),
-        "HUGINN_MAX_DEPTH": ("crawl", "max_depth"),
-        "HUGINN_MAX_PAGES": ("crawl", "max_pages"),
-        "HUGINN_CONCURRENCY": ("crawl", "concurrency"),
-        "HUGINN_LLM_PROVIDER": ("extract", "llm_provider"),
-        "HUGINN_LLM_MODEL": ("extract", "llm_model"),
-        "HUGINN_MENTAL_MODEL": ("extract", "mental_model_enabled"),
-        "HUGINN_API_KEY": ("server", "api_key"),
-        "HUGINN_PORT": ("server", "port"),
-        "HUGINN_RATE_LIMIT": ("server", "rate_limit"),
-        "HUGINN_DATA_DIR": (None, "data_dir"),
-        "HUGINN_LOG_LEVEL": (None, "log_level"),
-        "HUGINN_PROXY_SERVER": ("proxy", "server"),
-        "HUGINN_PROXY_USERNAME": ("proxy", "username"),
-        "HUGINN_PROXY_PASSWORD": ("proxy", "password"),
-        "HUGINN_USER_AGENT": ("browser", "user_agent"),
+        f"{_P}_BROWSER_BACKEND": ("browser", "backend"),
+        f"{_P}_HEADLESS": ("browser", "headless"),
+        f"{_P}_STEALTH": ("browser", "stealth_mode"),
+        f"{_P}_MAX_DEPTH": ("crawl", "max_depth"),
+        f"{_P}_MAX_PAGES": ("crawl", "max_pages"),
+        f"{_P}_CONCURRENCY": ("crawl", "concurrency"),
+        f"{_P}_LLM_PROVIDER": ("extract", "llm_provider"),
+        f"{_P}_LLM_MODEL": ("extract", "llm_model"),
+        f"{_P}_MENTAL_MODEL": ("extract", "mental_model_enabled"),
+        f"{_P}_API_KEY": ("server", "api_key"),
+        f"{_P}_PORT": ("server", "port"),
+        f"{_P}_RATE_LIMIT": ("server", "rate_limit"),
+        f"{_P}_DATA_DIR": (None, "data_dir"),
+        f"{_P}_LOG_LEVEL": (None, "log_level"),
+        f"{_P}_PROXY_SERVER": ("proxy", "server"),
+        f"{_P}_PROXY_USERNAME": ("proxy", "username"),
+        f"{_P}_PROXY_PASSWORD": ("proxy", "password"),
+        f"{_P}_USER_AGENT": ("browser", "user_agent"),
     }
     for env_var, (section, attr) in env_map.items():
         val = os.environ.get(env_var)

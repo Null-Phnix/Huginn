@@ -13,9 +13,27 @@ class TestCLIHelp:
     def test_main_help(self):
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
-        assert "Huginn" in result.output
+        # The help text is sourced from _branding, not hardcoded.
+        from huginn import _branding
+        assert _branding.name in result.output
         assert "scrape" in result.output
         assert "crawl" in result.output
+
+    def test_help_uses_branding_name(self):
+        """The CLI's help text must reflect _branding.name, not 'Huginn'."""
+        from huginn import _branding
+        result = runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        # If branding ever changes, this still passes (it follows the source)
+        assert _branding.name in result.output
+
+    def test_version_uses_branding_name(self):
+        """`huginn --version` must show the branded program name."""
+        from huginn import _branding
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+        assert _branding.name in result.output
+        assert _branding.package  # sanity check: package name is set
 
 
 class TestCLITemplates:

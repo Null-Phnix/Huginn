@@ -36,7 +36,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.syntax import Syntax
 from rich import box
 
-from huginn import __version__
+from huginn import _branding, __version__
 
 console = Console()
 
@@ -45,7 +45,7 @@ def _banner():
     v = __version__
     return f"""[bold bright_cyan]
 ╔══════════════════════════════════════════════════════════╗
-║  Huginn  —  Autonomous Web Scraping API                  ║
+║  {_branding.name}  —  Autonomous Web Scraping API           ║
 ║                                                          ║
 ║          v{v:<10}                     ║
 ╚══════════════════════════════════════════════════════════╝[/bold bright_cyan]"""
@@ -624,13 +624,17 @@ async def _jobs_list(out, outfmt):
 
 # ─── Click CLI ─────────────────────────────────────────────────────────────
 
-@click.group(invoke_without_command=True, context_settings=dict(help_option_names=["-h", "--help"]))
-@click.version_option(version=__version__, prog_name="Huginn")
+@click.group(
+    invoke_without_command=True,
+    context_settings=dict(help_option_names=["-h", "--help"]),
+    help=f"{_branding.name} — {_branding.description}. Run '{_branding.short_name} COMMAND --help' for details on any subcommand.",
+)
+@click.version_option(version=__version__, prog_name=_branding.name)
 @click.pass_context
 def cli(ctx):
-    """Huginn — Autonomous web scraping API.\n\n
-    Run 'huginn COMMAND --help' for details on any subcommand.
-    """
+    """{name} — Autonomous web scraping API.\n\n
+    Run '{short_name} COMMAND --help' for details on any subcommand.
+    """.format(name=_branding.name, short_name=_branding.short_name)
     if ctx.invoked_subcommand is None:
         # No command = interactive mode (but check if stdin is a tty)
         if sys.stdin.isatty():

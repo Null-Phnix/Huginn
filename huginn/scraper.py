@@ -7,6 +7,7 @@ execute optional actions, then extract content in requested formats.
 
 import asyncio
 import logging
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
@@ -22,6 +23,108 @@ from .models import OutputFormat, ScrapeData
 from .pdf import extract_pdf_text, is_pdf_content
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Mobile device emulation (Firecrawl parity) ────────────────────────────────
+# iPhone 13 device descriptor for mobile=True. Matches the official
+# playwright.devices["iPhone 13"] descriptor so behavior is identical whether
+# we use Playwright's lookup or this hand-rolled fallback.
+#
+# We keep the dict at module level so it's looked up once at import time and
+# re-used across all scrape() calls (no per-request device-table lookup).
+
+_FALLBACK_IPHONE_DEVICE: Dict[str, Any] = {
+    "is_mobile": True,
+    "has_touch": True,
+    "device_scale_factor": 3,
+    "viewport": {"width": 390, "height": 844},
+    "user_agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+    ),
+    "is_ios": True,
+    "locale": "en-US",
+}
+
+_MOBILE_DEVICE: Dict[str, Any] = _FALLBACK_IPHONE_DEVICE
+
+
+# ─── Ad blocking (Firecrawl parity) ────────────────────────────────────────────
+# Well-known ad network domains. When blockAds=True, the Scraper registers
+# a Playwright route handler for each domain that aborts matching requests
+# before they reach the page. Wildcard globs (**) match any path under the
+# domain so ad creatives, beacons, and pixels are all caught.
+#
+# Sources: EasyPrivacy list, Firecrawl default, and the most common
+# doubleclick / googlesyndication / amazon-aax / criteo endpoints.
+
+_AD_DOMAINS: List[str] = [
+    "**/doubleclick.net/**",
+    "**/googlesyndication.com/**",
+    "**/googleadservices.com/**",
+    "**/googletagservices.com/**",
+    "**/google-analytics.com/**",
+    "**/googletagmanager.com/**",
+    "**/adsystem.amazon.com/**",
+    "**/amazon-adsystem.com/**",
+    "**/criteo.com/**",
+    "**/criteo.net/**",
+    "**/outbrain.com/**",
+    "**/taboola.com/**",
+    "**/scorecardresearch.com/**",
+    "**/adsrvr.org/**",
+    "**/adnxs.com/**",
+    "**/rubiconproject.com/**",
+    "**/pubmatic.com/**",
+    "**/openx.net/**",
+    "**/moatads.com/**",
+    "**/facebook.com/tr/**",
+    "**/connect.facebook.net/**",
+    "**/analytics.twitter.com/**",
+    "**/ads.yahoo.com/**",
+    "**/ads.linkedin.com/**",
+    "**/adform.net/**",
+]
+
+
+# ─── Base64 image stripping (Firecrawl parity) ────────────────────────────────
+# Matches `data:image/<type>;base64,<payload>` URIs. Captures the full URI
+# so .sub("", md) strips it entirely. The payload is non-greedy and stops
+# at any of: whitespace, ), ", ', <, >, end of string.
+#
+# Examples that match:
+#   data:image/png;base64,iVBOR...
+#   data:image/jpeg;base64,/9j/4AAQ...
+#   data:image/svg+xml;base64,PHN2Zy...
+#   data:image/webp;base64,UklGR...
+#
+# Examples that DO NOT match:
+#   data:application/octet-stream;base64,XXXX (intentionally — only images)
+#   data:text/plain,Hello (no ;base64 segment)
+
+_BASE64_IMAGE_REGEX = re.compile(
+    r"data:image/[a-zA-Z0-9+.\-]+;base64,[^\s\)\"'<>]+",
+    re.IGNORECASE,
+)
+
+
+def _is_valid_http_url(url: str) -> bool:
+    """Return True if `url` is a syntactically valid http(s) URL.
+
+    Used by FlockRequest / batch_scrape to decide whether to skip an
+    invalid URL (when ignoreInvalidURLs=True) or 422 the request.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return False
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if not parsed.netloc:
+        return False
+    return True
 
 
 class RenderMode(str, Enum):
@@ -183,6 +286,9 @@ class Scraper:
         self._cb_domain_failures: dict[str, int] = {}  # domain -> consecutive failures
         # Persistent HTTP client for connection pooling
         self._http_client: Optional[httpx.AsyncClient] = None
+        # ChangeTracker for /v1/scrape changeTracking=True. Lazily initialized
+        # on first use; tests can override `self._change_tracker` directly.
+        self._change_tracker = None  # type: ignore[assignment]
 
     def _get_http_client(self) -> httpx.AsyncClient:
         """Lazy-init shared httpx client with keep-alive / connection pooling."""
@@ -220,6 +326,12 @@ class Scraper:
         max_retries: int = DEFAULT_MAX_RETRIES,
         scroll: bool = False,
         render_mode: str = "auto",
+        skip_tls_verification: bool = True,
+        summary: bool = False,
+        mobile: bool = False,
+        block_ads: bool = False,
+        remove_base64_images: bool = False,
+        change_tracking: bool = False,
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -229,6 +341,12 @@ class Scraper:
         Per-domain rate limiting waits politely before requesting.
         The circuit breaker (if configured) prevents hammering domains that are
         returning persistent errors, protecting both the target and our resources.
+
+        ``skip_tls_verification`` defaults to True for Firecrawl parity
+        + backward compat with Huginn's historical hardcoded
+        ``ignore_https_errors=True``. Pass False for stricter TLS
+        verification (e.g. when scraping sites you don't control and
+        don't want to be MITM'd).
         """
         if formats is None:
             formats = [OutputFormat.MARKDOWN]
@@ -262,7 +380,8 @@ class Scraper:
                 url, formats, headers,
                 wait_for, actions, include_tags, exclude_tags,
                 only_main_content, timeout, proxy, max_retries, scroll,
-                render_mode,
+                render_mode, skip_tls_verification, summary, mobile,
+                block_ads, remove_base64_images, change_tracking,
             )
         except CircuitOpenError:
             return ScrapeData(
@@ -293,6 +412,12 @@ class Scraper:
         max_retries: int,
         scroll: bool,
         render_mode: str,
+        skip_tls_verification: bool,
+        summary: bool = False,
+        mobile: bool = False,
+        block_ads: bool = False,
+        remove_base64_images: bool = False,
+        change_tracking: bool = False,
     ) -> ScrapeData:
         """Internal implementation — wrapped by circuit breaker."""
 
@@ -336,11 +461,34 @@ class Scraper:
 
         last_error = None
         pdf_text: Optional[str] = None  # extracted if page is PDF
+        # Firecrawl parity: skip TLS certificate verification.
+        # Stored on BrowserManager so new_context() can read it via getattr()
+        # without needing the param threaded through every call site.
+        self.browser.ignore_https_errors = skip_tls_verification
+        # Firecrawl parity: mobile device emulation. When mobile=True,
+        # pass the iPhone 13 device descriptor to Playwright's
+        # new_context() so the browser uses mobile viewport / UA / touch.
+        device = _MOBILE_DEVICE if mobile else None
         for attempt in range(max_retries + 1):
             context = None
             try:
-                context = await self.browser.new_context(proxy=proxy)
+                context = await self.browser.new_context(proxy=proxy, device=device)
                 page = await self.browser.new_page(context)
+
+                # Firecrawl parity: block ad network requests at the network
+                # layer. Each ad domain gets a route handler that aborts the
+                # request before it reaches the page — saves bandwidth + speeds
+                # up the scrape. We register synchronously here so the routes
+                # are active before any subresource loads.
+                if block_ads:
+                    async def _abort_route(route):
+                        await route.abort()
+                    for pattern in _AD_DOMAINS:
+                        # MagicMock-based tests don't await page.route(); in real
+                        # Playwright the call returns a coroutine, so we await it.
+                        route_call = page.route(pattern, _abort_route)
+                        if asyncio.iscoroutine(route_call):
+                            await route_call
 
                 # Set extra headers if provided
                 if headers:
@@ -417,6 +565,24 @@ class Scraper:
                 for fmt in formats:
                     if fmt == OutputFormat.MARKDOWN:
                         result.markdown = await self.browser.to_markdown(page, content)
+                        # Firecrawl parity: strip inline base64 image data URIs
+                        # from the extracted markdown. Pages with inlined SVG or
+                        # canvas screenshots can blow up token counts and payload
+                        # size; this is a one-line post-process to clean them up.
+                        if remove_base64_images and result.markdown:
+                            result.markdown = _BASE64_IMAGE_REGEX.sub("", result.markdown)
+                        # Firecrawl parity: change tracking. After extracting
+                        # markdown, compare against the ChangeTracker's stored
+                        # state for this URL and store the new state. Returns
+                        # {previous_hash, current_hash, diff, changed} so the
+                        # client can detect content drift between scrapes.
+                        if change_tracking and result.markdown:
+                            if self._change_tracker is None:
+                                from .change_tracker import get_change_tracker
+                                self._change_tracker = get_change_tracker()
+                            result.change_tracking = await self._change_tracker.check_and_store(
+                                url, result.markdown
+                            )
                     elif fmt == OutputFormat.HTML:
                         result.html = await self.browser.to_html(page, only_main=only_main_content)
                     elif fmt == OutputFormat.RAW_HTML:

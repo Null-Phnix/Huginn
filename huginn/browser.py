@@ -280,6 +280,11 @@ class BrowserManager:
         self._browser: Optional[Browser] = None
         self._contexts: List[BrowserContext] = []
         self.last_status_code: int = 0
+        # Firecrawl parity: per-request TLS verification toggle.
+        # Set this before calling scrape() to override the default.
+        # The scraper reads it via getattr() so a bare mock (no attr)
+        # falls back to True — preserving existing test behaviour.
+        self.ignore_https_errors: bool = True
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -352,8 +357,25 @@ class BrowserManager:
 
     # ── context / page creation ───────────────────────────────────────────
 
-    async def new_context(self, proxy: Optional[Dict[str, str]] = None) -> BrowserContext:
-        """Create a new browser context with stealth config."""
+    async def new_context(
+        self,
+        proxy: Optional[Dict[str, str]] = None,
+        ignore_https_errors: Optional[bool] = None,
+        device: Optional[Dict[str, Any]] = None,
+    ) -> BrowserContext:
+        """Create a new browser context with stealth config.
+
+        ``ignore_https_errors`` defaults to the ``BrowserManager.ignore_https_errors``
+        instance attribute (itself defaulting to True for backward-compat with
+        Huginn's historical hardcoded behaviour). The instance attribute can be
+        set before calling ``scrape()`` to change the behaviour per-request
+        (Firecrawl parity: ``skipTlsVerification`` field on ``ScrapeRequest``).
+        Explicitly passing ``ignore_https_errors`` to this method overrides the
+        instance attribute for this call only.
+        """
+        # Resolve: explicit arg > instance attr > default True
+        if ignore_https_errors is None:
+            ignore_https_errors = getattr(self, "ignore_https_errors", True)
         if not self._browser:
             await self.start()
 
@@ -361,10 +383,17 @@ class BrowserManager:
             "viewport": {"width": self.viewport[0], "height": self.viewport[1]},
             "user_agent": self.user_agent,
             "java_script_enabled": True,
-            "ignore_https_errors": True,
+            "ignore_https_errors": ignore_https_errors,
         }
         if proxy:
             context_kwargs["proxy"] = proxy
+
+        # Firecrawl parity: when a device descriptor is provided (mobile emulation),
+        # its fields override the default viewport / user_agent / etc. The device
+        # dict comes from playwright.devices[...] (e.g. "iPhone 13") and includes
+        # viewport, user_agent, is_mobile, has_touch, device_scale_factor.
+        if device:
+            context_kwargs.update(device)
 
         context = await self._browser.new_context(**context_kwargs)
         context.set_default_navigation_timeout(self.navigation_timeout)

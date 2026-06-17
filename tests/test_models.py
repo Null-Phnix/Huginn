@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from huginn.models import (
     Action,
     ActionType,
+    ErrorCode,
     CrawlRequest,
     CrawlStartResponse,
     CrawlStatusResponse,
@@ -244,3 +245,23 @@ class TestModelFields:
         )
         assert req.max_depth == 5
         assert req.allow_backward_crawling is True
+
+
+class TestErrorCode:
+    """Machine-readable error codes must be stable, lowercase, machine-parseable strings."""
+
+    def test_unauthorized_value_is_lowercase_identifier(self):
+        # The 401 error code value is part of the public API — callers parse it.
+        # It must be a stable lowercase string, not a placeholder.
+        assert ErrorCode.UNAUTHORIZED.value == "unauthorized"
+
+    def test_all_error_codes_are_lowercase_or_underscore(self):
+        import re
+        pattern = re.compile(r"^[a-z][a-z0-9_]*$")
+        for code in ErrorCode:
+            assert pattern.match(code.value), (
+                f"ErrorCode.{code.name} value {code.value!r} is not a lowercase identifier"
+            )
+
+    def test_from_http_status_401_maps_to_unauthorized(self):
+        assert ErrorCode.from_http_status(401) == ErrorCode.UNAUTHORIZED

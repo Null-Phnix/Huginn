@@ -45,6 +45,7 @@ class Mapper:
         search: Optional[str] = None,
         include_subdomains: bool = False,
         limit: int = 5000,
+        sitemap: str = "include",
     ) -> List[str]:
         """
         Map a site by extracting links from the page + sitemap.xml.
@@ -57,16 +58,33 @@ class Mapper:
             search: Filter URLs containing this string
             include_subdomains: Include links to subdomains
             limit: Maximum URLs to return
+            sitemap: Sitemap mode (Firecrawl parity):
+                "include" (default) — sitemap.xml + page links
+                "skip"              — page links only, no sitemap fetch
+                "only"              — sitemap.xml URLs only, no page crawl
         """
+        if sitemap not in ("include", "skip", "only"):
+            sitemap = "include"  # fallback to default
+
         all_urls: Set[str] = set()
         parsed_start = urlparse(url)
         base_domain = parsed_start.netloc
 
         # Strategy 1: Try sitemap.xml first (fast, no browser needed)
-        sitemap_urls = await self._fetch_sitemap(url)
-        if sitemap_urls:
-            logger.info(f"Sitemap: found {len(sitemap_urls)} URLs")
-            all_urls.update(sitemap_urls)
+        # SKIP if sitemap="skip" (no sitemap fetch at all)
+        if sitemap != "skip":
+            sitemap_urls = await self._fetch_sitemap(url)
+            if sitemap_urls:
+                logger.info(f"Sitemap: found {len(sitemap_urls)} URLs")
+                all_urls.update(sitemap_urls)
+
+        # "only" mode — return just the sitemap, no page crawl
+        if sitemap == "only":
+            result = sorted(all_urls)[:limit]
+            if search:
+                search_lower = search.lower()
+                result = [u for u in result if search_lower in u.lower()]
+            return result
 
         # Strategy 2: Load the page and extract all links via DOM walker
         page_links, _title, _status = await self._extract_page_links(url, include_subdomains, base_domain)
@@ -75,8 +93,8 @@ class Mapper:
             all_urls.update(page_links)
 
         # Strategy 3: If we found URLs on the page, check if they have their own sitemaps
-        # (limited to avoid recursion)
-        if len(all_urls) < limit:
+        # (limited to avoid recursion). Skip if sitemap="skip" to honour the flag.
+        if len(all_urls) < limit and sitemap != "skip":
             sitemap_check_urls = [u for u in all_urls if u.endswith("/")]
             for sm_url in list(sitemap_check_urls)[:3]:  # Check up to 3 sub-urls for sitemaps
                 sub_sitemap_urls = await self._fetch_sitemap(sm_url)

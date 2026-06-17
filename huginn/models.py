@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 # ─── Enums ───────────────────────────────────────────────────────────────────
@@ -162,6 +162,8 @@ class ScrapeOptions(BaseModel):
 class ScrapeRequest(BaseModel):
     """POST /v1/scrape request body."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     url: str
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     headers: Optional[Dict[str, str]] = None
@@ -180,6 +182,54 @@ class ScrapeRequest(BaseModel):
     max_retries: int = Field(2, ge=0, le=5, description="Max retry attempts on transient errors")
     scroll: bool = Field(False, description="Auto-scroll page to load dynamic content before extraction")
     render_mode: str = Field("auto", description="Rendering mode: auto, full (browser), light (httpx)")
+    # Firecrawl parity: skip TLS certificate verification. Default True
+    # to match Huginn's historical hardcoded `ignore_https_errors=True`
+    # (self-signed certs and broken CA chains have always worked in
+    # Huginn; this keeps that working). Set False for stricter security.
+    skip_tls_verification: bool = Field(
+        True,
+        alias="skipTlsVerification",
+        description="Skip TLS certificate verification. Default True (matches Firecrawl).",
+    )
+    # Firecrawl parity: auto-generate a 1-2 sentence summary of the page
+    summary: bool = Field(
+        False,
+        alias="summary",
+        description="Generate a 1-2 sentence summary of the page using LLM.",
+    )
+    # Firecrawl parity: mobile device emulation. When True, the browser
+    # is launched with a Playwright device descriptor (iPhone 13 by default)
+    # so the page renders with mobile viewport, mobile UA, and touch support.
+    mobile: bool = Field(
+        False,
+        alias="mobile",
+        description="Emulate a mobile device (iPhone 13) for the scrape.",
+    )
+    # Firecrawl parity: block known ad network requests via Playwright
+    # route interception. When True, requests to ad domains (doubleclick.net,
+    # googlesyndication.com, etc.) are aborted before they reach the page.
+    block_ads: bool = Field(
+        False,
+        alias="blockAds",
+        description="Block requests to known ad network domains.",
+    )
+    # Firecrawl parity: strip inline base64 image data URIs from the
+    # extracted markdown. Saves tokens + payload size for pages with
+    # inlined SVG/data-URI images.
+    remove_base64_images: bool = Field(
+        False,
+        alias="removeBase64Images",
+        description="Strip data:image/...;base64,... URIs from extracted markdown.",
+    )
+    # Firecrawl parity: when True, the response includes a `change_tracking`
+    # field with previous_hash, current_hash, diff, and changed flag.
+    # The ChangeTracker module stores the last-seen content per URL so
+    # subsequent scrapes can detect content drift.
+    change_tracking: bool = Field(
+        False,
+        alias="changeTracking",
+        description="Track content changes — response includes previous_hash, current_hash, diff.",
+    )
 
 
 class ScrapeData(BaseModel):
@@ -193,6 +243,12 @@ class ScrapeData(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     extract: Optional[Dict[str, Any]] = None
     pdf_text: Optional[str] = None
+    # Firecrawl parity: change tracking result (when changeTracking=True).
+    # Contains {previous_hash, current_hash, diff, changed} when populated.
+    change_tracking: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Change tracking result: {previous_hash, current_hash, diff, changed}.",
+    )
 
 
 class ScrapeResponse(BaseModel):
@@ -203,12 +259,16 @@ class ScrapeResponse(BaseModel):
     error_code: Optional[ErrorCode] = Field(None, description="Machine-readable error code")
     cached: bool = Field(False, description="Whether result was served from cache")
     warnings: Optional[List[str]] = Field(default_factory=list)
+    # Firecrawl parity: LLM-generated 1-2 sentence summary of the page
+    summary: Optional[str] = Field(None, description="Auto-generated 1-2 sentence summary")
 
 
 # ─── Crawl Endpoint ───────────────────────────────────────────────────────────
 
 class CrawlRequest(BaseModel):
     """POST /v1/crawl request body."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     url: str
     max_depth: Optional[int] = Field(None)
@@ -222,6 +282,17 @@ class CrawlRequest(BaseModel):
     stream: bool = Field(False)
     format: str = Field("json", description="Response format: json (default), jsonl (NDJSON stream), sse (Server-Sent Events)")
     webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
+    # Firecrawl parity: per-job maxConcurrency. When set, overrides the
+    # global _config.crawl.concurrency for this specific crawl. Useful for
+    # one-off fast scrapes (high concurrency) or slow / careful scrapes
+    # (low concurrency).
+    max_concurrency: Optional[int] = Field(
+        None,
+        alias="maxConcurrency",
+        ge=1,
+        le=100,
+        description="Per-job override of crawl concurrency (1-100).",
+    )
 
 
 class CrawlStartResponse(BaseModel):
@@ -254,10 +325,20 @@ class CrawlStatusResponse(BaseModel):
 class MapRequest(BaseModel):
     """POST /v1/map request body."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     url: str
     search: Optional[str] = None
     include_subdomains: bool = Field(False)
     limit: int = 5000
+    # Firecrawl parity: sitemap mode.
+    #   "include" (default) — discover URLs from sitemap.xml + crawl from the page
+    #   "skip"              — ignore sitemap.xml, only crawl from the page
+    #   "only"              — return ONLY sitemap.xml URLs, no page crawling
+    sitemap: Optional[str] = Field(
+        "include",
+        description='Sitemap mode: "include" (default), "skip", or "only".',
+    )
 
 
 class MapResponse(BaseModel):
@@ -415,6 +496,8 @@ class SearchResponse(BaseModel):
 class FlockRequest(BaseModel):
     """POST /v1/batch/scrape request body."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     urls: List[str] = Field(..., min_length=1, max_length=50)
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     only_main_content: bool = Field(True)
@@ -422,6 +505,13 @@ class FlockRequest(BaseModel):
     exclude_tags: Optional[List[str]] = Field(None)
     timeout: int = 30000
     webhook_url: Optional[str] = Field(None, description="URL to POST job completion/failure notifications")
+    # Firecrawl parity: when True, invalid URLs (bad scheme, missing host, etc.)
+    # are skipped with a warning instead of failing the entire batch.
+    ignore_invalid_urls: bool = Field(
+        False,
+        alias="ignoreInvalidURLs",
+        description="Skip invalid URLs (bad scheme, missing host) with a warning instead of failing.",
+    )
 
 
 
