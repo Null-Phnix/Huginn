@@ -20,6 +20,7 @@ from .browser import BrowserManager, WaitStrategy, parse_wait_for
 from .circuit_breaker import CircuitBreaker, CircuitOpenError, extract_domain, get_circuit_breaker
 from .domain_rate_limiter import DomainRateLimiter, get_domain_rate_limiter
 from .models import OutputFormat, ScrapeData
+from .selector_memory import SelectorMemory, get_selector_memory
 from .pdf import extract_pdf_text, is_pdf_content
 
 logger = logging.getLogger(__name__)
@@ -289,6 +290,9 @@ class Scraper:
         # ChangeTracker for /v1/scrape changeTracking=True. Lazily initialized
         # on first use; tests can override `self._change_tracker` directly.
         self._change_tracker = None  # type: ignore[assignment]
+        # SelectorMemory for recording/returning successful CSS selectors.
+        # Lazily initialized on first use; tests can override directly.
+        self._selector_memory: Optional[SelectorMemory] = None
 
     def _get_http_client(self) -> httpx.AsyncClient:
         """Lazy-init shared httpx client with keep-alive / connection pooling."""
@@ -374,7 +378,7 @@ class Scraper:
 
         # 3. Wrap the actual scrape in the circuit breaker
         try:
-            return await cb.call(
+            result = await cb.call(
                 domain,
                 self._scrape_impl,
                 url, formats, headers,
@@ -383,6 +387,33 @@ class Scraper:
                 render_mode, skip_tls_verification, summary, mobile,
                 block_ads, remove_base64_images, change_tracking,
             )
+
+            # ── Layer 3 hooks: record outcome + selector memory ───────────
+            # Adaptive throttling: record success so the rate multiplier
+            # can recover from past failures.
+            await rl.record_outcome(domain, success=True)
+
+            # Selector memory: when the caller used include_tags and got a
+            # non-error result, remember which selectors worked for this URL.
+            # Next time the same URL is scraped without include_tags, we'll
+            # surface them as suggestions in metadata.
+            if include_tags and result.metadata.get("status_code", 200) < 400:
+                if self._selector_memory is None:
+                    self._selector_memory = get_selector_memory()
+                for sel in include_tags:
+                    self._selector_memory.record_success(url, sel)
+            # When include_tags is empty, provide suggestions from memory
+            elif not include_tags and result.metadata.get("status_code", 200) < 400:
+                if self._selector_memory is None:
+                    self._selector_memory = get_selector_memory()
+                suggestions = self._selector_memory.get_suggestions(url, limit=3)
+                if suggestions:
+                    result.metadata["selector_hints"] = [
+                        {"selector": sel, "score": round(score, 2)}
+                        for sel, score in suggestions
+                    ]
+
+            return result
         except CircuitOpenError:
             return ScrapeData(
                 metadata={
@@ -395,6 +426,9 @@ class Scraper:
         except Exception as e:
             # Record the failure so circuit breaker tracks it
             await cb.record_failure(domain)
+            # Adaptive throttling: record failure so the rate multiplier
+            # backs off for this domain.
+            await rl.record_outcome(domain, success=False)
             raise
 
     async def _scrape_impl(

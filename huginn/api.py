@@ -449,7 +449,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         if job.get("expires_at"):
             try:
                 from datetime import datetime, timezone
-                expires_at = dt.fromisoformat(job["expires_at"])
+                expires_at = datetime.fromisoformat(job["expires_at"])
             except (ValueError, TypeError):
                 pass
 

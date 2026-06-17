@@ -153,3 +153,15 @@ class SelectorMemory:
     def clear(self) -> None:
         """Wipe all memory."""
         self._store.clear()
+
+
+# ─── Global singleton ─────────────────────────────────────────────────────────
+
+_selector_memory: Optional[SelectorMemory] = None
+
+
+def get_selector_memory() -> SelectorMemory:
+    global _selector_memory
+    if _selector_memory is None:
+        _selector_memory = SelectorMemory()
+    return _selector_memory
