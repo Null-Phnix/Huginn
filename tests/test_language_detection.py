@@ -135,6 +135,8 @@ class TestLanguageDetection:
         })
         mock_browser.to_markdown = AsyncMock(return_value="# DE Seite\n\nDeutsche Seite")
 
+        mock_browser.last_status_code = 200
+
         # lightweight_scrape uses httpx, not playwright
         scraper = Scraper(mock_browser)
         scraper._get_http_client = MagicMock()
