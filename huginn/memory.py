@@ -28,17 +28,45 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-try:
-    import chromadb
-    CHROMA_AVAILABLE = True
-except ImportError:
-    CHROMA_AVAILABLE = False
-    logger.warning("chromadb not installed. Research memory disabled. pip install chromadb")
+# Defer chromadb import until actually needed — chromadb spawns a background
+# connection thread on import that pytest flags as a thread leak when the
+# test process exits before the thread is cleaned up. Lazy import keeps
+# the thread out of test processes that never touch embedding functions.
+#
+# Sentinel values:
+#   _CHROMA_STATE = None      → not yet attempted
+#   _CHROMA_STATE = True      → import succeeded
+#   _CHROMA_STATE = False     → import failed (don't try again)
+_CHROMA_STATE: bool | None = None
+
+
+def _try_import_chromadb() -> bool:
+    """Lazy import: attempt to import chromadb on first call.
+
+    Returns True if chromadb is now importable, False otherwise.
+    Subsequent calls return the cached result without re-importing.
+    """
+    global _CHROMA_STATE
+    if _CHROMA_STATE is None:
+        try:
+            import chromadb  # noqa: F401
+            _CHROMA_STATE = True
+        except ImportError:
+            logger.warning("chromadb not installed. Research memory disabled. pip install chromadb")
+            _CHROMA_STATE = False
+    return _CHROMA_STATE
+
+
+# Public flag for callers that just want to know "is chromadb available"
+# without triggering the import. Returns False until first use.
+def _is_chroma_available() -> bool:
+    """Cheap check: True if we've already confirmed chromadb is importable."""
+    return _CHROMA_STATE is True
 
 
 def _get_embedding_function():
     """Get the best available embedding function."""
-    if not CHROMA_AVAILABLE:
+    if not _try_import_chromadb():
         return None
     try:
         from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
@@ -79,7 +107,7 @@ class ResearchMemory:
             return
         self._initialized = True
 
-        if not CHROMA_AVAILABLE:
+        if not _try_import_chromadb():
             logger.warning("ChromaDB not available — research memory will not persist")
             return
 

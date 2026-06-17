@@ -56,6 +56,9 @@ class TestCLIDoctor:
         assert "System Health" in result.output
         assert "Python" in result.output
 
+    # Note: the `huginn doctor --check` deep-check tests live in PR 3
+    # (the layer 3 primitives PR) along with the --check flag itself.
+
 
 class TestCLIConfig:
     """Test config subcommand."""
