@@ -16,8 +16,14 @@ browser engine, DOM walker, and mental model system.
 - All self-hosted, all free, no cloud tier holding back features
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __author__ = "Phnix"
+
+# HuginnClient, HuginnSync, HuginnError, CircuitOpenError, RateLimitError
+# live in the separate huginn_client package (sdk/python/huginn_client/).
+# Downstream users do `from huginn_client import HuginnClient` to get them.
+# We intentionally do NOT re-export them from this package's top level,
+# because huginn_client depends on huginn.models — a circular import.
 
 from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for, ScrollConfig  # noqa: F401
 from .cache import AsyncTTLCache, get_response_cache, cache_scrape_result, get_cached_scrape_result  # noqa: F401
@@ -27,30 +33,6 @@ from .models import ActionType, Schedule, ErrorCode  # noqa: F401
 from .research import ResearchAgent, ResearchReport, ResearchSource  # noqa: F401
 from .scraper import RenderMode, detect_render_mode  # noqa: F401
 from .scheduler import Scheduler  # noqa: F401
-# Public SDK (sdk/python/huginn_client/) is the canonical source for
-# HuginnClient, HuginnSync, and the error hierarchy. Huginn's own code
-# re-uses it instead of carrying a separate internal SDK.
-#
-# In dev (running from source tree), the SDK is at sdk/python/, not pip-
-# installed. Add that to sys.path so the import works without `pip
-# install -e sdk/python`. In a real install, the user has huginn-client
-# installed and this path is a no-op.
-import os as _os
-import sys as _sys
-_sdk_python_path = _os.path.join(
-    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-    "sdk", "python",
-)
-if _os.path.isdir(_sdk_python_path) and _sdk_python_path not in _sys.path:
-    _sys.path.insert(0, _sdk_python_path)
-
-from huginn_client import (  # noqa: F401
-    HuginnClient,
-    HuginnError,
-    HuginnSync,
-    CircuitOpenError,
-    RateLimitError,
-)
 from .templates import ExtractTemplate, get_template, list_templates, register_template  # noqa: F401
 from .webhook import send_webhook, send_webhook_with_retry, fire_webhook_for_job  # noqa: F401
 

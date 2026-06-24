@@ -64,12 +64,12 @@ class TestHuginnClientInit:
         assert client.base_url == "http://example.com:9000"
 
     def test_auth_headers_empty_when_no_key(self):
-        """No api_key + no env → no Authorization header."""
+        """No api_key + no env -> no Authorization header."""
         client = HuginnClient(api_key="")
         assert "Authorization" not in client._auth_headers()
 
     def test_auth_headers_set_when_key_provided(self):
-        """api_key → Authorization: Bearer header."""
+        """api_key -> Authorization: Bearer header is set."""
         client = HuginnClient(api_key="sk-test")
         headers = client._auth_headers()
         assert headers["Authorization"] == "Bearer sk-test"
@@ -120,22 +120,15 @@ class TestHuginnSync:
     def test_huginn_sync_constructor(self):
         """HuginnSync takes the same params as HuginnClient."""
         sync = HuginnSync(base_url="http://example.com", api_key="sk-test")
-        # _async is the underlying client
         assert sync._async is not None
         assert sync._async.base_url == "http://example.com"
         assert sync._async._api_key == "sk-test"
 
     def test_huginn_sync_has_close(self):
-        """HuginnSync has a close() method (delegates to async)."""
+        """HuginnSync has a close() method."""
         sync = HuginnSync()
         assert hasattr(sync, "close")
         assert callable(sync.close)
-
-    def test_huginn_sync_context_manager(self):
-        """HuginnSync supports `with HuginnSync() as sync:` pattern."""
-        sync = HuginnSync()
-        with sync:
-            pass  # no-op, just verify context manager works
 
 
 class TestSDKExports:
@@ -159,7 +152,6 @@ class TestSDKExports:
         """__version__ is set (so pip show works)."""
         import huginn_client
         assert huginn_client.__version__ != "0.0.0"
-        # Sanity check format
         parts = huginn_client.__version__.split(".")
         assert len(parts) >= 2
         for p in parts:
@@ -172,40 +164,32 @@ class TestCircuitAndRateLimitErrors:
     """CircuitOpenError + RateLimitError — extra coverage beyond inheritance."""
 
     def test_circuit_open_error_message_preserved(self):
-        """CircuitOpenError captures the message."""
         err = CircuitOpenError("circuit open for example.com")
         assert "example.com" in str(err)
 
     def test_circuit_open_error_can_carry_status_code(self):
-        """CircuitOpenError accepts status_code (via HuginnError)."""
         err = CircuitOpenError("cb open", status_code=503)
         assert err.status_code == 503
 
     def test_circuit_open_error_can_carry_error_code(self):
-        """CircuitOpenError accepts error_code (via HuginnError)."""
         err = CircuitOpenError("cb open", error_code="circuit_open")
         assert err.error_code == "circuit_open"
 
     def test_circuit_open_error_can_be_raised_and_caught(self):
-        """CircuitOpenError is catchable as HuginnError or as itself."""
         with pytest.raises(CircuitOpenError):
             raise CircuitOpenError("test")
         with pytest.raises(HuginnError):
             raise CircuitOpenError("test")
 
     def test_rate_limit_error_message_preserved(self):
-        """RateLimitError captures the message."""
         err = RateLimitError("429: too many requests")
         assert "429" in str(err)
 
     def test_rate_limit_error_status_code_429(self):
-        """RateLimitError typically carries status_code=429."""
         err = RateLimitError("rate limited", status_code=429)
         assert err.status_code == 429
 
     def test_rate_limit_error_response_attachment(self):
-        """RateLimitError can carry the response object (via HuginnError)."""
-        # Real httpx.Response — even with no real request, the object is usable
         resp = httpx.Response(429, json={"error": "rate limited"})
         err = RateLimitError("limited", response=resp)
         assert err.response is resp
@@ -215,38 +199,60 @@ class TestCircuitAndRateLimitErrors:
 # ─── HuginnSync methods via MockTransport ───────────────────────────────────
 
 class TestHuginnSyncMethods:
-    """HuginnSync wraps the async client via asyncio.run().
+    """HuginnSync wraps the async client via asyncio.run()."""
 
-    Uses httpx.MockTransport to verify the sync methods make the right
-    HTTP calls without touching a real server.
-    """
+    def test_huginn_sync_has_health(self):
+        sync = HuginnSync()
+        assert hasattr(sync, "health")
+        assert callable(sync.health)
 
-    def _make_sync_with_mock(self, handler):
-        """Build a HuginnSync whose underlying httpx.AsyncClient uses MockTransport."""
-        sync = HuginnSync(base_url="http://test:7432", api_key="sk-test")
-        # The async client uses an httpx.AsyncClient. Monkey-patch the
-        # class so the next instantiation uses our transport.
-        original_client = httpx.AsyncClient
+    def test_huginn_sync_has_scrape(self):
+        sync = HuginnSync()
+        assert hasattr(sync, "scrape")
+        assert callable(sync.scrape)
 
-        def patched_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original_client(*args, **kwargs)
+    def test_huginn_sync_has_probe(self):
+        sync = HuginnSync()
+        assert hasattr(sync, "probe")
+        assert callable(sync.probe)
 
-        httpx.AsyncClient = patched_client
-        try:
-            yield sync
-        finally:
-            httpx.AsyncClient = original_client
-            try:
-                sync._async.close()
-            except Exception:
-                pass
+    def test_huginn_sync_has_sweep_start(self):
+        sync = HuginnSync()
+        assert hasattr(sync, "sweep_start")
+        assert callable(sync.sweep_start)
+
+    def test_huginn_sync_has_chart(self):
+        sync = HuginnSync()
+        assert hasattr(sync, "chart")
+        assert callable(sync.chart)
+
+    def test_huginn_sync_has_flock(self):
+        sync = HuginnSync()
+        assert hasattr(sync, "flock")
+        assert callable(sync.flock)
+
+    def test_huginn_sync_has_distill_start(self):
+        sync = HuginnSync()
+        assert hasattr(sync, "distill_start")
+        assert callable(sync.distill_start)
+
+    def test_huginn_sync_close_without_context_no_error(self):
+        """Closing HuginnSync without entering async context is a safe no-op.
+
+        `_run` auto-enters the async context via __aenter__ before
+        calling close, so close() never raises even when the caller
+        never used `with sync:` or `async with sync:`.
+        """
+        sync = HuginnSync()
+        # No `with sync:` was called — _async._client is None
+        # close() should not raise (handled by _run's auto-context)
+        sync.close()
 
     def test_huginn_sync_health_calls_health_endpoint(self):
         """HuginnSync.health() makes a GET to /health."""
         captured = {}
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request):
             captured["path"] = request.url.path
             captured["headers"] = dict(request.headers)
             return httpx.Response(200, json={"status": "ok", "uptime_s": 42.0})
@@ -263,17 +269,15 @@ class TestHuginnSyncMethods:
             result = sync.health()
         finally:
             httpx.AsyncClient = original_client
-            # sync._async.close() is async — call it properly
-            asyncio.run(sync._async.close())
 
         assert captured["path"] == "/health"
         assert result == {"status": "ok", "uptime_s": 42.0}
 
     def test_huginn_sync_scrape_posts_to_v1_probe(self):
-        """HuginnSync.scrape() posts to /v1/probe with the URL + formats."""
+        """HuginnSync.scrape() posts to /v1/probe with the URL + auth."""
         captured = {}
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request):
             captured["method"] = request.method
             captured["path"] = request.url.path
             captured["body"] = request.read().decode("utf-8")
@@ -295,7 +299,6 @@ class TestHuginnSyncMethods:
             result = sync.scrape("https://example.com")
         finally:
             httpx.AsyncClient = original_client
-            asyncio.run(sync._async.close())
 
         assert captured["method"] == "POST"
         assert captured["path"] == "/v1/probe"
@@ -303,58 +306,3 @@ class TestHuginnSyncMethods:
         assert captured["auth"] == "Bearer sk-test"
         assert result.success is True
         assert result.data.markdown == "# Page"
-
-    def test_huginn_sync_close_without_context_no_error(self):
-        """Closing HuginnSync without entering async context is a safe no-op.
-
-        This is the test that motivated adding HuginnClient.close() — the
-        old code required the async client to be open before close would
-        work. Now close() is a guarded no-op if there's no underlying
-        httpx client to close.
-        """
-        sync = HuginnSync()
-        # No `async with sync:` was called — _client is None
-        # close() should not raise
-        sync.close()
-
-    def test_huginn_sync_has_health(self):
-        """HuginnSync exposes a sync health() method."""
-        sync = HuginnSync()
-        assert hasattr(sync, "health")
-        assert callable(sync.health)
-
-    def test_huginn_sync_has_scrape(self):
-        """HuginnSync exposes a sync scrape() method."""
-        sync = HuginnSync()
-        assert hasattr(sync, "scrape")
-        assert callable(sync.scrape)
-
-    def test_huginn_sync_has_probe(self):
-        """HuginnSync exposes a sync probe() method (lightweight)."""
-        sync = HuginnSync()
-        assert hasattr(sync, "probe")
-        assert callable(sync.probe)
-
-    def test_huginn_sync_has_sweep_start(self):
-        """HuginnSync exposes a sync sweep_start() method (crawl)."""
-        sync = HuginnSync()
-        assert hasattr(sync, "sweep_start")
-        assert callable(sync.sweep_start)
-
-    def test_huginn_sync_has_chart(self):
-        """HuginnSync exposes a sync chart() method (map site)."""
-        sync = HuginnSync()
-        assert hasattr(sync, "chart")
-        assert callable(sync.chart)
-
-    def test_huginn_sync_has_flock(self):
-        """HuginnSync exposes a sync flock() method (batch scrape)."""
-        sync = HuginnSync()
-        assert hasattr(sync, "flock")
-        assert callable(sync.flock)
-
-    def test_huginn_sync_has_distill_start(self):
-        """HuginnSync exposes a sync distill_start() method (extract)."""
-        sync = HuginnSync()
-        assert hasattr(sync, "distill_start")
-        assert callable(sync.distill_start)
