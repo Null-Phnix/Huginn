@@ -491,6 +491,22 @@ class Scraper:
             except Exception as e:
                 logger.warning(f"Lightweight scrape failed for {url}: {e}, falling back to full browser")
         # Fall through to full browser rendering for FULL mode or failed light mode
+        # ── StarSearch anti-detect path ──────────────────────────────────
+        # When HUGINN_STARSEARCH_TCP is set, fetch through the StarSearch daemon
+        # (a real stealth Chromium) instead of our own Playwright — beats bot
+        # walls keylessly. Falls through to Playwright on any failure.
+        try:
+            from . import starsearch_scrape
+            if starsearch_scrape.tcp_addr():
+                ss = await starsearch_scrape.scrape(
+                    url, formats=formats, only_main_content=only_main_content
+                )
+                if ss and ss.markdown:
+                    logger.info(f"Scraped {url} via StarSearch (anti-detect)")
+                    return ss
+        except Exception as e:
+            logger.warning(f"StarSearch scrape failed for {url}: {e}, falling back to Playwright")
+
         # ── Full browser rendering path ─────────────────────────────────
 
         last_error = None

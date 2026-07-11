@@ -14,8 +14,13 @@ services:
       HUGINN_PORT: 7432
       HUGINN_USER_AGENT: "Huginn/Bot (+https://huginn.dev/bot)"
       BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
+      # Route scraping through the host StarSearch daemon (anti-detect browser).
+      # Reachable on loopback because this container is network_mode: host.
+      HUGINN_STARSEARCH_TCP: "127.0.0.1:7676"
     volumes:
       - huginn-data:/data
+      # Bind the host source so code changes take effect on restart (no rebuild).
+      - ./huginn:/app/huginn:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7432/health"]
