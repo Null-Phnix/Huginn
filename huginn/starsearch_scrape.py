@@ -104,16 +104,28 @@ def _html_to_scrapedata(html: str, url: str, formats: List[OutputFormat],
 
 
 async def scrape(url: str, formats: Optional[List[OutputFormat]] = None,
-                 only_main_content: bool = True, timeout: float = 45.0) -> Optional[ScrapeData]:
-    """Scrape via StarSearch. Returns ScrapeData, or None if StarSearch is unavailable/failed."""
+                 only_main_content: bool = True, timeout: float = 45.0,
+                 retries: int = 3) -> Optional[ScrapeData]:
+    """Scrape via StarSearch. Returns ScrapeData, or None if unavailable/blocked.
+
+    Retries transient failures (CapacityExceeded under crawl load, a crashed
+    session, a dropped connection) with backoff. Empty HTML (e.g. an SSRF-blocked
+    or genuinely blank page) is treated as permanent — no retry, returns None.
+    """
     addr = tcp_addr()
     if not addr:
         return None
     formats = formats or [OutputFormat.MARKDOWN]
-    html = await _fetch_html(addr, url, timeout=timeout)
-    if not html:
-        return None
-    return _html_to_scrapedata(html, url, formats, only_main_content)
+    for attempt in range(retries):
+        try:
+            html = await _fetch_html(addr, url, timeout=timeout)
+            if not html:
+                return None
+            return _html_to_scrapedata(html, url, formats, only_main_content)
+        except Exception:
+            if attempt == retries - 1:
+                raise
+            await asyncio.sleep(0.4 * (attempt + 1))
 
 
 if __name__ == "__main__":
