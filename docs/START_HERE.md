@@ -26,7 +26,7 @@ playwright install chromium
 
 Open Claude Code in this folder:
 ```bash
-cd /mnt/GameDrive/AI_Projects/Blackreach
+cd /mnt/AI_Projects/Blackreach
 claude
 ```
 
@@ -35,7 +35,7 @@ Then say:
 
 ## What You Can Steal from Ghost Hand
 
-Location: `/mnt/GameDrive/AI_Projects/The Library of Alexandria/The Ghost Hand/`
+Location: `/mnt/AI_Projects/The Library of Alexandria/The Ghost Hand/`
 
 Reusable:
 - `ghost_hand/puppet.py` — Playwright browser setup

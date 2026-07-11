@@ -3,7 +3,7 @@
 # Usage: ./launch.sh [hours]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORK_DIR="/mnt/GameDrive/AI_Projects/Blackreach"
+WORK_DIR="/mnt/AI_Projects/Blackreach"
 HOURS="${1:-10}"
 
 echo "=========================================="

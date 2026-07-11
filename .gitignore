@@ -60,3 +60,6 @@ deep_work_logs/
 portfolio/
 .coverage
 Blackreach/
+
+# orphaned cache written by the external Fenrir price-watch tool (ran with this repo as CWD)
+fenrir_cache.db

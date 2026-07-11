@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
-WORK_DIR = Path("/mnt/GameDrive/AI_Projects/Blackreach")
+WORK_DIR = Path("/mnt/AI_Projects/Blackreach")
 LOG_DIR = WORK_DIR / "deep_work_logs"
 PROMPT_DIR = WORK_DIR / "scripts" / "agent_prompts"
 

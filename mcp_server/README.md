@@ -25,7 +25,7 @@ source .venv/bin/activate
 pip install -e .
 
 # Or with pipx
-pipx install -e /mnt/GameDrive/AI_Projects/BlackCrawl/mcp_server
+pipx install -e /mnt/AI_Projects/BlackCrawl/mcp_server
 ```
 
 ### 2. Configure environment variables
@@ -60,7 +60,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "huginn": {
       "command": "/path/to/.venv/bin/python",
-      "args": ["/mnt/GameDrive/AI_Projects/BlackCrawl/mcp_server/server.py"],
+      "args": ["/mnt/AI_Projects/BlackCrawl/mcp_server/server.py"],
       "env": {
         "HUGINN_API_KEY": "your-api-key",
         "HUGINN_BASE_URL": "http://localhost:7432"
@@ -80,7 +80,7 @@ from continue.server.main import mcp_server
 tools = [
     mcp_server(
         "huginn",
-        "/mnt/GameDrive/AI_Projects/BlackCrawl/mcp_server/server.py",
+        "/mnt/AI_Projects/BlackCrawl/mcp_server/server.py",
         env={
             "HUGINN_API_KEY": "your-api-key",
             "HUGINN_BASE_URL": "http://localhost:7432",
@@ -98,7 +98,7 @@ Add to Cursor settings (JSON):
   "mcp.servers": {
     "huginn": {
       "command": "/path/to/.venv/bin/python",
-      "args": ["/mnt/GameDrive/AI_Projects/BlackCrawl/mcp_server/server.py"],
+      "args": ["/mnt/AI_Projects/BlackCrawl/mcp_server/server.py"],
       "env": {
         "HUGINN_API_KEY": "your-api-key",
         "HUGINN_BASE_URL": "http://localhost:7432"
@@ -113,7 +113,7 @@ Add to Cursor settings (JSON):
 The Huginn API server must be running at `HUGINN_BASE_URL` before using this MCP server:
 
 ```bash
-python /mnt/GameDrive/AI_Projects/BlackCrawl/mcp_server/blackreach_http_server.py
+python /mnt/AI_Projects/BlackCrawl/mcp_server/blackreach_http_server.py
 ```
 
 ### 5. Verify

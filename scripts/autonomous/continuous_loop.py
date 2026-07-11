@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 import signal
 
 # Configuration
-WORK_DIR = Path("/mnt/GameDrive/AI_Projects/Blackreach")
+WORK_DIR = Path("/mnt/AI_Projects/Blackreach")
 LOG_DIR = WORK_DIR / "deep_work_logs"
 STOP_FILE = LOG_DIR / "STOP"
 STATUS_FILE = LOG_DIR / "continuous_status.json"

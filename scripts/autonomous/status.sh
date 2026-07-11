@@ -2,7 +2,7 @@
 # Check status of autonomous daemon
 # Usage: ./status.sh
 
-WORK_DIR="/mnt/GameDrive/AI_Projects/Blackreach"
+WORK_DIR="/mnt/AI_Projects/Blackreach"
 LOG_DIR="$WORK_DIR/deep_work_logs"
 
 echo "=========================================="

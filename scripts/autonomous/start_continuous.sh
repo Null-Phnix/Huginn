@@ -1,7 +1,7 @@
 #!/bin/bash
 # Start continuous autonomous development loop
 
-WORK_DIR="/mnt/GameDrive/AI_Projects/Blackreach"
+WORK_DIR="/mnt/AI_Projects/Blackreach"
 LOG_DIR="$WORK_DIR/deep_work_logs"
 
 echo "=========================================="

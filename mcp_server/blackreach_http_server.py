@@ -5,7 +5,7 @@ Runs Blackreach as a persistent Flask server with full network access.
 Start this ONCE from your terminal, then Claude Code's MCP can call it over localhost.
 
 Usage:
-  python /mnt/GameDrive/AI_Projects/Blackreach/mcp_server/blackreach_http_server.py
+  python /mnt/AI_Projects/Blackreach/mcp_server/blackreach_http_server.py
 
 Runs on: http://localhost:7432
 
@@ -26,14 +26,14 @@ import time
 from pathlib import Path
 from enum import Enum
 
-sys.path.insert(0, '/mnt/GameDrive/AI_Projects/Blackreach')
+sys.path.insert(0, '/mnt/AI_Projects/Blackreach')
 
 from flask import Flask, request, jsonify
 from blackreach.api import BlackreachAPI, ApiConfig
 
 app = Flask(__name__)
 
-DOWNLOAD_DIR = Path("/mnt/GameDrive/AI_Projects/Blackreach/downloads")
+DOWNLOAD_DIR = Path("/mnt/AI_Projects/Blackreach/downloads")
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
