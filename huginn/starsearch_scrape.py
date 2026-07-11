@@ -10,10 +10,12 @@ host. Falls through to Playwright on any failure.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
-from typing import List, Optional
+import urllib.parse
+from typing import List, Dict, Optional
 
 import markdownify
 from bs4 import BeautifulSoup
@@ -126,6 +128,57 @@ async def scrape(url: str, formats: Optional[List[OutputFormat]] = None,
             if attempt == retries - 1:
                 raise
             await asyncio.sleep(0.4 * (attempt + 1))
+
+
+def _decode_bing_url(href: str) -> str:
+    """Bing wraps results in /ck/a redirects with the target base64 in u=a1<b64>."""
+    if "bing.com/ck/a" not in href:
+        return href
+    u = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("u", [""])[0]
+    if u.startswith("a1"):
+        b = u[2:] + "=" * (-len(u[2:]) % 4)
+        try:
+            return base64.urlsafe_b64decode(b).decode("utf-8", "ignore")
+        except Exception:
+            return href
+    return href
+
+
+def _parse_bing_serp(html: str, limit: int) -> List[Dict[str, str]]:
+    """Parse a Bing SERP into [{title, link, snippet}] (link key matches _scrape_results)."""
+    from bs4 import BeautifulSoup as _BS
+    soup = _BS(html, "html.parser")
+    out: List[Dict[str, str]] = []
+    for li in soup.select("li.b_algo"):
+        a = li.select_one("h2 a")
+        if not a or not a.get("href"):
+            continue
+        cap = li.select_one(".b_caption p") or li.select_one("p")
+        out.append({
+            "title": a.get_text(" ", strip=True),
+            "link": _decode_bing_url(a["href"]),
+            "snippet": cap.get_text(" ", strip=True) if cap else "",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def search_bing(query: str, limit: int = 5, retries: int = 3) -> List[Dict[str, str]]:
+    """Keyless web search via StarSearch -> Bing. Returns [{title, link, snippet}] or []."""
+    addr = tcp_addr()
+    if not addr:
+        return []
+    url = "https://www.bing.com/search?q=" + urllib.parse.quote_plus(query)
+    for attempt in range(retries):
+        try:
+            html = await _fetch_html(addr, url)
+            return _parse_bing_serp(html, limit) if html else []
+        except Exception:
+            if attempt == retries - 1:
+                return []
+            await asyncio.sleep(0.4 * (attempt + 1))
+    return []
 
 
 if __name__ == "__main__":

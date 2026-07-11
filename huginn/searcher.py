@@ -68,6 +68,24 @@ class Searcher:
         if scrape_formats is None:
             scrape_formats = [OutputFormat.MARKDOWN]
 
+        # Primary: StarSearch anti-detect browser -> Bing (keyless, beats the
+        # CAPTCHAs that block plain-HTTP engines like DDG). Unifies Huginn search
+        # with Blackreach onto one StarSearch-backed backend.
+        try:
+            from . import starsearch_scrape
+            if starsearch_scrape.tcp_addr():
+                bing = await starsearch_scrape.search_bing(query, limit)
+                if bing:
+                    logger.info("Using StarSearch->Bing for query: %s", query)
+                    if scrape_results:
+                        return await self._scrape_results(bing, scrape_formats)
+                    return [
+                        SearchResultItem(metadata={"title": r["title"], "url": r["link"], "snippet": r["snippet"]})
+                        for r in bing[:limit]
+                    ]
+        except Exception as e:
+            logger.warning("StarSearch->Bing search failed: %s", e)
+
         # Check for Brave API key first
         if self._brave_key:
             try:
