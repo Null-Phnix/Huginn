@@ -1,17 +1,16 @@
 # Huginn Docker Compose — self-hosted scraping API
-version: "3.8"
 
 services:
   huginn:
     build: .
     image: ghcr.io/null-phnix/huginn:latest
     container_name: huginn
-    ports:
-      - "7432:7432"
+    network_mode: host
     environment:
       HUGINN_DATA_DIR: /data
       HUGINN_PORT: 7432
       HUGINN_USER_AGENT: "Huginn/Bot (+https://huginn.dev/bot)"
+      BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
     volumes:
       - huginn-data:/data
     restart: unless-stopped

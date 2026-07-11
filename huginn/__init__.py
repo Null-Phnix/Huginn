@@ -44,13 +44,16 @@ _sdk_python_path = _os.path.join(
 if _os.path.isdir(_sdk_python_path) and _sdk_python_path not in _sys.path:
     _sys.path.insert(0, _sdk_python_path)
 
-from huginn_client import (  # noqa: F401
-    HuginnClient,
-    HuginnError,
-    HuginnSync,
-    CircuitOpenError,
-    RateLimitError,
-)
+try:
+    from huginn_client import (  # noqa: F401
+        HuginnClient,
+        HuginnError,
+        HuginnSync,
+        CircuitOpenError,
+        RateLimitError,
+    )
+except ImportError:
+    pass
 from .templates import ExtractTemplate, get_template, list_templates, register_template  # noqa: F401
 from .webhook import send_webhook, send_webhook_with_retry, fire_webhook_for_job  # noqa: F401
 
