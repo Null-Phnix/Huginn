@@ -26,6 +26,10 @@ from .pdf import extract_pdf_text, is_pdf_content
 logger = logging.getLogger(__name__)
 
 
+class UnsupportedStarSearchOptionError(ValueError):
+    """A request asked production StarSearch mode for an unimplemented control."""
+
+
 # ─── Mobile device emulation (Firecrawl parity) ────────────────────────────────
 # iPhone 13 device descriptor for mobile=True. Matches the official
 # playwright.devices["iPhone 13"] descriptor so behavior is identical whether
@@ -474,47 +478,73 @@ class Scraper:
         # old flow performed a plain httpx fetch first, so most "StarSearch"
         # scrapes never touched the anti-detect browser at all.
         #
-        # Options which StarSearch cannot yet enforce must fall back to
-        # Playwright rather than being silently ignored.  Explicit light mode
-        # remains a caller-controlled opt-out of browser rendering.
-        starsearch_unsupported = bool(headers or mobile or block_ads or not skip_tls_verification)
+        # Explicit light mode is the caller-controlled HTTP opt-out. Production
+        # StarSearch mode otherwise fails closed: daemon failures and unsupported
+        # controls never become a less protected Playwright request implicitly.
+        unsupported_options = [
+            name
+            for name, enabled in (
+                ("headers", bool(headers)),
+                ("mobile", mobile),
+                ("block_ads", block_ads),
+                ("strict_tls", not skip_tls_verification),
+            )
+            if enabled
+        ]
+        starsearch_unsupported = bool(unsupported_options)
+        starsearch_backend = getattr(self.browser, "backend", "playwright") == "starsearch"
+        allow_playwright_fallback = bool(
+            getattr(self.browser, "allow_playwright_fallback", True)
+        )
+        starsearch_enforced = starsearch_backend and not allow_playwright_fallback
+        if mode != RenderMode.LIGHT and starsearch_unsupported and starsearch_enforced:
+            raise UnsupportedStarSearchOptionError(
+                "StarSearch does not yet support: " + ", ".join(unsupported_options)
+            )
         if mode != RenderMode.LIGHT and not starsearch_unsupported:
             try:
                 from . import starsearch_scrape
-                if starsearch_scrape.tcp_addr():
-                    languages = (location or {}).get("languages") or []
-                    locale = str(languages[0]) if languages else "en-US"
-                    ss = await starsearch_scrape.scrape(
-                        url,
-                        formats=formats,
-                        only_main_content=only_main_content,
-                        timeout=max(1.0, timeout / 1000),
-                        retries=max_retries + 1,
-                        actions=actions,
-                        wait_for=wait_for,
-                        scroll=scroll,
-                        include_tags=include_tags,
-                        exclude_tags=exclude_tags,
-                        cookies=cookies,
-                        proxy=proxy,
-                        locale=locale,
-                        allow_private_network=(
-                            getattr(self.browser, "allow_private_network", False) is True
-                        ),
+                if not starsearch_scrape.tcp_addr():
+                    raise RuntimeError("StarSearch TCP is not configured")
+                languages = (location or {}).get("languages") or []
+                locale = str(languages[0]) if languages else "en-US"
+                ss = await starsearch_scrape.scrape(
+                    url,
+                    formats=formats,
+                    only_main_content=only_main_content,
+                    timeout=max(1.0, timeout / 1000),
+                    retries=max_retries + 1,
+                    actions=actions,
+                    wait_for=wait_for,
+                    scroll=scroll,
+                    include_tags=include_tags,
+                    exclude_tags=exclude_tags,
+                    cookies=cookies,
+                    proxy=proxy,
+                    locale=locale,
+                    allow_private_network=(
+                        getattr(self.browser, "allow_private_network", False) is True
+                    ),
+                )
+                if ss and any((
+                    ss.markdown,
+                    ss.html,
+                    ss.raw_html,
+                    ss.links,
+                    ss.screenshot,
+                )):
+                    logger.info(f"Scraped {url} via StarSearch (anti-detect)")
+                    return await self._postprocess_result(
+                        url, ss, remove_base64_images, change_tracking
                     )
-                    if ss and any((
-                        ss.markdown,
-                        ss.html,
-                        ss.raw_html,
-                        ss.links,
-                        ss.screenshot,
-                    )):
-                        logger.info(f"Scraped {url} via StarSearch (anti-detect)")
-                        return await self._postprocess_result(
-                            url, ss, remove_base64_images, change_tracking
-                        )
+                raise RuntimeError("StarSearch returned no usable content")
             except Exception as e:
+                if starsearch_enforced:
+                    raise
                 logger.warning(f"StarSearch scrape failed for {url}: {e}, falling back to Playwright")
+
+        if mode != RenderMode.LIGHT and starsearch_enforced:
+            raise RuntimeError("StarSearch production path could not serve the request")
 
         # ── Lightweight rendering path ────────────────────────────────────
         # If render_mode is "light" or "auto", try lightweight HTTP fetch first.

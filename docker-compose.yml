@@ -19,6 +19,7 @@ services:
       HUGINN_API_KEY_FILE: "/run/secrets/huginn_api_key"
       HUGINN_USER_AGENT: "Huginn/Bot (+https://huginn.dev/bot)"
       HUGINN_BROWSER_BACKEND: "starsearch"
+      HUGINN_ALLOW_PLAYWRIGHT_FALLBACK: "false"
       # Route scraping through the host StarSearch daemon (anti-detect browser).
       # Reachable on loopback because this container is network_mode: host.
       HUGINN_STARSEARCH_TCP: "127.0.0.1:7676"

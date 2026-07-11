@@ -318,3 +318,42 @@ class TestScraperResilienceConstructor:
         pool = [{"server": "http://proxy1:8080"}, {"server": "http://proxy2:8080"}]
         scraper = Scraper(browser=None, proxy_pool=pool)
         assert scraper._proxy_pool == pool
+
+
+class TestStarSearchFailClosed:
+    @pytest.mark.asyncio
+    async def test_daemon_failure_does_not_fall_back_to_playwright(self):
+        from huginn.scraper import Scraper
+
+        browser = MagicMock()
+        browser.backend = "starsearch"
+        browser.allow_playwright_fallback = False
+        browser.allow_private_network = False
+        scraper = Scraper(browser)
+
+        with patch("huginn.starsearch_scrape.tcp_addr", return_value="127.0.0.1:7676"), patch(
+            "huginn.starsearch_scrape.scrape",
+            AsyncMock(side_effect=RuntimeError("daemon unavailable")),
+        ):
+            with pytest.raises(RuntimeError, match="daemon unavailable"):
+                await scraper.scrape("https://example.com", render_mode="full")
+
+        browser.new_context.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unsupported_control_is_not_silently_weakened(self):
+        from huginn.scraper import Scraper, UnsupportedStarSearchOptionError
+
+        browser = MagicMock()
+        browser.backend = "starsearch"
+        browser.allow_playwright_fallback = False
+        scraper = Scraper(browser)
+
+        with pytest.raises(UnsupportedStarSearchOptionError, match="headers"):
+            await scraper.scrape(
+                "https://example.com",
+                render_mode="full",
+                headers={"X-Test": "value"},
+            )
+
+        browser.new_context.assert_not_called()

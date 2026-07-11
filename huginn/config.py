@@ -32,6 +32,7 @@ class BrowserConfig:
     wait_for_timeout: int = 5000  # ms
     stealth_mode: bool = True
     allow_private_network: bool = False
+    allow_playwright_fallback: bool = False
     user_agent: Optional[str] = field(default_factory=_default_user_agent)
 
 
@@ -192,6 +193,7 @@ def _apply_env(config: HuginnConfig):
         f"{_P}_HEADLESS": ("browser", "headless"),
         f"{_P}_STEALTH": ("browser", "stealth_mode"),
         f"{_P}_ALLOW_PRIVATE_NETWORK": ("browser", "allow_private_network"),
+        f"{_P}_ALLOW_PLAYWRIGHT_FALLBACK": ("browser", "allow_playwright_fallback"),
         f"{_P}_MAX_DEPTH": ("crawl", "max_depth"),
         f"{_P}_MAX_PAGES": ("crawl", "max_pages"),
         f"{_P}_CONCURRENCY": ("crawl", "concurrency"),

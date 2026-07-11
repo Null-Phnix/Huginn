@@ -275,8 +275,8 @@ class BrowserManager:
 
     When *config* is supplied and ``config.backend == 'starsearch'``, the
     manager delegates to a :class:`StarSearchBackend` instead of Playwright.
-    If the StarSearch daemon is unavailable it falls back to Playwright with
-    a warning.
+    Playwright fallback is an explicit compatibility option. Production
+    StarSearch mode fails closed by default.
 
     When *config* is ``None`` (the default) the manager behaves exactly as
     before — pure Playwright — preserving full backward compatibility.
@@ -293,6 +293,7 @@ class BrowserManager:
         self.viewport = viewport
         self.user_agent = user_agent
         self.allow_private_network = False
+        self.allow_playwright_fallback = True
 
         # Decide backend
         self._backend_name: str = "playwright"
@@ -312,6 +313,7 @@ class BrowserManager:
             if config.user_agent is not None:
                 self.user_agent = config.user_agent
             self.allow_private_network = config.allow_private_network
+            self.allow_playwright_fallback = config.allow_playwright_fallback
 
         self._playwright = None
         self._browser: Optional[Browser] = None
@@ -336,12 +338,15 @@ class BrowserManager:
         if self._backend_name == "starsearch":
             from .starsearch_scrape import tcp_addr
             if tcp_addr():
-                logger.info("BrowserManager: StarSearch primary with Playwright fallback")
-            else:
-                logger.warning(
-                    "browser.backend=starsearch but HUGINN_STARSEARCH_TCP is unset; "
-                    "Playwright will serve requests until StarSearch is configured"
+                logger.info(
+                    "BrowserManager: StarSearch primary (Playwright fallback=%s)",
+                    self.allow_playwright_fallback,
                 )
+            else:
+                message = "browser.backend=starsearch but HUGINN_STARSEARCH_TCP is unset"
+                if not self.allow_playwright_fallback:
+                    raise RuntimeError(message)
+                logger.warning("%s; explicit Playwright compatibility fallback enabled", message)
 
         # Playwright path (default or fallback)
         if self._browser:

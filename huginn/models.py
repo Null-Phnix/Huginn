@@ -27,6 +27,7 @@ class ErrorCode(str, Enum):
     INVALID_URL = "invalid_url"                  # 400
     MISSING_REQUIRED_FIELD = "missing_required"   # 400
     UNSUPPORTED_FORMAT = "unsupported_format"    # 400
+    UNSUPPORTED_OPTION = "unsupported_option"    # 400
     VALIDATION_ERROR = "validation_error"         # 400
     UNAUTHORIZED = "unauthorized"                 # 401
     FORBIDDEN = "forbidden"                      # 403

@@ -35,6 +35,7 @@ class TestHuginnConfig:
         assert config.server.host == "0.0.0.0"
         assert config.server.port == 7432
         assert config.server.api_key is None
+        assert config.browser.allow_playwright_fallback is False
 
     def test_custom_config(self):
         """Config should accept custom values."""
@@ -104,6 +105,14 @@ class TestLoadConfig:
             assert config.browser.headless is False
             assert config.crawl.max_depth == 7
             assert config.extract.llm_provider == "anthropic"
+
+    def test_playwright_fallback_requires_explicit_environment_opt_in(self):
+        with patch.dict(
+            os.environ, {"HUGINN_ALLOW_PLAYWRIGHT_FALLBACK": "true"}, clear=False
+        ):
+            config = load_config()
+
+        assert config.browser.allow_playwright_fallback is True
 
     def test_env_data_dir_moves_derived_database_path(self):
         with patch.dict(os.environ, {"HUGINN_DATA_DIR": "/data/huginn"}, clear=False):
