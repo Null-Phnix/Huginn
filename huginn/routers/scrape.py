@@ -10,17 +10,24 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..config import HuginnConfig
 from ..models import ErrorCode, OutputFormat, ScrapeRequest, ScrapeResponse
 from ..scraper import Scraper
+from ..proxy import ProxyUnavailable
 from ..state import get_state, limiter
-from ..utils import _map_exception_to_error_code, build_proxy_dict, scrape_failure
+from ..utils import (
+    _map_exception_to_error_code,
+    get_proxy_provider,
+    proxy_failure_likely,
+    scrape_failure,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _cache_context(req: ScrapeRequest) -> dict:
+def _cache_context(req: ScrapeRequest, egress_identity: Optional[dict] = None) -> dict:
     """Canonical request options that materially affect scraped output."""
     payload = req.model_dump(mode="json", by_alias=True, exclude_none=True)
     payload.pop("url", None)
     payload.pop("formats", None)
+    payload["_egress"] = egress_identity or {"mode": "direct"}
     return payload
 
 
@@ -61,10 +68,13 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
             error_code=ErrorCode.CIRCUIT_OPEN,
         )
 
-    # Check response cache
+    proxy_provider = get_proxy_provider(config)
+
+    # Check response cache. Egress identity is part of the key so a direct
+    # response is never silently reused after a proxy policy is enabled.
     formats = req.formats or [OutputFormat.MARKDOWN]
     cacheable = _is_cacheable(req)
-    cache_context = _cache_context(req)
+    cache_context = _cache_context(req, proxy_provider.cache_identity())
     cached = await get_cached_scrape_result(req.url, formats, extra=cache_context) if cacheable else None
     if cached:
         if state.replay_log:
@@ -75,12 +85,14 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
         return ScrapeResponse(success=True, data=cached, cached=True)
 
     scraper = Scraper(state.browser, cb)
-    proxy_dict = build_proxy_dict(config)
+    proxy_lease = None
 
     _t0 = time.perf_counter()
     _replay_status = "success"
     _replay_error: Optional[str] = None
     try:
+        proxy_lease = proxy_provider.acquire(session_key=domain)
+        proxy_dict = proxy_lease.as_browser_proxy()
         data = await scraper.scrape(
             url=req.url,
             formats=formats,
@@ -106,6 +118,8 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
         failure = scrape_failure(data)
         if failure:
             status, message = failure
+            if proxy_lease and proxy_failure_likely(status, message):
+                proxy_lease.report_failure(message)
             await cb.record_failure(domain)
             _replay_status = "error"
             _replay_error = message
@@ -116,6 +130,14 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
                 error_code=ErrorCode.from_http_status(status),
             )
 
+        if proxy_lease:
+            proxy_lease.report_success()
+        data.metadata = data.metadata or {}
+        data.metadata["egress"] = {
+            "mode": proxy_provider.mode,
+            "proxied": bool(proxy_lease and proxy_lease.configured),
+            "endpoint": proxy_lease.endpoint.label if proxy_lease and proxy_lease.endpoint else None,
+        }
         if cacheable and (data.markdown or data.html or data.raw_html or data.links or data.screenshot):
             await cache_scrape_result(
                 req.url,
@@ -134,8 +156,8 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
             warnings.append("Inline extract is not executed by /v1/scrape yet; use /v1/extract.")
         if req.proxy is not None:
             warnings.append(
-                "The Firecrawl proxy mode selects no managed IP pool in self-hosted Huginn; "
-                "configure HUGINN_PROXY_SERVER for explicit egress."
+                "The Firecrawl proxy mode does not create managed egress; Huginn used the "
+                f"server proxy provider mode={proxy_provider.mode}."
             )
         return ScrapeResponse(
             success=True,
@@ -152,6 +174,8 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
             error_code=ErrorCode.CIRCUIT_OPEN,
         )
     except asyncio.TimeoutError:
+        if proxy_lease:
+            proxy_lease.report_failure(f"timed out after {req.timeout}ms")
         await cb.record_failure(domain)
         _replay_status = "timeout"
         _replay_error = f"timed out after {req.timeout}ms"
@@ -160,7 +184,17 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
             error=f"Request timed out after {req.timeout}ms",
             error_code=ErrorCode.TIMEOUT,
         )
+    except ProxyUnavailable as e:
+        _replay_status = "blocked"
+        _replay_error = str(e)
+        return ScrapeResponse(
+            success=False,
+            error=str(e),
+            error_code=ErrorCode.SERVICE_UNAVAILABLE,
+        )
     except Exception as e:
+        if proxy_lease and proxy_failure_likely(message=str(e)):
+            proxy_lease.report_failure(str(e))
         await cb.record_failure(domain)
         error_code = _map_exception_to_error_code(e)
         _replay_status = "error"

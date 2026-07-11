@@ -44,7 +44,11 @@ def _map_exception_to_error_code(e: Exception) -> Optional[str]:
 
 
 def build_proxy_dict(config: HuginnConfig) -> Optional[dict]:
-    """Build proxy dict from config for Playwright context."""
+    """Legacy single-endpoint helper kept for third-party imports.
+
+    Suite request paths use ``get_proxy_provider`` so rotation and failure
+    policy cannot be bypassed by this compatibility function.
+    """
     if not config.proxy.server:
         return None
     proxy = {"server": config.proxy.server}
@@ -53,6 +57,34 @@ def build_proxy_dict(config: HuginnConfig) -> Optional[dict]:
     if config.proxy.password:
         proxy["password"] = config.proxy.password
     return proxy
+
+
+def get_proxy_provider(config: HuginnConfig):
+    """Return the process provider, lazily creating it for lifespan-free tests."""
+    from .proxy import build_proxy_provider
+
+    state = get_state()
+    if state.proxy_provider is None:
+        state.proxy_provider = build_proxy_provider(config)
+    return state.proxy_provider
+
+
+def proxy_failure_likely(status: int | None = None, message: str = "") -> bool:
+    """Classify failures that should affect proxy health, not ordinary target 4xx."""
+    lowered = message.lower()
+    return status in {407, 429, 502, 503, 504} or any(
+        marker in lowered
+        for marker in (
+            "proxy authentication",
+            "proxy connection",
+            "err_proxy",
+            "err_tunnel",
+            "connection reset",
+            "connection refused",
+            "timed out",
+            "timeout",
+        )
+    )
 
 
 def scrape_failure(data: Optional[ScrapeData]) -> Optional[tuple[int, str]]:

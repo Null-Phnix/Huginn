@@ -9,8 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..config import HuginnConfig
 from ..models import ErrorCode, FlockRequest, FlockResponse, FlockResultItem, OutputFormat
 from ..scraper import Scraper
+from ..proxy import ProxyUnavailable
 from ..state import get_state, limiter
-from ..utils import _map_exception_to_error_code, build_proxy_dict, scrape_failure
+from ..utils import (
+    _map_exception_to_error_code,
+    get_proxy_provider,
+    proxy_failure_likely,
+    scrape_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +30,7 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
     from ..circuit_breaker import get_circuit_breaker, extract_domain
     from ..cache import get_cached_scrape_result, cache_scrape_result
 
-    proxy_dict = build_proxy_dict(config)
+    proxy_provider = get_proxy_provider(config)
     cb = get_circuit_breaker()
     scraper = Scraper(state.browser, cb)
     sem = asyncio.Semaphore(5)
@@ -33,6 +39,7 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
     cache_context = req.model_dump(mode="json", by_alias=True, exclude_none=True)
     cache_context.pop("urls", None)
     cache_context.pop("formats", None)
+    cache_context["_egress"] = proxy_provider.cache_identity()
 
     async def scrape_one(url: str) -> FlockResultItem:
         from ..scraper import _is_valid_http_url
@@ -67,7 +74,9 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
             if cached:
                 return FlockResultItem(url=url, success=True, data=cached, cached=True)
 
+            proxy_lease = None
             try:
+                proxy_lease = proxy_provider.acquire(session_key=domain)
                 data = await scraper.scrape(
                     url=url,
                     formats=req.formats,
@@ -75,11 +84,13 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
                     exclude_tags=req.exclude_tags,
                     only_main_content=req.only_main_content,
                     timeout=req.timeout,
-                    proxy=proxy_dict,
+                    proxy=proxy_lease.as_browser_proxy(),
                 )
                 failure = scrape_failure(data)
                 if failure:
                     status, message = failure
+                    if proxy_failure_likely(status, message):
+                        proxy_lease.report_failure(message)
                     await cb.record_failure(domain)
                     return FlockResultItem(
                         url=url,
@@ -88,6 +99,13 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
                         error=message,
                         error_code=ErrorCode.from_http_status(status),
                     )
+                proxy_lease.report_success()
+                data.metadata = data.metadata or {}
+                data.metadata["egress"] = {
+                    "mode": proxy_provider.mode,
+                    "proxied": proxy_lease.configured,
+                    "endpoint": proxy_lease.endpoint.label if proxy_lease.endpoint else None,
+                }
                 if data.markdown or data.html or data.raw_html or data.links or data.screenshot:
                     await cache_scrape_result(
                         url,
@@ -98,13 +116,22 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
                 await cb.record_success(domain)
                 return FlockResultItem(url=url, success=True, data=data)
             except asyncio.TimeoutError:
+                if proxy_lease:
+                    proxy_lease.report_failure(f"timed out after {req.timeout}ms")
                 await cb.record_failure(domain)
                 return FlockResultItem(
                     url=url, success=False,
                     error=f"Request timed out after {req.timeout}ms",
                     error_code=ErrorCode.TIMEOUT,
                 )
+            except ProxyUnavailable as e:
+                return FlockResultItem(
+                    url=url, success=False, error=str(e),
+                    error_code=ErrorCode.SERVICE_UNAVAILABLE,
+                )
             except Exception as e:
+                if proxy_lease and proxy_failure_likely(message=str(e)):
+                    proxy_lease.report_failure(str(e))
                 await cb.record_failure(domain)
                 return FlockResultItem(
                     url=url, success=False,

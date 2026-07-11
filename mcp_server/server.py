@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -25,7 +26,6 @@ from mcp.server.fastmcp import Context, FastMCP
 # ─── Settings ──────────────────────────────────────────────────────────────────
 
 HUGINN_BASE_URL = os.getenv("HUGINN_BASE_URL", "http://localhost:7432").rstrip("/")
-HUGINN_API_KEY = os.getenv("HUGINN_API_KEY", "")
 HUGINN_POLL_INTERVAL = float(os.getenv("HUGINN_POLL_INTERVAL", "2"))
 HUGINN_POLL_TIMEOUT = float(os.getenv("HUGINN_POLL_TIMEOUT", "300"))
 
@@ -34,8 +34,14 @@ HUGINN_POLL_TIMEOUT = float(os.getenv("HUGINN_POLL_TIMEOUT", "300"))
 
 def _headers() -> dict[str, str]:
     h = {"Content-Type": "application/json", "Accept": "application/json"}
-    if HUGINN_API_KEY:
-        h["Authorization"] = f"Bearer {HUGINN_API_KEY}"
+    api_key = os.getenv("HUGINN_API_KEY", "").strip()
+    api_key_file = Path(
+        os.getenv("HUGINN_API_KEY_FILE", "~/.config/huginn/api-key")
+    ).expanduser()
+    if not api_key and api_key_file.is_file():
+        api_key = api_key_file.read_text(encoding="utf-8").strip()
+    if api_key:
+        h["Authorization"] = f"Bearer {api_key}"
     return h
 
 

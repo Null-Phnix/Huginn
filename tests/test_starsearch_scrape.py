@@ -35,6 +35,20 @@ class FakeWriter:
         return None
 
 
+def test_handshake_reads_tcp_token_file(monkeypatch, tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("a" * 64)
+    monkeypatch.setenv("HUGINN_STARSEARCH_TOKEN_FILE", str(token_file))
+
+    payload = starsearch_scrape._handshake("test-client")
+
+    assert payload == {
+        "starsearch": "1.0",
+        "client_version": "test-client",
+        "auth_token": "a" * 64,
+    }
+
+
 @pytest.mark.asyncio
 async def test_daemon_status_reports_live_capacity(monkeypatch):
     reader = FakeReader([

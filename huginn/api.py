@@ -27,6 +27,7 @@ from .replay_log import ReplayLog
 from .metrics import MetricsMiddleware
 from .scheduler import Scheduler
 from .browser import BrowserManager
+from .proxy import build_proxy_provider
 from .state import get_state, reset_state, limiter
 from .tasks import register_scheduler_handlers
 from .utils import make_verify_api_key
@@ -71,6 +72,10 @@ async def lifespan(app: FastAPI):
     # Initialize browser
     state.browser = BrowserManager(config=config.browser)
     await state.browser.start()
+
+    # Initialize explicit egress policy. A configured provider failing to load
+    # aborts startup instead of silently sending traffic directly.
+    state.proxy_provider = build_proxy_provider(config)
 
     # Initialize scheduler
     state.scheduler = Scheduler(state.job_store)
@@ -117,6 +122,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     # Populate state so routers can access config
     state = get_state()
     state.config = config
+    state.proxy_provider = build_proxy_provider(config)
 
     app = FastAPI(
         title=_branding.name,
@@ -138,6 +144,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
             {"name": "Templates", "description": "Extraction template registry"},
             {"name": "Jobs", "description": "Job lifecycle management (list, cancel)"},
             {"name": "Replay", "description": "Scrape replay log / audit trail"},
+            {"name": "Browser Sessions", "description": "Authenticated StarSearch browser session lifecycle and commands"},
         ],
     )
 
@@ -179,6 +186,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
         create_memory_router,
         create_replay_router,
         create_aliases_router,
+        create_browser_sessions_router,
     )
 
     app.include_router(create_health_router(verify_api_key))
@@ -196,6 +204,7 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     app.include_router(create_memory_router(config, verify_api_key))
     app.include_router(create_replay_router(config, verify_api_key))
     app.include_router(create_aliases_router(config, verify_api_key))
+    app.include_router(create_browser_sessions_router(config, verify_api_key))
 
     return app
 

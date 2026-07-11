@@ -15,12 +15,27 @@ import json
 import os
 import re
 import urllib.parse
+from pathlib import Path
 from typing import Any, List, Dict, Optional
 
 import markdownify
 from bs4 import BeautifulSoup
 
 from .models import OutputFormat, ScrapeData
+
+
+def _handshake(client_version: str) -> dict:
+    payload = {"starsearch": "1.0", "client_version": client_version}
+    token = os.environ.get("HUGINN_STARSEARCH_TOKEN")
+    token_file = os.environ.get("HUGINN_STARSEARCH_TOKEN_FILE")
+    if token_file:
+        try:
+            token = Path(token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(f"cannot read HUGINN_STARSEARCH_TOKEN_FILE: {exc}") from exc
+    if token:
+        payload["auth_token"] = token
+    return payload
 
 
 def _action_type(action: dict) -> str:
@@ -54,9 +69,9 @@ async def daemon_status(timeout: float = 2.0) -> dict:
                 raise ConnectionError("daemon closed health connection")
             return json.loads(line.decode())
 
-        handshake = await exchange({"starsearch": "1.0", "client_version": "huginn-health"})
+        handshake = await exchange(_handshake("huginn-health"))
         if not handshake.get("compatible"):
-            raise RuntimeError("incompatible protocol")
+            raise RuntimeError(handshake.get("error") or "incompatible protocol")
         response = await exchange({"v": 1, "cmd": "status"})
         if not response.get("ok"):
             raise _response_error(response, "status")
@@ -73,6 +88,43 @@ async def daemon_status(timeout: float = 2.0) -> dict:
             "address": addr,
             "error": f"{type(exc).__name__}: {exc}",
         }
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+async def daemon_command(payload: dict, timeout: float = 30.0) -> dict:
+    """Send one authenticated command over a short-lived TCP connection."""
+    addr = tcp_addr()
+    if not addr:
+        raise RuntimeError("StarSearch TCP is not configured")
+    host, _, port = addr.partition(":")
+    writer = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, int(port or 7676), limit=16 * 1024 * 1024),
+            timeout=min(timeout, 10.0),
+        )
+
+        async def exchange(message: dict) -> dict:
+            writer.write((json.dumps(message) + "\n").encode())
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+            if not line:
+                raise ConnectionError("StarSearch daemon closed the connection")
+            return json.loads(line.decode())
+
+        handshake = await exchange(_handshake("huginn-session-api"))
+        if not handshake.get("compatible"):
+            raise RuntimeError(handshake.get("error") or "incompatible StarSearch protocol")
+        response = await exchange(payload)
+        if not response.get("ok"):
+            raise _response_error(response, str(payload.get("cmd", "command")))
+        return response
     finally:
         if writer is not None:
             writer.close()
@@ -193,17 +245,23 @@ async def _fetch_page(
 
     sid = None
     try:
-        hs = await send({"starsearch": "1.0", "client_version": "huginn"})
+        hs = await send(_handshake("huginn"))
         if not hs.get("compatible"):
-            raise RuntimeError(f"handshake incompatible: {hs}")
-        proxy_server = proxy.get("server") if proxy else None
+            raise RuntimeError(f"handshake rejected: {hs.get('error') or 'incompatible protocol'}")
+        proxy_options: Any = None
+        if proxy:
+            proxy_options = (
+                proxy
+                if proxy.get("username") or proxy.get("password")
+                else proxy.get("server")
+            )
         r = await send(
             {
                 "v": 1,
                 "cmd": "new_session",
                 "sid": None,
                 "opts": {
-                    "proxy": proxy_server,
+                    "proxy": proxy_options,
                     "locale": locale,
                     "human_level": 1,
                     "capabilities": {

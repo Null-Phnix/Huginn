@@ -33,6 +33,8 @@ class AppState:
     scheduler: Optional[Scheduler] = None
     watcher: Optional[Any] = None
     crawl_tasks: dict = field(default_factory=dict)
+    browser_sessions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    proxy_provider: Optional[Any] = None
 
 
 # Module-level singleton — populated by lifespan() in api.py
@@ -48,3 +50,4 @@ def reset_state() -> None:
     """Reset state to defaults (used in tests)."""
     global _state
     _state = AppState()
+    limiter.reset()

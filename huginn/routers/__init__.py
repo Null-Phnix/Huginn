@@ -15,6 +15,7 @@ from .templates import create_templates_router
 from .memory import create_memory_router
 from .replay import create_replay_router
 from .aliases import create_aliases_router
+from .browser_sessions import create_browser_sessions_router
 
 __all__ = [
     "create_health_router",
@@ -32,4 +33,5 @@ __all__ = [
     "create_memory_router",
     "create_replay_router",
     "create_aliases_router",
+    "create_browser_sessions_router",
 ]

@@ -37,10 +37,16 @@ class BrowserConfig:
 
 @dataclass
 class ProxyConfig:
-    """Proxy configuration."""
+    """Explicit egress configuration. Stealth without this remains direct."""
+    provider: str = "auto"  # auto, direct, static
     server: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
+    urls: str = ""  # comma/newline separated proxy URLs
+    urls_file: Optional[str] = None
+    rotation: str = "round_robin"  # round_robin or sticky
+    failure_threshold: int = 3
+    cooldown_seconds: int = 60
 
 
 @dataclass
@@ -172,6 +178,15 @@ def _apply_env(config: HuginnConfig):
     takes effect without restarting the process.
     """
     _P = _branding.env_prefix  # local alias to keep the table readable
+    api_key_file = os.environ.get(f"{_P}_API_KEY_FILE")
+    if api_key_file:
+        try:
+            api_key = Path(api_key_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(f"Cannot read {_P}_API_KEY_FILE {api_key_file}: {exc}") from exc
+        if not api_key:
+            raise RuntimeError(f"{_P}_API_KEY_FILE {api_key_file} is empty")
+        config.server.api_key = api_key
     env_map = {
         f"{_P}_BROWSER_BACKEND": ("browser", "backend"),
         f"{_P}_HEADLESS": ("browser", "headless"),
@@ -192,6 +207,12 @@ def _apply_env(config: HuginnConfig):
         f"{_P}_PROXY_SERVER": ("proxy", "server"),
         f"{_P}_PROXY_USERNAME": ("proxy", "username"),
         f"{_P}_PROXY_PASSWORD": ("proxy", "password"),
+        f"{_P}_PROXY_PROVIDER": ("proxy", "provider"),
+        f"{_P}_PROXY_URLS": ("proxy", "urls"),
+        f"{_P}_PROXY_URLS_FILE": ("proxy", "urls_file"),
+        f"{_P}_PROXY_ROTATION": ("proxy", "rotation"),
+        f"{_P}_PROXY_FAILURE_THRESHOLD": ("proxy", "failure_threshold"),
+        f"{_P}_PROXY_COOLDOWN_SECONDS": ("proxy", "cooldown_seconds"),
         f"{_P}_USER_AGENT": ("browser", "user_agent"),
     }
     for env_var, (section, attr) in env_map.items():

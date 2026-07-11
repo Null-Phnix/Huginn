@@ -5,6 +5,15 @@ import pytest
 from mcp_server import server
 
 
+def test_headers_read_api_key_file(monkeypatch, tmp_path):
+    key_file = tmp_path / "api-key"
+    key_file.write_text("mcp-local-key")
+    monkeypatch.delenv("HUGINN_API_KEY", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY_FILE", str(key_file))
+
+    assert server._headers()["Authorization"] == "Bearer mcp-local-key"
+
+
 @pytest.mark.asyncio
 async def test_sweep_accepts_canonical_id(monkeypatch):
     calls = []

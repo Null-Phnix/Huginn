@@ -682,6 +682,47 @@ class ResearchResponse(BaseModel):
     error_code: Optional[ErrorCode] = None
 
 
+# ─── Browser Sessions ────────────────────────────────────────────────────────
+
+class BrowserCommand(str, Enum):
+    NAVIGATE = "navigate"
+    CLICK = "click"
+    TYPE = "type"
+    SCROLL = "scroll"
+    HOVER = "hover"
+    WAIT_FOR = "wait_for"
+    SCREENSHOT = "screenshot"
+    GET_CONTENT = "get_content"
+    EVALUATE = "evaluate"
+    GET_COOKIES = "get_cookies"
+    SET_COOKIES = "set_cookies"
+    GO_BACK = "go_back"
+    GO_FORWARD = "go_forward"
+
+
+class BrowserSessionCreateRequest(BaseModel):
+    locale: str = Field("en-US", min_length=2, max_length=32)
+    human_level: int = Field(1, ge=0, le=3)
+    max_idle_s: int = Field(900, ge=30, le=3600)
+    allowed_domains: List[str] = Field(default_factory=list, max_length=100)
+    allow_internal_network: bool = False
+    proxy: Optional[str] = Field(None, max_length=2048)
+
+
+class BrowserSessionCommandRequest(BaseModel):
+    command: BrowserCommand
+    url: Optional[str] = Field(None, max_length=8192)
+    selector: Optional[str] = Field(None, max_length=4096)
+    text: Optional[str] = Field(None, max_length=200_000)
+    script: Optional[str] = Field(None, max_length=200_000)
+    key: Optional[str] = Field(None, max_length=128)
+    direction: str = Field("down", pattern="^(up|down|left|right)$")
+    amount: int = Field(300, ge=0, le=100_000)
+    timeout_s: int = Field(30, ge=1, le=300)
+    human: bool = True
+    cookies: Optional[List[Dict[str, Any]]] = Field(None, max_length=200)
+
+
 # ─── Page Watch / Change Detection ─────────────────────────────────────────────
 
 class WatchRequest(BaseModel):

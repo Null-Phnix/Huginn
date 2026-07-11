@@ -125,6 +125,18 @@ class TestLoadConfig:
 
         assert config.db_path == "/state/custom.sqlite3"
 
+    def test_api_key_file_is_loaded_without_putting_secret_in_environment(
+        self, monkeypatch, tmp_path
+    ):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("local-secret-key")
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
+        monkeypatch.delenv("HUGINN_API_KEY", raising=False)
+
+        config = load_config()
+
+        assert config.server.api_key == "local-secret-key"
+
     def test_yaml_data_dir_moves_derived_database_path(self, tmp_path):
         import yaml
 

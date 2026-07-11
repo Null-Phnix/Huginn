@@ -11,19 +11,29 @@ services:
     dns:
       - "${HUGINN_DNS_PRIMARY:-1.1.1.1}"
       - "${HUGINN_DNS_SECONDARY:-9.9.9.9}"
-    # Bind loopback only: with network_mode host this keeps the unauthenticated
-    # scraping API off the LAN/Tailscale. The local MCP reaches it via 127.0.0.1.
+    # Bind loopback only; bearer auth still protects data-bearing API routes.
     command: ["huginn", "serve", "--host", "127.0.0.1", "--port", "7432"]
     environment:
       HUGINN_DATA_DIR: /data
       HUGINN_PORT: 7432
+      HUGINN_API_KEY_FILE: "/run/secrets/huginn_api_key"
       HUGINN_USER_AGENT: "Huginn/Bot (+https://huginn.dev/bot)"
       HUGINN_BROWSER_BACKEND: "starsearch"
       # Route scraping through the host StarSearch daemon (anti-detect browser).
       # Reachable on loopback because this container is network_mode: host.
       HUGINN_STARSEARCH_TCP: "127.0.0.1:7676"
+      HUGINN_STARSEARCH_TOKEN_FILE: "/run/secrets/starsearch_tcp_token"
+      HUGINN_PROXY_PROVIDER: "${HUGINN_PROXY_PROVIDER:-direct}"
+      HUGINN_PROXY_URLS_FILE: "/run/secrets/huginn_proxy_urls"
+      HUGINN_PROXY_ROTATION: "${HUGINN_PROXY_ROTATION:-round_robin}"
+      HUGINN_PROXY_FAILURE_THRESHOLD: "${HUGINN_PROXY_FAILURE_THRESHOLD:-3}"
+      HUGINN_PROXY_COOLDOWN_SECONDS: "${HUGINN_PROXY_COOLDOWN_SECONDS:-60}"
     volumes:
       - huginn-data:/data
+      - "${STARSEARCH_TCP_TOKEN_FILE:-/home/phnix/.config/starsearch/tcp-token}:/run/secrets/starsearch_tcp_token:ro"
+      - "${HUGINN_API_KEY_FILE:-/home/phnix/.config/huginn/api-key}:/run/secrets/huginn_api_key:ro"
+      # /dev/null keeps direct mode reproducible without creating a fake proxy file.
+      - "${HUGINN_PROXY_URLS_FILE:-/dev/null}:/run/secrets/huginn_proxy_urls:ro"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7432/health/ready"]
