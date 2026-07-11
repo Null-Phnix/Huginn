@@ -74,7 +74,12 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
             scroll=req.scroll,
             render_mode=req.render_mode,
         )
-        await cache_scrape_result(req.url, formats, data)
+        # Only cache successful scrapes — caching a transient failure (500/empty)
+        # poisons the cache and serves the error on every later request, defeating
+        # the StarSearch retry path.
+        _status = (data.metadata or {}).get("status_code", 200) if data else 500
+        if data and _status < 400 and (data.markdown or data.html or data.raw_html or data.links):
+            await cache_scrape_result(req.url, formats, data)
         await cb.record_success(domain)
         summary = None
         if req.summary:
