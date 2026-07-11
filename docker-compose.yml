@@ -6,6 +6,9 @@ services:
     image: ghcr.io/null-phnix/huginn:latest
     container_name: huginn
     network_mode: host
+    # Bind loopback only: with network_mode host this keeps the unauthenticated
+    # scraping API off the LAN/Tailscale. The local MCP reaches it via 127.0.0.1.
+    command: ["huginn", "serve", "--host", "127.0.0.1", "--port", "7432"]
     environment:
       HUGINN_DATA_DIR: /data
       HUGINN_PORT: 7432
@@ -15,7 +18,7 @@ services:
       - huginn-data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7432/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7432/health"]
       interval: 30s
       timeout: 10s
       retries: 3
