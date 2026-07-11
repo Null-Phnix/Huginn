@@ -6,6 +6,7 @@ shared state through get_state() instead of module-level globals.
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import uuid
@@ -22,10 +23,34 @@ from .models import (
 )
 from .scraper import Scraper
 from .state import get_state
-from .utils import _map_exception_to_error_code, build_proxy_dict, sse_event
+from .utils import (
+    _map_exception_to_error_code,
+    build_proxy_dict,
+    scrape_failure,
+    scrape_options_kwargs,
+    sse_event,
+)
 from .webhook import fire_webhook_for_job
 
 logger = logging.getLogger(__name__)
+
+
+async def _close_scraper(scraper) -> None:
+    """Close real scraper resources while remaining friendly to simple test doubles."""
+    close = getattr(scraper, "close", None)
+    if not close:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+def _crawl_scrape_kwargs(req: CrawlRequest) -> dict:
+    """Translate every CrawlRequest.scrapeOptions field into Scraper kwargs."""
+    kwargs = scrape_options_kwargs(req.scrape_options)
+    kwargs.pop("only_main_content", None)
+    kwargs.pop("timeout", None)
+    return kwargs
 
 
 async def schedule_handler(request: dict):
@@ -88,6 +113,8 @@ async def run_crawl(job_id: str, req: CrawlRequest):
         allow_backward=req.allow_backward_crawling,
         include_paths=req.include_paths,
         exclude_paths=req.exclude_paths,
+        ignore_robots=req.ignore_robots,
+        scrape_kwargs=_crawl_scrape_kwargs(req),
     )
 
     try:
@@ -97,7 +124,7 @@ async def run_crawl(job_id: str, req: CrawlRequest):
             start_url=req.url,
             scrape_formats=scraper_formats or [OutputFormat.MARKDOWN],
             only_main_content=req.scrape_options.only_main_content if req.scrape_options else True,
-            timeout=_config.browser.navigation_timeout,
+            timeout=req.scrape_options.timeout if req.scrape_options else _config.browser.navigation_timeout,
         )
 
         # Store results
@@ -105,10 +132,14 @@ async def run_crawl(job_id: str, req: CrawlRequest):
         for page in result.pages:
             pages_data.append(page.model_dump(exclude_none=True))
 
+        job_result = {"pages": pages_data}
+        errors = list(getattr(result, "errors", []) or [])
+        if errors:
+            job_result["errors"] = errors
         await _job_store.update_job(
             job_id,
             status="completed",
-            job_result={"pages": pages_data},
+            job_result=job_result,
             completed=result.completed,
             total=result.total_discovered,
         )
@@ -119,6 +150,7 @@ async def run_crawl(job_id: str, req: CrawlRequest):
         logger.error(f"Crawl job {job_id} failed: {e}", exc_info=True)
         await _job_store.update_job(job_id, status="failed", error=str(e))
     finally:
+        await _close_scraper(crawler.scraper)
         state.crawl_tasks.pop(job_id, None)
 
 
@@ -190,8 +222,19 @@ async def run_flock(job_id: str, req: FlockRequest):
     scraper = Scraper(_browser, cb)
     sem = asyncio.Semaphore(5)
     results: List[FlockResultItem] = []
+    cache_context = req.model_dump(mode="json", by_alias=True, exclude_none=True)
+    cache_context.pop("urls", None)
+    cache_context.pop("formats", None)
 
     async def scrape_one(url: str) -> FlockResultItem:
+        from .scraper import _is_valid_http_url
+        if not _is_valid_http_url(url):
+            return FlockResultItem(
+                url=url,
+                success=False,
+                error=f"Invalid URL (bad scheme or missing host): {url}",
+                error_code=ErrorCode.INVALID_URL,
+            )
         async with sem:
             domain = extract_domain(url)
             if cb.is_open(domain):
@@ -201,7 +244,11 @@ async def run_flock(job_id: str, req: FlockRequest):
                     error_code=ErrorCode.CIRCUIT_OPEN,
                 )
 
-            cached = await get_cached_scrape_result(url, req.formats or [OutputFormat.MARKDOWN])
+            cached = await get_cached_scrape_result(
+                url,
+                req.formats or [OutputFormat.MARKDOWN],
+                extra=cache_context,
+            )
             if cached:
                 return FlockResultItem(url=url, success=True, data=cached, cached=True)
 
@@ -215,7 +262,24 @@ async def run_flock(job_id: str, req: FlockRequest):
                     timeout=req.timeout,
                     proxy=proxy_dict,
                 )
-                await cache_scrape_result(url, req.formats or [OutputFormat.MARKDOWN], data)
+                failure = scrape_failure(data)
+                if failure:
+                    status, message = failure
+                    await cb.record_failure(domain)
+                    return FlockResultItem(
+                        url=url,
+                        success=False,
+                        data=data,
+                        error=message,
+                        error_code=ErrorCode.from_http_status(status),
+                    )
+                if data.markdown or data.html or data.raw_html or data.links or data.screenshot:
+                    await cache_scrape_result(
+                        url,
+                        req.formats or [OutputFormat.MARKDOWN],
+                        data,
+                        extra=cache_context,
+                    )
                 await cb.record_success(domain)
                 return FlockResultItem(url=url, success=True, data=data)
             except asyncio.TimeoutError:
@@ -269,6 +333,7 @@ async def run_flock(job_id: str, req: FlockRequest):
         logger.error(f"Flock job {job_id} failed: {e}", exc_info=True)
         await _job_store.update_job(job_id, status="failed", error=str(e))
     finally:
+        await _close_scraper(scraper)
         state.crawl_tasks.pop(job_id, None)
 
 
@@ -294,6 +359,8 @@ async def stream_crawl(req: CrawlRequest):
         allow_backward=req.allow_backward_crawling,
         include_paths=req.include_paths,
         exclude_paths=req.exclude_paths,
+        ignore_robots=req.ignore_robots,
+        scrape_kwargs=_crawl_scrape_kwargs(req),
     )
 
     try:
@@ -303,15 +370,16 @@ async def stream_crawl(req: CrawlRequest):
         async def _crawl_and_enqueue():
             """Run crawl and put each page into the queue as it completes."""
             try:
+                async def _on_page(page):
+                    await page_queue.put(("document", page))
+
                 result = await crawler.crawl(
                     start_url=req.url,
                     scrape_formats=scraper_formats or [OutputFormat.MARKDOWN],
                     only_main_content=req.scrape_options.only_main_content if req.scrape_options else True,
-                    timeout=_config.browser.navigation_timeout,
+                    timeout=req.scrape_options.timeout if req.scrape_options else _config.browser.navigation_timeout,
+                    on_page=_on_page,
                 )
-                # Put all pages in queue
-                for page in result.pages:
-                    await page_queue.put(("document", page))
                 await page_queue.put(("done", result))
             except Exception as e:
                 logger.error(f"Stream crawl failed: {e}", exc_info=True)
@@ -352,6 +420,7 @@ async def stream_crawl(req: CrawlRequest):
                     "status": "completed",
                     "completed": result_obj.completed,
                     "total": result_obj.total_discovered,
+                    "errors": list(getattr(result_obj, "errors", []) or []),
 
                 },
             }
@@ -360,6 +429,8 @@ async def stream_crawl(req: CrawlRequest):
     except Exception as e:
         logger.error(f"SSE crawl stream error: {e}", exc_info=True)
         yield sse_event("done", {"type": "done", "data": {"success": False, "status": "failed", "error": str(e)}})
+    finally:
+        await _close_scraper(crawler.scraper)
 
 
 async def jsonl_stream_crawl(req: CrawlRequest):
@@ -386,20 +457,16 @@ async def jsonl_stream_crawl(req: CrawlRequest):
         allow_backward=req.allow_backward_crawling,
         include_paths=req.include_paths,
         exclude_paths=req.exclude_paths,
+        ignore_robots=req.ignore_robots,
+        scrape_kwargs=_crawl_scrape_kwargs(req),
     )
 
     result_ref: list = [None]
-
-    async def _on_page(page_data):
-        """Called for every page as it completes — stream it immediately."""
-        line = json.dumps(page_data.model_dump(exclude_none=True))
-        yield line + "\n"
+    page_queue: asyncio.Queue = asyncio.Queue()
 
     async def _crawl_and_stream():
         """Run crawl with real-time page callback."""
         try:
-            page_queue: asyncio.Queue = asyncio.Queue()
-
             async def _relay(page_data):
                 await page_queue.put(page_data)
 
@@ -407,7 +474,7 @@ async def jsonl_stream_crawl(req: CrawlRequest):
                 start_url=req.url,
                 scrape_formats=scraper_formats or [OutputFormat.MARKDOWN],
                 only_main_content=req.scrape_options.only_main_content if req.scrape_options else True,
-                timeout=_config.browser.navigation_timeout,
+                timeout=req.scrape_options.timeout if req.scrape_options else _config.browser.navigation_timeout,
                 on_page=_relay,
             )
             result_ref[0] = result
@@ -441,6 +508,7 @@ async def jsonl_stream_crawl(req: CrawlRequest):
                 "status": "completed",
                 "completed": result_ref[0].completed,
                 "total": result_ref[0].total_discovered,
+                "errors": list(getattr(result_ref[0], "errors", []) or []),
             }
             yield json.dumps(summary) + "\n"
         else:
@@ -449,6 +517,8 @@ async def jsonl_stream_crawl(req: CrawlRequest):
     except Exception as e:
         logger.error(f"JSONL crawl stream error: {e}", exc_info=True)
         yield json.dumps({"type": "__done__", "success": False, "status": "failed", "error": str(e)}) + "\n"
+    finally:
+        await _close_scraper(crawler.scraper)
 
 
 async def stream_distill(req: DistillRequest):

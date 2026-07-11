@@ -206,7 +206,7 @@ async def sweep(
         payload["webhook_url"] = webhook_url
 
     submit = await _post_json("/v1/sweep", payload)
-    job_id = submit.get("job_id")
+    job_id = submit.get("id") or submit.get("job_id")
     if not job_id:
         raise ValueError(f"Huginn returned no job_id: {submit}")
 
@@ -287,9 +287,10 @@ async def seek(
     if ctx:
         ctx.info(f"Seeking: {query}")
 
-    payload: dict[str, Any] = {"query": query}
-    if limit != 10:
-        payload["search_options"] = {"limit": limit}
+    payload: dict[str, Any] = {
+        "query": query,
+        "search_options": {"limit": limit},
+    }
 
     return await _post_json("/v1/seek", payload)
 
@@ -337,7 +338,7 @@ async def distill(
         payload["webhook_url"] = webhook_url
 
     submit = await _post_json("/v1/distill", payload)
-    job_id = submit.get("job_id")
+    job_id = submit.get("id") or submit.get("job_id")
     if not job_id:
         raise ValueError(f"Huginn returned no job_id: {submit}")
 
@@ -359,7 +360,7 @@ async def distill(
     name="flock",
     description=(
         "Batch scrape multiple URLs in parallel. "
-        "Submits a flock job, polls until completion, returns results for all URLs. "
+        "Returns the synchronous batch result for all URLs. "
         "For sequential single-URL scraping use 'probe' instead."
     ),
 )
@@ -391,20 +392,7 @@ async def flock(
     if webhook_url:
         payload["webhook_url"] = webhook_url
 
-    submit = await _post_json("/v1/flock", payload)
-    job_id = submit.get("job_id")
-    if not job_id:
-        raise ValueError(f"Huginn returned no job_id: {submit}")
-
-    if ctx:
-        ctx.info(f"Flock job submitted: {job_id}")
-
-    result = await _poll_job(f"/v1/flock/{job_id}", ctx)
-
-    if ctx:
-        ctx.info(f"Flock job {job_id} completed")
-
-    return result
+    return await _post_json("/v1/flock", payload)
 
 
 # ─── Tool: jobs ────────────────────────────────────────────────────────────────

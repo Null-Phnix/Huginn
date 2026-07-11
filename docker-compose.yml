@@ -6,6 +6,11 @@ services:
     image: ghcr.io/null-phnix/huginn:latest
     container_name: huginn
     network_mode: host
+    # Do not inherit a broken/filtering LAN resolver. These are ordinary DNS
+    # resolvers, not proxy or browser SaaS dependencies, and are configurable.
+    dns:
+      - "${HUGINN_DNS_PRIMARY:-1.1.1.1}"
+      - "${HUGINN_DNS_SECONDARY:-9.9.9.9}"
     # Bind loopback only: with network_mode host this keeps the unauthenticated
     # scraping API off the LAN/Tailscale. The local MCP reaches it via 127.0.0.1.
     command: ["huginn", "serve", "--host", "127.0.0.1", "--port", "7432"]
@@ -13,17 +18,15 @@ services:
       HUGINN_DATA_DIR: /data
       HUGINN_PORT: 7432
       HUGINN_USER_AGENT: "Huginn/Bot (+https://huginn.dev/bot)"
-      BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
+      HUGINN_BROWSER_BACKEND: "starsearch"
       # Route scraping through the host StarSearch daemon (anti-detect browser).
       # Reachable on loopback because this container is network_mode: host.
       HUGINN_STARSEARCH_TCP: "127.0.0.1:7676"
     volumes:
       - huginn-data:/data
-      # Bind the host source so code changes take effect on restart (no rebuild).
-      - ./huginn:/app/huginn:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7432/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7432/health/ready"]
       interval: 30s
       timeout: 10s
       retries: 3

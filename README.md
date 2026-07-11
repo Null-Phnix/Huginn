@@ -2,12 +2,15 @@
 
 > *Huginn (Old Norse: "thought") is one of Odin's ravens — he flies across the world and brings back information.*
 
-[![Version](https://img.shields.io/badge/version-1.2.0-7c3aed?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
+[![Version](https://img.shields.io/badge/version-1.3.0-7c3aed?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
 [![Python](https://img.shields.io/badge/python-3.10%2B-4ade80?style=flat-square&labelColor=07061a)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-348_passing-22d3ee?style=flat-square&labelColor=07061a)](tests/)
+[![Tests](https://img.shields.io/badge/tests-809_passing-22d3ee?style=flat-square&labelColor=07061a)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-facc15?style=flat-square&labelColor=07061a)](LICENSE)
 
 **Self-hosted web scraping, crawling, and extraction API. Stealth-first. Open source. No cloud tier.**
+
+> Huginn is the data plane in the Blackreach/StarSearch suite. See the
+> [suite architecture and honest replacement boundary](https://github.com/Null-Phnix/Blackreach/blob/main/docs/WEB_TOOL_SUITE.md).
 
 ---
 
@@ -36,7 +39,7 @@ Huginn started as **BlackCrawl** — a stripped-down Blackreach focused on struc
 
 The rebrand to Huginn wasn't just a name change — it was a product positioning shift. BlackCrawl was trying to be everything (autonomous agent + scraper + researcher). Huginn is specifically a **self-hosted Firecrawl alternative**: structured scraping API with a REST interface, CLI, templates, and streaming output. Nothing more, nothing less.
 
-Blackreach handles "go find me state space model papers from 2024." Huginn handles "scrape this product page and give me structured JSON with price, availability, and specs." Both use the same Playwright stealth backend, but Huginn is the API you call, Blackreach is the agent you delegate to.
+Blackreach handles "go find me state space model papers from 2024." Huginn handles "scrape this product page and give me structured JSON with price, availability, and specs." Both use StarSearch as the primary anti-detect browser; Huginn retains Playwright only as an explicit fallback for controls StarSearch does not expose yet.
 
 ---
 
@@ -132,14 +135,14 @@ curl -X POST http://localhost:7432/v1/watch \
 
 | | Huginn | Firecrawl |
 |---|---|---|
-| **Hosting** | Self-hosted (your box) | Cloud-only |
-| **Cost** | Free (your compute) | $0.005/page + tiers |
-| **Stealth** | Playwright + stealth patches | Varies |
+| **Hosting** | Personal, self-hosted control plane | Hosted service plus open-source components |
+| **Cost** | Your compute | Hosted usage tiers |
+| **Stealth** | StarSearch anti-detect browser | Managed browser infrastructure |
 | **Change Detection** | Built-in watch daemon | Not available |
 | **Streaming** | SSE + NDJSON real-time | SSE only |
 | **Research Memory** | ChromaDB vector persistence | Not available |
 | **Graph Mapping** | BFS nodes + edges | Not available |
-| **Open Source** | ✅ MIT | Partial |
+| **API compatibility** | Calls used locally; v2 gap work remains | Canonical Firecrawl v2 API |
 
 ---
 
@@ -147,8 +150,8 @@ curl -X POST http://localhost:7432/v1/watch \
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   FastAPI   │────▶│   Scraper    │────▶│  Playwright │
-│  REST API   │     │  (concurrent)│     │   Browser   │
+│   FastAPI   │────▶│   Scraper    │────▶│ StarSearch  │
+│  REST API   │     │  (concurrent)│     │  primary   │
 └─────────────┘     └──────────────┘     └─────────────┘
       │                    │
       ▼                    ▼
@@ -156,6 +159,8 @@ curl -X POST http://localhost:7432/v1/watch \
 │   Crawler   │     │   Extractor  │────▶ LLM (optional)
 │ (BFS pool)  │     │  (templates) │
 └─────────────┘     └──────────────┘
+                           │
+                           └────────▶ Playwright fallback for unsupported controls
       │
       ▼
 ┌─────────────┐     ┌──────────────┐

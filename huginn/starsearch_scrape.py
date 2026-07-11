@@ -15,7 +15,7 @@ import json
 import os
 import re
 import urllib.parse
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 import markdownify
 from bs4 import BeautifulSoup
@@ -23,12 +23,92 @@ from bs4 import BeautifulSoup
 from .models import OutputFormat, ScrapeData
 
 
+def _action_type(action: dict) -> str:
+    """Normalize JSON strings and Pydantic Enum values to the wire action name."""
+    value = action.get("type", "")
+    value = getattr(value, "value", value)
+    return str(value).lower()
+
+
 def tcp_addr() -> Optional[str]:
     return os.environ.get("HUGINN_STARSEARCH_TCP") or None
 
 
-async def _fetch_html(addr: str, url: str, timeout: float = 45.0) -> str:
-    """new_session -> navigate -> get_content -> close_session over the daemon's TCP JSON protocol."""
+async def daemon_status(timeout: float = 2.0) -> dict:
+    """Return live daemon capacity without allocating a browser session."""
+    addr = tcp_addr()
+    if not addr:
+        return {"configured": False, "reachable": False}
+    host, _, port = addr.partition(":")
+    writer = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, int(port or 7676)), timeout=timeout
+        )
+
+        async def exchange(payload: dict) -> dict:
+            writer.write((json.dumps(payload) + "\n").encode())
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+            if not line:
+                raise ConnectionError("daemon closed health connection")
+            return json.loads(line.decode())
+
+        handshake = await exchange({"starsearch": "1.0", "client_version": "huginn-health"})
+        if not handshake.get("compatible"):
+            raise RuntimeError("incompatible protocol")
+        response = await exchange({"v": 1, "cmd": "status"})
+        if not response.get("ok"):
+            raise _response_error(response, "status")
+        return {
+            "configured": True,
+            "reachable": True,
+            "address": addr,
+            **(response.get("result") or {}),
+        }
+    except Exception as exc:
+        return {
+            "configured": True,
+            "reachable": False,
+            "address": addr,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+def _response_error(response: dict, command: str) -> RuntimeError:
+    detail = response.get("detail")
+    message = response.get("error") or "unknown daemon error"
+    if detail:
+        message = f"{message}: {detail}"
+    return RuntimeError(f"StarSearch {command} failed: {message}")
+
+
+async def _fetch_page(
+    addr: str,
+    url: str,
+    *,
+    timeout: float = 45.0,
+    actions: Optional[List[dict]] = None,
+    wait_for: Optional[Any] = None,
+    scroll: bool = False,
+    screenshot: bool = False,
+    cookies: Optional[Dict[str, str]] = None,
+    proxy: Optional[Dict[str, str]] = None,
+    locale: str = "en-US",
+    allow_private_network: bool = False,
+) -> tuple[str, Optional[str]]:
+    """Execute a complete scrape session over StarSearch's JSON-lines protocol.
+
+    Every command response is checked.  The former bridge ignored navigation
+    errors and then returned an empty/old document as a successful scrape.
+    """
     host, _, port = addr.partition(":")
     # limit= raises asyncio's 64 KB readline cap so large SERPs/pages don't throw
     # "Separator is not found, and chunk exceed the limit".
@@ -37,29 +117,155 @@ async def _fetch_html(addr: str, url: str, timeout: float = 45.0) -> str:
         timeout=10.0,
     )
 
-    async def send(obj: dict) -> dict:
+    async def send(obj: dict, *, expect_ok: bool = False) -> dict:
         writer.write((json.dumps(obj) + "\n").encode())
         await writer.drain()
         line = await asyncio.wait_for(reader.readline(), timeout=timeout + 15)
-        return json.loads(line.decode())
+        if not line:
+            raise RuntimeError("StarSearch daemon closed the connection")
+        response = json.loads(line.decode())
+        if expect_ok and not response.get("ok"):
+            raise _response_error(response, str(obj.get("cmd", "command")))
+        return response
+
+    async def command(name: str, **kwargs: Any) -> dict:
+        return await send(
+            {"v": 1, "cmd": name, "sid": sid, **kwargs},
+            expect_ok=True,
+        )
+
+    async def execute_action(action: dict) -> Optional[str]:
+        action_type = _action_type(action)
+        selector = action.get("selector")
+        if action_type == "click" and selector:
+            await command("click", selector=selector, human=True)
+        elif action_type == "type" and selector:
+            await command(
+                "type", selector=selector, text=str(action.get("text") or ""), human=True
+            )
+        elif action_type == "scroll":
+            await command(
+                "scroll",
+                direction=str(action.get("direction") or "down"),
+                amount=int(action.get("amount") or 500),
+            )
+        elif action_type == "hover" and selector:
+            await command("hover", selector=selector)
+        elif action_type == "wait_for_selector" and selector:
+            timeout_ms = int(action.get("timeout") or 10_000)
+            await command("wait_for", selector=selector, timeout_s=max(1, timeout_ms // 1000))
+        elif action_type == "wait":
+            await asyncio.sleep(max(0, int(action.get("amount") or 1000)) / 1000)
+        elif action_type == "press":
+            key = str(action.get("key") or "Enter")
+            selector_js = json.dumps(selector) if selector else "null"
+            key_js = json.dumps(key)
+            await command(
+                "evaluate",
+                script=(
+                    "(() => { const el = "
+                    f"({selector_js} ? document.querySelector({selector_js}) : document.activeElement);"
+                    f" if (!el) throw new Error('press target missing');"
+                    f" for (const t of ['keydown','keypress','keyup'])"
+                    f" el.dispatchEvent(new KeyboardEvent(t, {{key:{key_js}, bubbles:true}}));"
+                    " return true; })()"
+                ),
+            )
+        elif action_type == "select" and selector:
+            values = action.get("values") or []
+            await command(
+                "evaluate",
+                script=(
+                    "(() => { const el = document.querySelector("
+                    f"{json.dumps(selector)}); if (!el) throw new Error('select target missing');"
+                    f" const wanted = new Set({json.dumps(values)});"
+                    " for (const option of el.options) option.selected = wanted.has(option.value);"
+                    " el.dispatchEvent(new Event('input', {bubbles:true}));"
+                    " el.dispatchEvent(new Event('change', {bubbles:true})); return true; })()"
+                ),
+            )
+        elif action_type == "screenshot":
+            response = await command("screenshot")
+            return (response.get("result") or {}).get("data")
+        elif action_type:
+            raise ValueError(f"Unsupported StarSearch action: {action_type}")
+        return None
 
     sid = None
     try:
         hs = await send({"starsearch": "1.0", "client_version": "huginn"})
         if not hs.get("compatible"):
             raise RuntimeError(f"handshake incompatible: {hs}")
-        r = await send({"v": 1, "cmd": "new_session", "sid": None, "opts": {"human_level": 1}})
+        proxy_server = proxy.get("server") if proxy else None
+        r = await send(
+            {
+                "v": 1,
+                "cmd": "new_session",
+                "sid": None,
+                "opts": {
+                    "proxy": proxy_server,
+                    "locale": locale,
+                    "human_level": 1,
+                    "capabilities": {
+                        "navigate": True,
+                        "form_submit": True,
+                        "block_internal_network": True,
+                        "allow_internal_network": allow_private_network,
+                    },
+                },
+            },
+            expect_ok=True,
+        )
         sid = r.get("sid")
-        if not r.get("ok") or not sid:
-            raise RuntimeError(f"new_session failed: {r.get('error')}")
-        await send({"v": 1, "cmd": "navigate", "sid": sid, "url": url, "timeout_s": int(timeout)})
-        gc = await send({"v": 1, "cmd": "get_content", "sid": sid})
-        c = gc.get("result") or gc.get("content") or ""
-        return c if isinstance(c, str) else (c.get("html") or c.get("text") or "")
+        if not sid:
+            raise RuntimeError("StarSearch new_session returned no session id")
+
+        if cookies:
+            domain = urllib.parse.urlparse(url).hostname or ""
+            cookie_params = [
+                {"name": name, "value": value, "domain": domain, "path": "/"}
+                for name, value in cookies.items()
+            ]
+            await command("set_cookies", cookies=cookie_params)
+
+        await command("navigate", url=url, timeout_s=max(1, int(timeout)))
+
+        if wait_for is not None:
+            if isinstance(wait_for, (int, float)):
+                await asyncio.sleep(max(0, float(wait_for)) / 1000)
+            elif str(wait_for) not in {"networkidle", "network-idle", "network_idle", "domcontentloaded"}:
+                await command("wait_for", selector=str(wait_for), timeout_s=max(1, int(timeout)))
+
+        captured: Optional[str] = None
+        for action in actions or []:
+            action_screenshot = await execute_action(action)
+            if action_screenshot:
+                captured = action_screenshot
+
+        if scroll:
+            previous_height = -1
+            for _ in range(10):
+                height_response = await command(
+                    "evaluate", script="document.body ? document.body.scrollHeight : 0"
+                )
+                height = ((height_response.get("result") or {}).get("value") or 0)
+                if height == previous_height:
+                    break
+                previous_height = height
+                await command("scroll", direction="down", amount=900)
+                await asyncio.sleep(0.35)
+
+        gc = await command("get_content")
+        content = gc.get("result") or {}
+        html = content if isinstance(content, str) else (content.get("html") or "")
+        if screenshot and not captured:
+            shot = await command("screenshot")
+            captured = (shot.get("result") or {}).get("data")
+        return html, captured
     finally:
         try:
             if sid:
-                await send({"v": 1, "cmd": "close_session", "sid": sid})
+                await send({"v": 1, "cmd": "close_session", "sid": sid}, expect_ok=True)
         except Exception:
             pass
         writer.close()
@@ -69,8 +275,16 @@ async def _fetch_html(addr: str, url: str, timeout: float = 45.0) -> str:
             pass
 
 
-def _html_to_scrapedata(html: str, url: str, formats: List[OutputFormat],
-                        only_main_content: bool) -> ScrapeData:
+def _html_to_scrapedata(
+    html: str,
+    url: str,
+    formats: List[OutputFormat],
+    only_main_content: bool,
+    *,
+    include_tags: Optional[List[str]] = None,
+    exclude_tags: Optional[List[str]] = None,
+    screenshot: Optional[str] = None,
+) -> ScrapeData:
     """Mirror Scraper.lightweight_scrape's HTML -> ScrapeData conversion."""
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.string.strip() if soup.title and soup.title.string else ""
@@ -86,6 +300,18 @@ def _html_to_scrapedata(html: str, url: str, formats: List[OutputFormat],
 
     main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
     content_el = main if (main and only_main_content) else (soup.body or soup)
+    if include_tags:
+        selected = []
+        for selector in include_tags:
+            selected.extend(content_el.select(selector))
+        selected_soup = BeautifulSoup("<main></main>", "html.parser")
+        selected_root = selected_soup.main
+        for element in selected:
+            selected_root.append(BeautifulSoup(str(element), "html.parser"))
+        content_el = selected_root
+    for selector in exclude_tags or []:
+        for element in content_el.select(selector):
+            element.decompose()
     for tag in content_el.find_all(["script", "style", "nav", "footer", "header", "aside"]):
         tag.decompose()
     for tag in content_el.find_all(class_=lambda c: c and any(
@@ -102,12 +328,28 @@ def _html_to_scrapedata(html: str, url: str, formats: List[OutputFormat],
             result.raw_html = html
         elif fmt == OutputFormat.LINKS:
             result.links = [a.get("href") for a in content_el.find_all("a", href=True)]
+        elif fmt == OutputFormat.SCREENSHOT:
+            result.screenshot = screenshot
     return result
 
 
-async def scrape(url: str, formats: Optional[List[OutputFormat]] = None,
-                 only_main_content: bool = True, timeout: float = 45.0,
-                 retries: int = 3) -> Optional[ScrapeData]:
+async def scrape(
+    url: str,
+    formats: Optional[List[OutputFormat]] = None,
+    only_main_content: bool = True,
+    timeout: float = 45.0,
+    retries: int = 3,
+    *,
+    actions: Optional[List[dict]] = None,
+    wait_for: Optional[Any] = None,
+    scroll: bool = False,
+    include_tags: Optional[List[str]] = None,
+    exclude_tags: Optional[List[str]] = None,
+    cookies: Optional[Dict[str, str]] = None,
+    proxy: Optional[Dict[str, str]] = None,
+    locale: str = "en-US",
+    allow_private_network: bool = False,
+) -> Optional[ScrapeData]:
     """Scrape via StarSearch. Returns ScrapeData, or None if unavailable/blocked.
 
     Retries transient failures (CapacityExceeded under crawl load, a crashed
@@ -120,10 +362,34 @@ async def scrape(url: str, formats: Optional[List[OutputFormat]] = None,
     formats = formats or [OutputFormat.MARKDOWN]
     for attempt in range(retries):
         try:
-            html = await _fetch_html(addr, url, timeout=timeout)
+            wants_screenshot = OutputFormat.SCREENSHOT in formats or any(
+                _action_type(action) == "screenshot"
+                for action in actions or []
+            )
+            html, screenshot_data = await _fetch_page(
+                addr,
+                url,
+                timeout=timeout,
+                actions=actions,
+                wait_for=wait_for,
+                scroll=scroll,
+                screenshot=wants_screenshot,
+                cookies=cookies,
+                proxy=proxy,
+                locale=locale,
+                allow_private_network=allow_private_network,
+            )
             if not html:
                 return None
-            return _html_to_scrapedata(html, url, formats, only_main_content)
+            return _html_to_scrapedata(
+                html,
+                url,
+                formats,
+                only_main_content,
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                screenshot=screenshot_data,
+            )
         except Exception:
             if attempt == retries - 1:
                 raise
@@ -172,7 +438,7 @@ async def search_bing(query: str, limit: int = 5, retries: int = 3) -> List[Dict
     url = "https://www.bing.com/search?q=" + urllib.parse.quote_plus(query)
     for attempt in range(retries):
         try:
-            html = await _fetch_html(addr, url)
+            html, _ = await _fetch_page(addr, url)
             return _parse_bing_serp(html, limit) if html else []
         except Exception:
             if attempt == retries - 1:

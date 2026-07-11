@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -17,6 +17,7 @@ import httpx
 from .browser import BrowserManager
 from .models import OutputFormat, SearchResultItem, ScrapeData
 from .scraper import Scraper
+from .utils import scrape_failure
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class Searcher:
         country: Optional[str] = None,
         language: Optional[str] = None,
         scrape_results: bool = True,
+        scrape_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResultItem]:
         """
         Search the web using Brave API or arxiv fallback.
@@ -78,7 +80,7 @@ class Searcher:
                 if bing:
                     logger.info("Using StarSearch->Bing for query: %s", query)
                     if scrape_results:
-                        return await self._scrape_results(bing, scrape_formats)
+                        return await self._scrape_results(bing, scrape_formats, scrape_kwargs)
                     return [
                         SearchResultItem(metadata={"title": r["title"], "url": r["link"], "snippet": r["snippet"]})
                         for r in bing[:limit]
@@ -93,7 +95,7 @@ class Searcher:
                 results = await self._brave_search(query, limit, language)
                 if results:
                     if scrape_results:
-                        scraped = await self._scrape_results(results, scrape_formats)
+                        scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
                         return scraped
                     else:
                         # Return lightweight result items with just metadata
@@ -115,7 +117,7 @@ class Searcher:
                 results = await self._arxiv_search(query, limit)
                 if results:
                     if scrape_results:
-                        scraped = await self._scrape_results(results, scrape_formats)
+                        scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
                         return scraped
                     else:
                         return [
@@ -135,7 +137,7 @@ class Searcher:
             results = await self._ddg_lite_search(query, limit)
             if results:
                 if scrape_results:
-                    scraped = await self._scrape_results(results, scrape_formats)
+                    scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
                     return scraped
                 else:
                     return [
@@ -153,7 +155,7 @@ class Searcher:
             results = await self._ddg_search(query, limit)
             if results:
                 if scrape_results:
-                    scraped = await self._scrape_results(results, scrape_formats)
+                    scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
                     return scraped
                 else:
                     return [
@@ -389,6 +391,7 @@ class Searcher:
         self,
         results: List[Dict],
         scrape_formats: List[OutputFormat],
+        scrape_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResultItem]:
         """Scrape content from search result URLs concurrently."""
         scraped_items = []
@@ -399,12 +402,17 @@ class Searcher:
         async def scrape_one(result: Dict) -> Optional[SearchResultItem]:
             async with sem:
                 try:
-                    data = await self.scraper.scrape(
-                        url=result["link"],
-                        formats=scrape_formats,
-                        only_main_content=True,
-                        timeout=15000,
-                    )
+                    kwargs = {
+                        "only_main_content": True,
+                        "timeout": 15000,
+                        **(scrape_kwargs or {}),
+                        "url": result["link"],
+                        "formats": scrape_formats,
+                    }
+                    data = await self.scraper.scrape(**kwargs)
+                    failure = scrape_failure(data)
+                    if failure:
+                        raise RuntimeError(failure[1])
                     item = SearchResultItem(
                         markdown=data.markdown,
                         html=data.html,

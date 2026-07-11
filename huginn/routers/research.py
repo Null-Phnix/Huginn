@@ -28,8 +28,8 @@ def create_research_router(config: HuginnConfig, verify_api_key) -> APIRouter:
         Iteratively explores multiple sources, tracks beliefs with confidence
         scores, detects contradictions, and synthesizes a structured report.
 
-        This is Huginn's most powerful endpoint — far beyond what Firecrawl
-        or any single-pass scraper can achieve.
+        This is Huginn's agentic research endpoint; quality depends on the
+        configured model, source access, and evidence returned by the browser.
         """
         state = get_state()
         if not state.browser:
@@ -39,7 +39,7 @@ def create_research_router(config: HuginnConfig, verify_api_key) -> APIRouter:
         from ..researcher import DeepResearcher
 
         try:
-            memory = ResearchMemory(data_dir=config.data_dir) if config.server.data_dir else None
+            memory = ResearchMemory(data_dir=config.data_dir) if config.data_dir else None
             researcher = DeepResearcher(
                 browser=state.browser,
                 llm_provider=state.config.extract.llm_provider,

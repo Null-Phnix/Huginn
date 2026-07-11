@@ -223,6 +223,60 @@ class TestRouterFactories:
         paths = self._get_router_paths(router)
         assert "/v1/research" in paths
 
+    @pytest.mark.asyncio
+    async def test_research_endpoint_uses_root_data_dir(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from huginn.config import HuginnConfig
+        from huginn.models import ResearchRequest
+        from huginn.routers import create_research_router
+        from huginn.state import get_state, reset_state
+        import huginn.memory
+        import huginn.researcher
+
+        captured = {}
+
+        class FakeMemory:
+            def __init__(self, data_dir):
+                captured["data_dir"] = data_dir
+
+        class FakeResearcher:
+            def __init__(self, **kwargs):
+                pass
+
+            async def research(self, **kwargs):
+                return SimpleNamespace(
+                    query=kwargs["query"],
+                    summary="summary",
+                    report="report",
+                    findings=[],
+                    citations=[],
+                    confidence=1.0,
+                    sources_consulted=0,
+                    research_duration_seconds=0.0,
+                    depth_achieved=1,
+                    warnings=[],
+                )
+
+        monkeypatch.setattr(huginn.memory, "ResearchMemory", FakeMemory)
+        monkeypatch.setattr(huginn.researcher, "DeepResearcher", FakeResearcher)
+        config = HuginnConfig(data_dir=str(tmp_path))
+        reset_state()
+        state = get_state()
+        state.browser = object()
+        state.config = config
+        try:
+            router = create_research_router(config, verify_api_key=None)
+            endpoint = next(
+                route.endpoint for route in router.routes if route.path == "/v1/research"
+            )
+            response = await endpoint(ResearchRequest(query="test"), auth=True)
+        finally:
+            reset_state()
+
+        assert response.success is True
+        assert captured["data_dir"] == str(tmp_path)
+
     def test_search_router(self):
         from huginn.routers import create_search_router
         router = create_search_router(HuginnConfig(), verify_api_key=None)

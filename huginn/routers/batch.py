@@ -10,7 +10,7 @@ from ..config import HuginnConfig
 from ..models import ErrorCode, FlockRequest, FlockResponse, FlockResultItem, OutputFormat
 from ..scraper import Scraper
 from ..state import get_state, limiter
-from ..utils import _map_exception_to_error_code, build_proxy_dict
+from ..utils import _map_exception_to_error_code, build_proxy_dict, scrape_failure
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,9 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
     sem = asyncio.Semaphore(5)
     results: List[FlockResultItem] = []
     warnings: List[str] = []
+    cache_context = req.model_dump(mode="json", by_alias=True, exclude_none=True)
+    cache_context.pop("urls", None)
+    cache_context.pop("formats", None)
 
     async def scrape_one(url: str) -> FlockResultItem:
         from ..scraper import _is_valid_http_url
@@ -56,7 +59,11 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
                     error_code=ErrorCode.CIRCUIT_OPEN,
                 )
 
-            cached = await get_cached_scrape_result(url, req.formats or [OutputFormat.MARKDOWN])
+            cached = await get_cached_scrape_result(
+                url,
+                req.formats or [OutputFormat.MARKDOWN],
+                extra=cache_context,
+            )
             if cached:
                 return FlockResultItem(url=url, success=True, data=cached, cached=True)
 
@@ -70,7 +77,24 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
                     timeout=req.timeout,
                     proxy=proxy_dict,
                 )
-                await cache_scrape_result(url, req.formats or [OutputFormat.MARKDOWN], data)
+                failure = scrape_failure(data)
+                if failure:
+                    status, message = failure
+                    await cb.record_failure(domain)
+                    return FlockResultItem(
+                        url=url,
+                        success=False,
+                        data=data,
+                        error=message,
+                        error_code=ErrorCode.from_http_status(status),
+                    )
+                if data.markdown or data.html or data.raw_html or data.links or data.screenshot:
+                    await cache_scrape_result(
+                        url,
+                        req.formats or [OutputFormat.MARKDOWN],
+                        data,
+                        extra=cache_context,
+                    )
                 await cb.record_success(domain)
                 return FlockResultItem(url=url, success=True, data=data)
             except asyncio.TimeoutError:
@@ -103,6 +127,7 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
 
     success_count = sum(1 for r in results if r.success)
     partial = success_count > 0 and success_count < len(results)
+    await scraper.close()
 
     return FlockResponse(
         success=success_count > 0,

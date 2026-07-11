@@ -8,6 +8,7 @@ URL deduplication, depth limits, and path filtering.
 import asyncio
 import hashlib
 import heapq
+import inspect
 import logging
 import re
 import signal
@@ -22,6 +23,7 @@ import httpx
 from .browser import BrowserManager
 from .models import OutputFormat, ScrapeData
 from .scraper import Scraper
+from .utils import scrape_failure
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,7 @@ class Crawler:
         exclude_paths: Optional[List[str]] = None,
         skip_duplicates: bool = True,
         ignore_robots: bool = False,
+        scrape_kwargs: Optional[Dict[str, Any]] = None,
     ):
         self.browser = browser
         self.scraper = Scraper(browser)
@@ -165,7 +168,9 @@ class Crawler:
         self.exclude_paths = exclude_paths or []
         self.skip_duplicates = skip_duplicates
         self.ignore_robots = ignore_robots
-        self._robots_checker: Optional[RobotsChecker] = None
+        self.scrape_kwargs = scrape_kwargs or {}
+        self._robots_checkers: Dict[str, RobotsChecker] = {}
+        self._robots_lock = asyncio.Lock()
         self._cancel = False
         self._seen_hashes: Set[str] = set()
 
@@ -185,6 +190,21 @@ class Crawler:
             return True
         seen_hashes.add(h)
         return False
+
+    async def _robots_allows(self, url: str) -> bool:
+        """Fetch and enforce robots.txt once per origin unless explicitly ignored."""
+        if self.ignore_robots:
+            return True
+        parsed = urlparse(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        async with self._robots_lock:
+            checker = self._robots_checkers.get(origin)
+            if checker is None:
+                checker = RobotsChecker(origin)
+                self._robots_checkers[origin] = checker
+            if checker.rules is None:
+                await checker.fetch_rules()
+        return checker.is_allowed(parsed.path or "/")
 
     # ─── Pagination ──────────────────────────────────────────────────────────
     _PAGINATION_PATTERNS = [
@@ -320,41 +340,63 @@ class Crawler:
 
                     new_urls: List[str] = []
                     try:
-                        formats = list(scrape_formats) + [OutputFormat.LINKS]
-                        page_data = await self.scraper.scrape(
-                            url=url,
-                            formats=formats,
-                            only_main_content=only_main_content,
-                            timeout=timeout,
-                        )
+                        if not await self._robots_allows(url):
+                            result.errors.append(f"{url}: blocked by robots.txt")
+                            logger.info("Skipping robots.txt-disallowed URL: %s", url)
+                            page_data = None
+                        else:
+                            formats = list(dict.fromkeys(list(scrape_formats) + [OutputFormat.LINKS]))
+                            scrape_kwargs = {
+                                **self.scrape_kwargs,
+                                "url": url,
+                                "formats": formats,
+                                "only_main_content": only_main_content,
+                                "timeout": timeout,
+                            }
+                            page_data = await self.scraper.scrape(**scrape_kwargs)
 
-                        # Skip duplicate content
-                        if self.skip_duplicates and page_data.markdown:
-                            if self.is_duplicate(page_data.markdown, self._seen_hashes):
-                                logger.info(f"Skipping duplicate content: {url}")
+                        if page_data is None:
+                            failure = None
+                        else:
+                            failure = scrape_failure(page_data)
+                        if failure:
+                            _, message = failure
+                            result.errors.append(f"{url}: {message}")
+                            logger.warning("Crawl scrape failed for %s: %s", url, message)
+                            page_data = None
+
+                        if page_data is not None:
+                            # Skip duplicate content
+                            if self.skip_duplicates and page_data.markdown:
+                                if self.is_duplicate(page_data.markdown, self._seen_hashes):
+                                    logger.info(f"Skipping duplicate content: {url}")
+                                else:
+                                    result.pages.append(page_data)
+                                    result.completed += 1
+                                    if on_page:
+                                        callback_result = on_page(page_data)
+                                        if inspect.isawaitable(callback_result):
+                                            await callback_result
                             else:
                                 result.pages.append(page_data)
                                 result.completed += 1
                                 if on_page:
-                                    on_page(page_data)
-                        else:
-                            result.pages.append(page_data)
-                            result.completed += 1
-                            if on_page:
-                                on_page(page_data)
+                                    callback_result = on_page(page_data)
+                                    if inspect.isawaitable(callback_result):
+                                        await callback_result
 
-                        # Discover new links
-                        links = page_data.links or []
-                        for link in links:
-                            norm_link = self._normalize_url(link)
-                            if norm_link in result.visited or norm_link in result.queued:
-                                continue
-                            if not self._should_follow(norm_link, base_domain, depth + 1, base_path_prefix=base_path_prefix):
-                                continue
-                            if len(result.queued) >= self.max_pages * 2:
-                                continue
-                            result.queued.add(norm_link)
-                            new_urls.append((link, depth + 1))
+                            # Discover new links only from successful pages.
+                            links = page_data.links or []
+                            for link in links:
+                                norm_link = self._normalize_url(link)
+                                if norm_link in result.visited or norm_link in result.queued:
+                                    continue
+                                if not self._should_follow(norm_link, base_domain, depth + 1, base_path_prefix=base_path_prefix):
+                                    continue
+                                if len(result.queued) >= self.max_pages * 2:
+                                    continue
+                                result.queued.add(norm_link)
+                                new_urls.append((link, depth + 1))
 
                         if on_progress:
                             on_progress(result.completed, len(result.queued))
@@ -382,7 +424,14 @@ class Crawler:
                     return
 
         # SIGINT handler for graceful shutdown
-        old_handler = signal.signal(signal.SIGINT, lambda s, f: setattr(self, "_cancel", True))
+        try:
+            old_handler = signal.signal(
+                signal.SIGINT, lambda s, f: setattr(self, "_cancel", True)
+            )
+        except ValueError:
+            # Crawls can run in a worker thread, where Python forbids signal
+            # registration. Cancellation still works via task cancellation.
+            old_handler = None
 
         try:
             # Spawn worker pool
@@ -392,7 +441,8 @@ class Crawler:
             self._cancel = True
             await asyncio.gather(*workers, return_exceptions=True)
         finally:
-            signal.signal(signal.SIGINT, old_handler)
+            if old_handler is not None:
+                signal.signal(signal.SIGINT, old_handler)
 
         result.total_discovered = len(result.queued)
         return result

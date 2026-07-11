@@ -156,10 +156,11 @@ async def cache_scrape_result(
     formats: list,
     result: ScrapeData,
     ttl: float = 300.0,
+    extra: Optional[dict] = None,
 ) -> None:
     """Cache a successful ScrapeData result."""
     cache = await get_response_cache()
-    key = make_cache_key(url, tuple(formats))
+    key = make_cache_key(url, tuple(formats), extra)
     await cache.set(key, result.model_dump_json(), ttl=ttl)
     # Track URL → key for efficient per-URL invalidation
     _url_to_keys.setdefault(url, set()).add(key)
@@ -168,10 +169,11 @@ async def cache_scrape_result(
 async def get_cached_scrape_result(
     url: str,
     formats: list,
+    extra: Optional[dict] = None,
 ) -> Optional[ScrapeData]:
     """Retrieve a cached ScrapeData result, or None if not present/expired."""
     cache = await get_response_cache()
-    key = make_cache_key(url, tuple(formats))
+    key = make_cache_key(url, tuple(formats), extra)
     data = await cache.get(key)
     if data is None:
         return None

@@ -105,6 +105,48 @@ class TestLoadConfig:
             assert config.crawl.max_depth == 7
             assert config.extract.llm_provider == "anthropic"
 
+    def test_env_data_dir_moves_derived_database_path(self):
+        with patch.dict(os.environ, {"HUGINN_DATA_DIR": "/data/huginn"}, clear=False):
+            config = load_config()
+
+        assert config.data_dir == "/data/huginn"
+        assert config.db_path == "/data/huginn/huginn.db"
+
+    def test_explicit_env_database_path_wins_over_data_dir(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HUGINN_DATA_DIR": "/data/huginn",
+                "HUGINN_DB_PATH": "/state/custom.sqlite3",
+            },
+            clear=False,
+        ):
+            config = load_config()
+
+        assert config.db_path == "/state/custom.sqlite3"
+
+    def test_yaml_data_dir_moves_derived_database_path(self, tmp_path):
+        import yaml
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({"data_dir": "/var/lib/huginn"}))
+
+        config = load_config(str(config_file))
+
+        assert config.db_path == "/var/lib/huginn/huginn.db"
+
+    def test_yaml_explicit_database_path_is_preserved(self, tmp_path):
+        import yaml
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({"data_dir": "/var/lib/huginn", "db_path": "/state/jobs.sqlite3"})
+        )
+
+        config = load_config(str(config_file))
+
+        assert config.db_path == "/state/jobs.sqlite3"
+
 
 class TestUserAgentDefaults:
     """The default User-Agent must track the package version.

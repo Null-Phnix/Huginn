@@ -4,6 +4,7 @@ These routes map Firecrawl API paths (e.g. /v1/scrape, /v1/crawl) to
 the corresponding Huginn-native endpoints (/v1/probe, /v1/sweep, etc.).
 """
 
+import json
 import logging
 from typing import Optional
 
@@ -106,12 +107,28 @@ def create_aliases_router(config: HuginnConfig, verify_api_key) -> APIRouter:
 
     # ─── Batch scrape alias ────────────────────────────────────────────────
 
-    @router.post("/v1/batch/scrape", response_model=FlockResponse, tags=["Batch"])
+    @router.post("/v1/batch/scrape", tags=["Batch"])
     @limiter.limit("10/minute")
     async def batch_scrape_alias(request: Request, req: FlockRequest, auth=Depends(verify_api_key)):
-        """Firecrawl-compatible alias for /v1/flock."""
-        from .batch import _do_flock_scrape
-        return await _do_flock_scrape(req, config)
+        """Start an asynchronous Firecrawl-style batch scrape job."""
+        import asyncio
+        from ..tasks import run_flock
+
+        state = get_state()
+        if not state.job_store:
+            raise HTTPException(status_code=503, detail="Job store not initialized")
+        job_id = await state.job_store.create_job(
+            "flock",
+            req.model_dump(mode="json", by_alias=True, exclude_none=True),
+            ttl=config.server.job_ttl,
+        )
+        task = asyncio.create_task(run_flock(job_id, req))
+        state.crawl_tasks[job_id] = task
+        return {
+            "success": True,
+            "id": job_id,
+            "url": f"/v1/batch/scrape/{job_id}",
+        }
 
     @router.get("/v1/batch/scrape/{job_id}", tags=["Batch"])
     async def batch_scrape_status_alias(job_id: str, auth=Depends(verify_api_key)):
@@ -122,13 +139,27 @@ def create_aliases_router(config: HuginnConfig, verify_api_key) -> APIRouter:
         job = await state.job_store.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        result = json.loads(job["result_json"]) if job.get("result_json") else {}
         return {
-            "success": True,
-            "job_id": job_id,
+            "success": job.get("status") != "failed",
+            "id": job_id,
             "status": job.get("status"),
             "completed": job.get("completed"),
             "total": job.get("total"),
+            "data": result.get("results"),
+            "partial": result.get("partial", False),
             "error": job.get("error"),
         }
+
+    @router.delete("/v1/batch/scrape/{job_id}", tags=["Batch"])
+    async def cancel_batch_scrape_alias(job_id: str, auth=Depends(verify_api_key)):
+        """Cancel an in-flight batch scrape."""
+        state = get_state()
+        task = state.crawl_tasks.pop(job_id, None)
+        if task:
+            task.cancel()
+        if state.job_store:
+            await state.job_store.update_job(job_id, status="cancelled")
+        return {"success": True, "id": job_id, "status": "cancelled"}
 
     return router

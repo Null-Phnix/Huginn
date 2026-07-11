@@ -1,0 +1,10 @@
+**
+!Dockerfile
+!requirements.txt
+!pyproject.toml
+!README.md
+!LICENSE
+!huginn/
+!huginn/**
+!prompts/
+!prompts/**

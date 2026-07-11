@@ -8,6 +8,7 @@ from ..config import HuginnConfig
 from ..models import OutputFormat, SearchRequest, SearchResponse
 from ..searcher import Searcher
 from ..state import get_state, limiter
+from ..utils import scrape_options_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,13 @@ async def _do_search(req: SearchRequest) -> SearchResponse:
     try:
         results = await searcher.search(
             query=req.query,
-            limit=req.search_options.limit if req.search_options else 5,
+            limit=req.limit or (req.search_options.limit if req.search_options else 5),
             scrape_formats=formats or [OutputFormat.MARKDOWN],
             tbs=req.search_options.tbs if req.search_options else None,
             country=req.search_options.country if req.search_options else None,
             language=req.search_options.language if req.search_options else None,
             scrape_results=req.scrape_results,
+            scrape_kwargs=scrape_options_kwargs(req.scrape_options),
         )
         return SearchResponse(success=True, data=results)
     except Exception as e:

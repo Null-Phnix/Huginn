@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
 
 from pydantic import BaseModel, Field
+from bs4 import BeautifulSoup
 
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
@@ -116,13 +117,9 @@ class StarSearchBackend:
     Unix-socket protocol: each command is a JSON object terminated by
     a newline, and each response is likewise.
 
-    Commands
-    --------
-    {"cmd": "navigate",   "url": "<url>"}            -> {"ok": bool, "status": int}
-    {"cmd": "content"}                                 -> {"ok": bool, "title": str, "text": str, ...}
-    {"cmd": "links"}                                    -> {"ok": bool, "links": [str, ...]}
-    {"cmd": "screenshot", "full_page": bool}            -> {"ok": bool, "data": "<base64>"}
-    {"cmd": "shutdown"}                                 -> {"ok": bool}
+    This adapter is retained for direct library users. API scraping uses the
+    request-scoped TCP bridge in ``starsearch_scrape.py`` so containers can
+    reach the host daemon.
     """
 
     def __init__(self, socket_path: Optional[str] = None):
@@ -130,6 +127,7 @@ class StarSearchBackend:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
+        self._sid: Optional[str] = None
 
     # ── socket discovery ─────────────────────────────────────────────────
 
@@ -160,6 +158,20 @@ class StarSearchBackend:
                 asyncio.open_unix_connection(self.socket_path),
                 timeout=5.0,
             )
+            handshake = await self._exchange(
+                {"starsearch": "1.0", "client_version": "huginn"}
+            )
+            if not handshake.get("compatible"):
+                raise RuntimeError(f"incompatible StarSearch daemon: {handshake}")
+            created = await self._exchange({
+                "v": 1,
+                "cmd": "new_session",
+                "sid": None,
+                "opts": {"human_level": 1},
+            })
+            if not created.get("ok") or not created.get("sid"):
+                raise RuntimeError(created.get("error") or "new_session failed")
+            self._sid = created["sid"]
             self._connected = True
             logger.info(f"StarSearch backend connected to {self.socket_path}")
             return True
@@ -169,10 +181,10 @@ class StarSearchBackend:
             return False
 
     async def stop(self):
-        """Tell the daemon we're done, then close the connection."""
+        """Close this session without shutting down the shared daemon."""
         if self._connected:
             try:
-                await self._send_command({"cmd": "shutdown"})
+                await self._send_command({"cmd": "close_session"})
             except Exception:
                 pass
         if self._writer:
@@ -184,14 +196,14 @@ class StarSearchBackend:
         self._reader = None
         self._writer = None
         self._connected = False
+        self._sid = None
 
     # ── low-level protocol ──────────────────────────────────────────────
 
-    async def _send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a JSON command and read the JSON response."""
-        if not self._connected or self._writer is None or self._reader is None:
-            raise RuntimeError("StarSearch backend is not connected")
-
+    async def _exchange(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Send one raw JSON-lines message and receive one response."""
+        if self._writer is None or self._reader is None:
+            raise RuntimeError("StarSearch transport is not connected")
         payload = json.dumps(command) + "\n"
         self._writer.write(payload.encode("utf-8"))
         await self._writer.drain()
@@ -202,26 +214,51 @@ class StarSearchBackend:
             raise RuntimeError("StarSearch daemon closed the connection")
         return json.loads(data.decode("utf-8").strip())
 
+    async def _send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a versioned command scoped to this adapter's session."""
+        if not self._connected or not self._sid:
+            raise RuntimeError("StarSearch backend is not connected")
+        payload = {"v": 1, "sid": self._sid, **command}
+        response = await self._exchange(payload)
+        if not response.get("ok"):
+            raise RuntimeError(
+                f"StarSearch {command.get('cmd')} failed: "
+                f"{response.get('error', 'unknown error')}"
+            )
+        return response
+
     # ── high-level API ───────────────────────────────────────────────────
 
     async def navigate(self, url: str) -> bool:
         """Navigate the daemon to *url*.  Returns True on success."""
-        resp = await self._send_command({"cmd": "navigate", "url": url})
-        return resp.get("ok", False)
+        await self._send_command({"cmd": "navigate", "url": url})
+        return True
 
     async def extract_content(self) -> Dict[str, Any]:
         """Return the structured page content from the daemon."""
-        resp = await self._send_command({"cmd": "content"})
-        if not resp.get("ok", False):
-            raise RuntimeError("StarSearch content extraction failed")
-        return resp
+        resp = await self._send_command({"cmd": "get_content"})
+        result = resp.get("result") or {}
+        html = result.get("html", "")
+        soup = BeautifulSoup(html, "html.parser")
+        title = soup.title.get_text(strip=True) if soup.title else ""
+        description_tag = soup.find("meta", attrs={"name": "description"})
+        html_tag = soup.find("html")
+        return {
+            "html": html,
+            "text": result.get("text", ""),
+            "title": title,
+            "description": description_tag.get("content", "") if description_tag else "",
+            "language": html_tag.get("lang", "en") if html_tag else "en",
+            "url": "",
+        }
 
     async def get_links(self, base_url: Optional[str] = None) -> List[str]:
         """Return discovered links, optionally filtered to *base_url*'s domain."""
-        resp = await self._send_command({"cmd": "links"})
-        if not resp.get("ok", False):
-            raise RuntimeError("StarSearch link discovery failed")
-        links: List[str] = resp.get("links", [])
+        resp = await self._send_command({
+            "cmd": "evaluate",
+            "script": "Array.from(document.querySelectorAll('a[href]'), a => a.href)",
+        })
+        links: List[str] = (resp.get("result") or {}).get("value") or []
         if base_url:
             domain = urlparse(base_url).netloc
             links = [l for l in links if urlparse(l).netloc == domain]
@@ -229,10 +266,8 @@ class StarSearchBackend:
 
     async def take_screenshot(self, full_page: bool = True) -> str:
         """Return a base64-encoded screenshot."""
-        resp = await self._send_command({"cmd": "screenshot", "full_page": full_page})
-        if not resp.get("ok", False):
-            raise RuntimeError("StarSearch screenshot failed")
-        return resp.get("data", "")
+        resp = await self._send_command({"cmd": "screenshot"})
+        return (resp.get("result") or {}).get("data", "")
 
 
 class BrowserManager:
@@ -257,6 +292,7 @@ class BrowserManager:
         self.navigation_timeout = navigation_timeout
         self.viewport = viewport
         self.user_agent = user_agent
+        self.allow_private_network = False
 
         # Decide backend
         self._backend_name: str = "playwright"
@@ -275,6 +311,7 @@ class BrowserManager:
                 self.viewport = (config.viewport_width, config.viewport_height)
             if config.user_agent is not None:
                 self.user_agent = config.user_agent
+            self.allow_private_network = config.allow_private_network
 
         self._playwright = None
         self._browser: Optional[Browser] = None
@@ -290,19 +327,21 @@ class BrowserManager:
 
     async def start(self):
         """Launch browser with stealth configuration."""
-        # If StarSearch is requested, try to connect first
+        # StarSearch sessions are request-scoped and handled by
+        # starsearch_scrape.py.  Keep Playwright warm as an explicit fallback
+        # for options the daemon cannot yet enforce (custom headers, mobile
+        # emulation, ad interception, strict TLS).  The old code instantiated
+        # StarSearchBackend here and returned before creating Playwright, after
+        # which new_context() dereferenced a missing browser.
         if self._backend_name == "starsearch":
-            self._starsearch = StarSearchBackend()
-            connected = await self._starsearch.start()
-            if connected:
-                logger.info("BrowserManager: using StarSearch backend")
-                return
+            from .starsearch_scrape import tcp_addr
+            if tcp_addr():
+                logger.info("BrowserManager: StarSearch primary with Playwright fallback")
             else:
                 logger.warning(
-                    "StarSearch daemon unavailable — falling back to Playwright"
+                    "browser.backend=starsearch but HUGINN_STARSEARCH_TCP is unset; "
+                    "Playwright will serve requests until StarSearch is configured"
                 )
-                self._starsearch = None
-                self._backend_name = "playwright"
 
         # Playwright path (default or fallback)
         if self._browser:
@@ -362,6 +401,7 @@ class BrowserManager:
         proxy: Optional[Dict[str, str]] = None,
         ignore_https_errors: Optional[bool] = None,
         device: Optional[Dict[str, Any]] = None,
+        locale: Optional[str] = None,
     ) -> BrowserContext:
         """Create a new browser context with stealth config.
 
@@ -387,6 +427,8 @@ class BrowserManager:
         }
         if proxy:
             context_kwargs["proxy"] = proxy
+        if locale:
+            context_kwargs["locale"] = locale
 
         # Firecrawl parity: when a device descriptor is provided (mobile emulation),
         # its fields override the default viewport / user_agent / etc. The device

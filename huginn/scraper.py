@@ -336,6 +336,8 @@ class Scraper:
         block_ads: bool = False,
         remove_base64_images: bool = False,
         change_tracking: bool = False,
+        cookies: Optional[Dict[str, str]] = None,
+        location: Optional[Dict[str, Any]] = None,
     ) -> ScrapeData:
         """Scrape a single page with automatic retry on transient errors.
 
@@ -352,6 +354,14 @@ class Scraper:
         verification (e.g. when scraping sites you don't control and
         don't want to be MITM'd).
         """
+        from .security import validate_public_url
+
+        await validate_public_url(
+            url,
+            allow_private=getattr(self.browser, "allow_private_network", False) is True,
+            resolve_dns=isinstance(self.browser, BrowserManager),
+        )
+
         if formats is None:
             formats = [OutputFormat.MARKDOWN]
 
@@ -386,6 +396,7 @@ class Scraper:
                 only_main_content, timeout, proxy, max_retries, scroll,
                 render_mode, skip_tls_verification, summary, mobile,
                 block_ads, remove_base64_images, change_tracking,
+                cookies, location,
             )
 
             # ── Layer 3 hooks: record outcome + selector memory ───────────
@@ -452,15 +463,65 @@ class Scraper:
         block_ads: bool = False,
         remove_base64_images: bool = False,
         change_tracking: bool = False,
+        cookies: Optional[Dict[str, str]] = None,
+        location: Optional[Dict[str, Any]] = None,
     ) -> ScrapeData:
         """Internal implementation — wrapped by circuit breaker."""
+
+        mode = RenderMode(render_mode)
+
+        # StarSearch is the primary renderer whenever it is configured.  The
+        # old flow performed a plain httpx fetch first, so most "StarSearch"
+        # scrapes never touched the anti-detect browser at all.
+        #
+        # Options which StarSearch cannot yet enforce must fall back to
+        # Playwright rather than being silently ignored.  Explicit light mode
+        # remains a caller-controlled opt-out of browser rendering.
+        starsearch_unsupported = bool(headers or mobile or block_ads or not skip_tls_verification)
+        if mode != RenderMode.LIGHT and not starsearch_unsupported:
+            try:
+                from . import starsearch_scrape
+                if starsearch_scrape.tcp_addr():
+                    languages = (location or {}).get("languages") or []
+                    locale = str(languages[0]) if languages else "en-US"
+                    ss = await starsearch_scrape.scrape(
+                        url,
+                        formats=formats,
+                        only_main_content=only_main_content,
+                        timeout=max(1.0, timeout / 1000),
+                        retries=max_retries + 1,
+                        actions=actions,
+                        wait_for=wait_for,
+                        scroll=scroll,
+                        include_tags=include_tags,
+                        exclude_tags=exclude_tags,
+                        cookies=cookies,
+                        proxy=proxy,
+                        locale=locale,
+                        allow_private_network=(
+                            getattr(self.browser, "allow_private_network", False) is True
+                        ),
+                    )
+                    if ss and any((
+                        ss.markdown,
+                        ss.html,
+                        ss.raw_html,
+                        ss.links,
+                        ss.screenshot,
+                    )):
+                        logger.info(f"Scraped {url} via StarSearch (anti-detect)")
+                        return await self._postprocess_result(
+                            url, ss, remove_base64_images, change_tracking
+                        )
+            except Exception as e:
+                logger.warning(f"StarSearch scrape failed for {url}: {e}, falling back to Playwright")
 
         # ── Lightweight rendering path ────────────────────────────────────
         # If render_mode is "light" or "auto", try lightweight HTTP fetch first.
         # Fall back to full browser if content is too thin or if mode is "auto"
         # and detection suggests JS is needed.
-        mode = RenderMode(render_mode)
-        if mode != RenderMode.FULL:
+        requires_browser = bool(actions or cookies or mobile or block_ads or wait_for or scroll)
+        if mode != RenderMode.FULL and not requires_browser:
             try:
                 # Quick HEAD request to detect JS requirements
                 client = self._get_http_client()
@@ -482,7 +543,9 @@ class Scraper:
                     )
                     # Check if content is thin — might need JS after all
                     if result.markdown and len(result.markdown) > 200:
-                        return result
+                        return await self._postprocess_result(
+                            url, result, remove_base64_images, change_tracking
+                        )
                     elif not result.markdown:
                         # Empty result — fall through to full browser
                         logger.info(f"Lightweight scrape returned empty for {url}, falling back to full browser")
@@ -490,24 +553,8 @@ class Scraper:
                         logger.info(f"Lightweight scrape returned thin content ({len(result.markdown)} chars), falling back to full browser")
             except Exception as e:
                 logger.warning(f"Lightweight scrape failed for {url}: {e}, falling back to full browser")
-        # Fall through to full browser rendering for FULL mode or failed light mode
-        # ── StarSearch anti-detect path ──────────────────────────────────
-        # When HUGINN_STARSEARCH_TCP is set, fetch through the StarSearch daemon
-        # (a real stealth Chromium) instead of our own Playwright — beats bot
-        # walls keylessly. Falls through to Playwright on any failure.
-        try:
-            from . import starsearch_scrape
-            if starsearch_scrape.tcp_addr():
-                ss = await starsearch_scrape.scrape(
-                    url, formats=formats, only_main_content=only_main_content
-                )
-                if ss and ss.markdown:
-                    logger.info(f"Scraped {url} via StarSearch (anti-detect)")
-                    return ss
-        except Exception as e:
-            logger.warning(f"StarSearch scrape failed for {url}: {e}, falling back to Playwright")
-
-        # ── Full browser rendering path ─────────────────────────────────
+        # Fall through to full browser rendering for unsupported StarSearch
+        # options, explicit full mode without StarSearch, or failed light mode.
 
         last_error = None
         pdf_text: Optional[str] = None  # extracted if page is PDF
@@ -522,8 +569,20 @@ class Scraper:
         for attempt in range(max_retries + 1):
             context = None
             try:
-                context = await self.browser.new_context(proxy=proxy, device=device)
+                context_kwargs: Dict[str, Any] = {"proxy": proxy, "device": device}
+                languages = (location or {}).get("languages") or []
+                if languages:
+                    context_kwargs["locale"] = str(languages[0])
+                context = await self.browser.new_context(**context_kwargs)
                 page = await self.browser.new_page(context)
+
+                if cookies:
+                    parsed_url = urlparse(url)
+                    cookie_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                    await context.add_cookies([
+                        {"name": name, "value": value, "url": cookie_url}
+                        for name, value in cookies.items()
+                    ])
 
                 # Firecrawl parity: block ad network requests at the network
                 # layer. Each ad domain gets a route handler that aborts the
@@ -615,24 +674,6 @@ class Scraper:
                 for fmt in formats:
                     if fmt == OutputFormat.MARKDOWN:
                         result.markdown = await self.browser.to_markdown(page, content)
-                        # Firecrawl parity: strip inline base64 image data URIs
-                        # from the extracted markdown. Pages with inlined SVG or
-                        # canvas screenshots can blow up token counts and payload
-                        # size; this is a one-line post-process to clean them up.
-                        if remove_base64_images and result.markdown:
-                            result.markdown = _BASE64_IMAGE_REGEX.sub("", result.markdown)
-                        # Firecrawl parity: change tracking. After extracting
-                        # markdown, compare against the ChangeTracker's stored
-                        # state for this URL and store the new state. Returns
-                        # {previous_hash, current_hash, diff, changed} so the
-                        # client can detect content drift between scrapes.
-                        if change_tracking and result.markdown:
-                            if self._change_tracker is None:
-                                from .change_tracker import get_change_tracker
-                                self._change_tracker = get_change_tracker()
-                            result.change_tracking = await self._change_tracker.check_and_store(
-                                url, result.markdown
-                            )
                     elif fmt == OutputFormat.HTML:
                         result.html = await self.browser.to_html(page, only_main=only_main_content)
                     elif fmt == OutputFormat.RAW_HTML:
@@ -656,7 +697,9 @@ class Scraper:
                     logger.warning(f"Truncating large markdown content ({len(result.markdown)} chars)")
                     result.markdown = result.markdown[:500_000]
 
-                return result
+                return await self._postprocess_result(
+                    url, result, remove_base64_images, change_tracking
+                )
 
             except asyncio.TimeoutError as e:
                 error_type, status = classify_error(e)
@@ -735,6 +778,25 @@ class Scraper:
 
         # Should never reach here, but guard
         return ScrapeData(metadata={"url": url, "error": str(last_error), "status_code": 500})
+
+    async def _postprocess_result(
+        self,
+        url: str,
+        result: ScrapeData,
+        remove_base64_images: bool,
+        change_tracking: bool,
+    ) -> ScrapeData:
+        """Apply output transforms consistently across every renderer."""
+        if remove_base64_images and result.markdown:
+            result.markdown = _BASE64_IMAGE_REGEX.sub("", result.markdown)
+        if change_tracking and result.markdown:
+            if self._change_tracker is None:
+                from .change_tracker import get_change_tracker
+                self._change_tracker = get_change_tracker()
+            result.change_tracking = await self._change_tracker.check_and_store(
+                url, result.markdown
+            )
+        return result
 
     async def _filter_tags(
         self,

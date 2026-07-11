@@ -144,6 +144,8 @@ class DistillOptions(BaseModel):
 class ScrapeOptions(BaseModel):
     """Options passed to scrape during crawl."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     formats: List[OutputFormat] = Field(default_factory=lambda: [OutputFormat.MARKDOWN])
     only_main_content: bool = Field(True)
     include_tags: Optional[List[str]] = Field(None)
@@ -155,6 +157,13 @@ class ScrapeOptions(BaseModel):
     max_retries: int = Field(2, ge=0, le=5)
     scroll: bool = Field(False, description="Auto-scroll page to load dynamic content")
     render_mode: str = Field("auto", description="Rendering mode: auto, full (browser), light (httpx)")
+    cookies: Optional[Dict[str, str]] = None
+    location: Optional[Location] = None
+    skip_tls_verification: bool = Field(True, alias="skipTlsVerification")
+    mobile: bool = False
+    block_ads: bool = Field(False, alias="blockAds")
+    remove_base64_images: bool = Field(False, alias="removeBase64Images")
+    change_tracking: bool = Field(False, alias="changeTracking")
 
 
 # ─── Scrape Endpoint ──────────────────────────────────────────────────────────
@@ -469,6 +478,7 @@ class SearchRequest(BaseModel):
     """POST /v1/search request body."""
 
     query: str
+    limit: Optional[int] = Field(None, ge=1, le=100)
     search_options: Optional[SearchOptions] = Field(None)
     scrape_options: Optional[ScrapeOptions] = Field(None)
     # Huginn extension
@@ -735,4 +745,3 @@ ExtractRequest = DistillRequest
 ExtractStartResponse = DistillStartResponse
 ExtractStatusResponse = DistillStatusResponse
 StreamExtractResponse = StreamDistillResponse
-

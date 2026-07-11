@@ -85,6 +85,24 @@ class TestCacheScrapeResult:
         result = await get_cached_scrape_result("https://never-cached.com", ["markdown"])
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_cache_options_do_not_collide(self):
+        """The same URL with different rendering options must not share data."""
+        await cache_scrape_result(
+            "https://options.example",
+            ["markdown"],
+            ScrapeData(markdown="desktop"),
+            extra={"mobile": False},
+        )
+        assert await get_cached_scrape_result(
+            "https://options.example", ["markdown"], extra={"mobile": True}
+        ) is None
+        cached = await get_cached_scrape_result(
+            "https://options.example", ["markdown"], extra={"mobile": False}
+        )
+        assert cached is not None
+        assert cached.markdown == "desktop"
+
 
 class TestInvalidateCache:
     """invalidate_cache() — remove entries (optionally scoped to a URL)."""

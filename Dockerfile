@@ -1,4 +1,4 @@
-# Huginn — Multi-stage build for minimal production image
+# Huginn production image
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -18,13 +18,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright and Chromium browser
-RUN pip install --no-cache-dir playwright \
-    && python -m playwright install chromium --with-deps
+RUN python -m playwright install chromium --with-deps
 
 # Copy application code
 COPY huginn/ /app/huginn/
 COPY prompts/ /app/prompts/
 COPY pyproject.toml .
+COPY README.md LICENSE ./
 
 # Create data directory
 RUN mkdir -p /data && chmod 755 /data
@@ -35,7 +35,7 @@ ENV HUGINN_DATA_DIR=/data
 ENV HUGINN_PORT=7432
 ENV HUGINN_USER_AGENT="Huginn/Bot (+https://huginn.dev/bot)"
 
-# Install as editable package (creates 'huginn' CLI)
-RUN pip install --no-cache-dir -e .
+# Install an immutable package into the image (creates the `huginn` CLI).
+RUN pip install --no-cache-dir --no-deps .
 
 CMD ["huginn", "serve", "--host", "0.0.0.0", "--port", "7432"]

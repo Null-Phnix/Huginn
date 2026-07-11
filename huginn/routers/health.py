@@ -14,12 +14,16 @@ def create_health_router(verify_api_key) -> APIRouter:
     @router.get("/health", tags=["Health"])
     async def health():
         """Comprehensive health check endpoint."""
+        from ..starsearch_scrape import daemon_status
+
         state = get_state()
+        starsearch = await daemon_status(timeout=0.75)
         return {
-            "status": "ok",
+            "status": "degraded" if starsearch["configured"] and not starsearch["reachable"] else "ok",
             "version": __version__,
             "browser": "running" if state.browser else "stopped",
             "scheduler": "running" if (state.scheduler and state.scheduler._running) else "stopped",
+            "starsearch": starsearch,
         }
 
     @router.get("/health/detailed", tags=["Health"])
@@ -27,6 +31,7 @@ def create_health_router(verify_api_key) -> APIRouter:
         """Detailed health check with circuit breaker and cache statistics."""
         from ..cache import get_response_cache
         from ..circuit_breaker import get_circuit_breaker, extract_domain
+        from ..starsearch_scrape import daemon_status
 
         state = get_state()
         cache = await get_response_cache()
@@ -39,6 +44,7 @@ def create_health_router(verify_api_key) -> APIRouter:
             "scheduler": "running" if (state.scheduler and state.scheduler._running) else "stopped",
             "circuit_breaker": await cb.get_stats(),
             "cache": await cache.stats(),
+            "starsearch": await daemon_status(timeout=1.0),
         }
 
     @router.get("/health/ready", tags=["Health"])
@@ -47,7 +53,14 @@ def create_health_router(verify_api_key) -> APIRouter:
         state = get_state()
         if not state.browser:
             raise HTTPException(status_code=503, detail="Browser not initialized")
-        return {"ready": True}
+        from ..starsearch_scrape import daemon_status
+        starsearch = await daemon_status(timeout=0.75)
+        if starsearch["configured"] and not starsearch["reachable"]:
+            raise HTTPException(status_code=503, detail={
+                "message": "Configured StarSearch daemon is unavailable",
+                "starsearch": starsearch,
+            })
+        return {"ready": True, "starsearch": starsearch}
 
     @router.get("/health/live", tags=["Health"])
     async def liveness():

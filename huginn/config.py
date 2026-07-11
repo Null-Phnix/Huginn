@@ -23,7 +23,7 @@ def _default_user_agent() -> str:
 @dataclass
 class BrowserConfig:
     """Browser backend configuration."""
-    backend: str = "playwright"  # "playwright" or "starsearch"
+    backend: str = "playwright"  # "starsearch" = primary daemon + Playwright fallback
     headless: bool = True
     starsearch_socket: Optional[str] = None  # auto-detect if None
     viewport_width: int = 1920
@@ -31,6 +31,7 @@ class BrowserConfig:
     navigation_timeout: int = 30000  # ms
     wait_for_timeout: int = 5000  # ms
     stealth_mode: bool = True
+    allow_private_network: bool = False
     user_agent: Optional[str] = field(default_factory=_default_user_agent)
 
 
@@ -91,11 +92,13 @@ class HuginnConfig:
     log_level: str = "INFO"
 
     def __post_init__(self):
+        # Apply environment paths before deriving the database location. The old
+        # order left db_path under ~/.huginn even when HUGINN_DATA_DIR=/data.
+        _apply_env(self)
         if not self.db_path:
             self.db_path = os.path.join(self.data_dir, "huginn.db")
         # NOTE: Directory creation deferred to runtime (ensure_data_dir).
         # __post_init__ should not have side effects like makedirs.
-        _apply_env(self)
 
     def ensure_data_dir(self):
         """Create data directory if it does not exist. Call at startup, not import time."""
@@ -105,6 +108,8 @@ class HuginnConfig:
 def load_config(config_path: Optional[str] = None) -> HuginnConfig:
     """Load configuration from file and environment variables."""
     config = HuginnConfig()
+    env_db_path = os.environ.get(f"{_branding.env_prefix}_DB_PATH")
+    file_db_path = None
 
     # Load from file if provided
     if config_path and os.path.exists(config_path):
@@ -114,10 +119,16 @@ def load_config(config_path: Optional[str] = None) -> HuginnConfig:
             raise ImportError("PyYAML is required to load config files. Install with: pip install pyyaml")
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
+        file_db_path = data.get("db_path")
         _merge_config(config, data)
 
     # Environment variable overrides
     _apply_env(config)
+
+    # A derived path must follow the final data_dir after YAML and environment
+    # precedence. Preserve only an explicitly configured database path.
+    if not (env_db_path or file_db_path):
+        config.db_path = os.path.join(config.data_dir, "huginn.db")
 
     return config
 
@@ -146,6 +157,8 @@ def _merge_config(config: HuginnConfig, data: dict):
                 setattr(config.proxy, k, v)
     if "data_dir" in data:
         config.data_dir = data["data_dir"]
+    if "db_path" in data:
+        config.db_path = data["db_path"]
     if "log_level" in data:
         config.log_level = data["log_level"]
 
@@ -163,6 +176,7 @@ def _apply_env(config: HuginnConfig):
         f"{_P}_BROWSER_BACKEND": ("browser", "backend"),
         f"{_P}_HEADLESS": ("browser", "headless"),
         f"{_P}_STEALTH": ("browser", "stealth_mode"),
+        f"{_P}_ALLOW_PRIVATE_NETWORK": ("browser", "allow_private_network"),
         f"{_P}_MAX_DEPTH": ("crawl", "max_depth"),
         f"{_P}_MAX_PAGES": ("crawl", "max_pages"),
         f"{_P}_CONCURRENCY": ("crawl", "concurrency"),
@@ -173,6 +187,7 @@ def _apply_env(config: HuginnConfig):
         f"{_P}_PORT": ("server", "port"),
         f"{_P}_RATE_LIMIT": ("server", "rate_limit"),
         f"{_P}_DATA_DIR": (None, "data_dir"),
+        f"{_P}_DB_PATH": (None, "db_path"),
         f"{_P}_LOG_LEVEL": (None, "log_level"),
         f"{_P}_PROXY_SERVER": ("proxy", "server"),
         f"{_P}_PROXY_USERNAME": ("proxy", "username"),
