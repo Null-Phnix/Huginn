@@ -4,7 +4,8 @@ Tests for Huginn Searcher — Search engine configuration, result parsing.
 
 import pytest
 
-from huginn.searcher import Searcher
+from huginn.searcher import Searcher, _normalize_search_result_url
+
 # TEST_FIX: SEARCH_ENGINES was removed from searcher module; using private fallback
 SEARCH_ENGINES = getattr(Searcher, 'SEARCH_ENGINES', {
     "bing": {"url": "https://www.bing.com/search?q={query}", "result_selector": "li.b_algo", "title_selector": "h2", "link_selector": "a", "snippet_selector": "p"},
@@ -57,3 +58,20 @@ class TestSearcherInit:
     def test_custom_fallback_chain(self):
         searcher = Searcher(browser=None, fallback_chain=False)
         assert searcher.fallback_chain is False
+
+
+class TestSearchResultUrlNormalization:
+    def test_unwraps_duckduckgo_tracking_url(self):
+        href = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fprometheus.io%2F&rut=ignored"
+        assert _normalize_search_result_url(href) == "https://prometheus.io/"
+
+    def test_resolves_relative_duckduckgo_url(self):
+        href = "/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs"
+        assert _normalize_search_result_url(
+            href,
+            base_url="https://html.duckduckgo.com/",
+        ) == "https://example.com/docs"
+
+    @pytest.mark.parametrize("href", ["javascript:alert(1)", "file:///etc/passwd", "/relative"])
+    def test_drops_non_http_or_unresolved_urls(self, href):
+        assert _normalize_search_result_url(href) == ""

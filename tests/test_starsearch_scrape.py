@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from huginn.models import Action, ActionType, OutputFormat, ScrapeOptions
 from huginn import starsearch_scrape
+from huginn.models import Action, ActionType, OutputFormat, ScrapeOptions
 from huginn.utils import scrape_options_kwargs
 
 
@@ -38,6 +38,7 @@ class FakeWriter:
 def test_handshake_reads_tcp_token_file(monkeypatch, tmp_path):
     token_file = tmp_path / "token"
     token_file.write_text("a" * 64)
+    token_file.chmod(0o600)
     monkeypatch.setenv("HUGINN_STARSEARCH_TOKEN_FILE", str(token_file))
 
     payload = starsearch_scrape._handshake("test-client")
@@ -47,6 +48,16 @@ def test_handshake_reads_tcp_token_file(monkeypatch, tmp_path):
         "client_version": "test-client",
         "auth_token": "a" * 64,
     }
+
+
+def test_handshake_rejects_broad_tcp_token_permissions(monkeypatch, tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("a" * 64)
+    token_file.chmod(0o644)
+    monkeypatch.setenv("HUGINN_STARSEARCH_TOKEN_FILE", str(token_file))
+
+    with pytest.raises(RuntimeError, match="0600 or stricter"):
+        starsearch_scrape._handshake("test-client")
 
 
 @pytest.mark.asyncio

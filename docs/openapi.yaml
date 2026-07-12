@@ -1766,7 +1766,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/BrowserSessionResponse'
         '422':
           description: Validation Error
           content:
@@ -1792,7 +1793,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/BrowserSessionListResponse'
         '422':
           description: Validation Error
           content:
@@ -1825,7 +1827,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/BrowserSessionResponse'
         '422':
           description: Validation Error
           content:
@@ -1857,7 +1860,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/BrowserSessionCloseResponse'
         '422':
           description: Validation Error
           content:
@@ -1896,7 +1900,70 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/BrowserSessionCommandResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/browser/contexts:
+    get:
+      tags:
+      - Browser Sessions
+      summary: List Contexts
+      operationId: list_contexts_v1_browser_contexts_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserContextListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/browser/contexts/{context_id}:
+    delete:
+      tags:
+      - Browser Sessions
+      summary: Delete Context
+      operationId: delete_context_v1_browser_contexts__context_id__delete
+      parameters:
+      - name: context_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Context Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserContextDeleteResponse'
         '422':
           description: Validation Error
           content:
@@ -1982,6 +2049,135 @@ components:
       - go_back
       - go_forward
       title: BrowserCommand
+    BrowserContextDeleteResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        context_id:
+          type: string
+          title: Context Id
+        name:
+          type: string
+          title: Name
+          description: Deprecated compatibility alias for context_id
+          deprecated: true
+        status:
+          type: string
+          const: deleted
+          title: Status
+          default: deleted
+      type: object
+      required:
+      - context_id
+      - name
+      title: BrowserContextDeleteResponse
+    BrowserContextListResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        contexts:
+          items:
+            $ref: '#/components/schemas/BrowserContextResponse'
+          type: array
+          title: Contexts
+      type: object
+      title: BrowserContextListResponse
+    BrowserContextMode:
+      type: string
+      enum:
+      - open_existing
+      - create_new
+      - open_or_create
+      title: BrowserContextMode
+    BrowserContextResponse:
+      properties:
+        context_id:
+          type: string
+          title: Context Id
+        name:
+          type: string
+          title: Name
+          description: Deprecated compatibility alias for context_id
+          deprecated: true
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        last_opened_at:
+          type: string
+          format: date-time
+          title: Last Opened At
+        locale:
+          type: string
+          title: Locale
+        profile_persistent:
+          type: boolean
+          const: true
+          title: Profile Persistent
+          default: true
+        runtime_restart_survival:
+          type: boolean
+          const: false
+          title: Runtime Restart Survival
+          default: false
+        scope:
+          type: string
+          const: host
+          title: Scope
+          default: host
+        active:
+          type: boolean
+          title: Active
+          default: false
+        active_session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Active Session Id
+        quarantined:
+          type: boolean
+          title: Quarantined
+          description: Fail-closed marker set when Chromium termination could not
+            be confirmed; the context cannot be reopened or deleted automatically
+          default: false
+      type: object
+      required:
+      - context_id
+      - name
+      - created_at
+      - last_opened_at
+      - locale
+      title: BrowserContextResponse
+    BrowserSessionCloseResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        id:
+          type: string
+          title: Id
+        status:
+          type: string
+          enum:
+          - closed
+          - closed_with_warnings
+          - already_closed
+          title: Status
+        warnings:
+          items:
+            type: string
+          type: array
+          title: Warnings
+      type: object
+      required:
+      - id
+      - status
+      title: BrowserSessionCloseResponse
     BrowserSessionCommandRequest:
       properties:
         command:
@@ -2050,6 +2246,68 @@ components:
       required:
       - command
       title: BrowserSessionCommandRequest
+    BrowserSessionCommandResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        id:
+          type: string
+          title: Id
+        command:
+          $ref: '#/components/schemas/BrowserCommand'
+        result:
+          title: Result
+        security:
+          additionalProperties: true
+          type: object
+          title: Security
+      type: object
+      required:
+      - id
+      - command
+      title: BrowserSessionCommandResponse
+    BrowserSessionContext:
+      properties:
+        context_id:
+          type: string
+          title: Context Id
+        id:
+          type: string
+          title: Id
+          description: Deprecated compatibility alias for context_id
+          deprecated: true
+        persistent:
+          type: boolean
+          const: true
+          title: Persistent
+          default: true
+        created:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Created
+        scope:
+          type: string
+          const: host
+          title: Scope
+          default: host
+        profile_persistent:
+          type: boolean
+          const: true
+          title: Profile Persistent
+          default: true
+        runtime_restart_survival:
+          type: boolean
+          const: false
+          title: Runtime Restart Survival
+          default: false
+      type: object
+      required:
+      - context_id
+      - id
+      title: BrowserSessionContext
     BrowserSessionCreateRequest:
       properties:
         locale:
@@ -2080,14 +2338,132 @@ components:
           type: boolean
           title: Allow Internal Network
           default: false
+        allow_evaluate:
+          type: boolean
+          title: Allow Evaluate
+          default: false
+        allow_cookie_access:
+          type: boolean
+          title: Allow Cookie Access
+          default: false
         proxy:
           anyOf:
           - type: string
             maxLength: 2048
           - type: 'null'
           title: Proxy
+        context_id:
+          anyOf:
+          - type: string
+            maxLength: 64
+            minLength: 1
+            pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+          - type: 'null'
+          title: Context Id
+          description: Host-local persistent StarSearch context. Persistent context
+            operations require Huginn API authentication to be configured.
+        context_mode:
+          $ref: '#/components/schemas/BrowserContextMode'
+          default: open_or_create
       type: object
       title: BrowserSessionCreateRequest
+    BrowserSessionListResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        sessions:
+          items:
+            $ref: '#/components/schemas/BrowserSessionResponse'
+          type: array
+          title: Sessions
+        daemon:
+          additionalProperties: true
+          type: object
+          title: Daemon
+      type: object
+      title: BrowserSessionListResponse
+    BrowserSessionResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        id:
+          type: string
+          title: Id
+        status:
+          type: string
+          enum:
+          - active
+          - close_failed
+          - interrupted
+          - runtime_unreachable
+          title: Status
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        last_active_at:
+          type: string
+          format: date-time
+          title: Last Active At
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        locale:
+          type: string
+          title: Locale
+        human_level:
+          type: integer
+          title: Human Level
+        allowed_domains:
+          items:
+            type: string
+          type: array
+          title: Allowed Domains
+        allow_internal_network:
+          type: boolean
+          title: Allow Internal Network
+          default: false
+        allow_evaluate:
+          type: boolean
+          title: Allow Evaluate
+          default: false
+        allow_cookie_access:
+          type: boolean
+          title: Allow Cookie Access
+          default: false
+        proxy_configured:
+          type: boolean
+          title: Proxy Configured
+          default: false
+        context:
+          anyOf:
+          - $ref: '#/components/schemas/BrowserSessionContext'
+          - type: 'null'
+        warning:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Warning
+        daemon_instance_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Daemon Instance Id
+      type: object
+      required:
+      - id
+      - status
+      - created_at
+      - last_active_at
+      - expires_at
+      - locale
+      - human_level
+      title: BrowserSessionResponse
     CrawlGraph:
       properties:
         nodes:

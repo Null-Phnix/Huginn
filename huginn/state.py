@@ -6,14 +6,15 @@ scheduler, watcher, and config through get_state().  This replaces the
 module-level globals that previously lived in api.py.
 """
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from .config import HuginnConfig
 from .browser import BrowserManager
+from .config import HuginnConfig
 from .job_store import JobStore
 from .replay_log import ReplayLog
 from .scheduler import Scheduler
@@ -34,6 +35,7 @@ class AppState:
     watcher: Optional[Any] = None
     crawl_tasks: dict = field(default_factory=dict)
     browser_sessions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    browser_session_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     proxy_provider: Optional[Any] = None
 
 

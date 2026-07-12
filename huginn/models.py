@@ -6,10 +6,9 @@ Firecrawl-compatible interface with Huginn extensions.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
-
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ─── Enums ───────────────────────────────────────────────────────────────────
 
@@ -707,13 +706,32 @@ class BrowserCommand(str, Enum):
     GO_FORWARD = "go_forward"
 
 
+class BrowserContextMode(str, Enum):
+    OPEN_EXISTING = "open_existing"
+    CREATE_NEW = "create_new"
+    OPEN_OR_CREATE = "open_or_create"
+
+
 class BrowserSessionCreateRequest(BaseModel):
     locale: str = Field("en-US", min_length=2, max_length=32)
     human_level: int = Field(1, ge=0, le=3)
     max_idle_s: int = Field(900, ge=30, le=3600)
     allowed_domains: List[str] = Field(default_factory=list, max_length=100)
     allow_internal_network: bool = False
+    allow_evaluate: bool = False
+    allow_cookie_access: bool = False
     proxy: Optional[str] = Field(None, max_length=2048)
+    context_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$",
+        description=(
+            "Host-local persistent StarSearch context. Persistent context operations "
+            "require Huginn API authentication to be configured."
+        ),
+    )
+    context_mode: BrowserContextMode = BrowserContextMode.OPEN_OR_CREATE
 
 
 class BrowserSessionCommandRequest(BaseModel):
@@ -728,6 +746,97 @@ class BrowserSessionCommandRequest(BaseModel):
     timeout_s: int = Field(30, ge=1, le=300)
     human: bool = True
     cookies: Optional[List[Dict[str, Any]]] = Field(None, max_length=200)
+
+
+class BrowserSessionContext(BaseModel):
+    context_id: str
+    id: str = Field(
+        description="Deprecated compatibility alias for context_id",
+        deprecated=True,
+    )
+    persistent: Literal[True] = True
+    created: Optional[bool] = None
+    scope: Literal["host"] = "host"
+    profile_persistent: Literal[True] = True
+    runtime_restart_survival: Literal[False] = False
+
+
+class BrowserSessionResponse(BaseModel):
+    success: bool = True
+    id: str
+    status: Literal["active", "close_failed", "interrupted", "runtime_unreachable"]
+    created_at: datetime
+    last_active_at: datetime
+    expires_at: datetime
+    locale: str
+    human_level: int
+    allowed_domains: List[str] = Field(default_factory=list)
+    allow_internal_network: bool = False
+    allow_evaluate: bool = False
+    allow_cookie_access: bool = False
+    proxy_configured: bool = False
+    context: Optional[BrowserSessionContext] = None
+    warning: Optional[str] = None
+    daemon_instance_id: Optional[str] = None
+
+
+class BrowserSessionListResponse(BaseModel):
+    success: bool = True
+    sessions: List[BrowserSessionResponse] = Field(default_factory=list)
+    daemon: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BrowserSessionCommandResponse(BaseModel):
+    success: bool = True
+    id: str
+    command: BrowserCommand
+    result: Any = None
+    security: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BrowserSessionCloseResponse(BaseModel):
+    success: bool = True
+    id: str
+    status: Literal["closed", "closed_with_warnings", "already_closed"]
+    warnings: List[str] = Field(default_factory=list)
+
+
+class BrowserContextResponse(BaseModel):
+    context_id: str
+    name: str = Field(
+        description="Deprecated compatibility alias for context_id",
+        deprecated=True,
+    )
+    created_at: datetime
+    last_opened_at: datetime
+    locale: str
+    profile_persistent: Literal[True] = True
+    runtime_restart_survival: Literal[False] = False
+    scope: Literal["host"] = "host"
+    active: bool = False
+    active_session_id: Optional[str] = None
+    quarantined: bool = Field(
+        False,
+        description=(
+            "Fail-closed marker set when Chromium termination could not be confirmed; "
+            "the context cannot be reopened or deleted automatically"
+        ),
+    )
+
+
+class BrowserContextListResponse(BaseModel):
+    success: bool = True
+    contexts: List[BrowserContextResponse] = Field(default_factory=list)
+
+
+class BrowserContextDeleteResponse(BaseModel):
+    success: bool = True
+    context_id: str
+    name: str = Field(
+        description="Deprecated compatibility alias for context_id",
+        deprecated=True,
+    )
+    status: Literal["deleted"] = "deleted"
 
 
 # ─── Page Watch / Change Detection ─────────────────────────────────────────────

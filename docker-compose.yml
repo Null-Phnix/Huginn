@@ -2,7 +2,10 @@
 
 services:
   huginn:
-    build: .
+    build:
+      context: .
+      args:
+        HUGINN_INSTALL_PLAYWRIGHT_BROWSER: "${HUGINN_INSTALL_PLAYWRIGHT_BROWSER:-0}"
     image: ghcr.io/null-phnix/huginn:latest
     container_name: huginn
     network_mode: host
@@ -17,6 +20,9 @@ services:
       HUGINN_DATA_DIR: /data
       HUGINN_PORT: 7432
       HUGINN_API_KEY_FILE: "/run/secrets/huginn_api_key"
+      # The root-run container reads a 0600 host secret owned by this explicit
+      # UID. Direct service installs omit this and require process ownership.
+      HUGINN_SECRET_OWNER_UID: "${HUGINN_SECRET_OWNER_UID:-1000}"
       HUGINN_USER_AGENT: "Huginn/Bot (+https://huginn.dev/bot)"
       HUGINN_BROWSER_BACKEND: "starsearch"
       HUGINN_ALLOW_PLAYWRIGHT_FALLBACK: "false"
@@ -36,6 +42,9 @@ services:
       # /dev/null keeps direct mode reproducible without creating a fake proxy file.
       - "${HUGINN_PROXY_URLS_FILE:-/dev/null}:/run/secrets/huginn_proxy_urls:ro"
     restart: unless-stopped
+    # Shutdown drains up to five StarSearch sessions sequentially (10s each)
+    # before closing the browser and durable stores.
+    stop_grace_period: 75s
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7432/health/ready"]
       interval: 30s

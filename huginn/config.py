@@ -6,11 +6,11 @@ No Redis, no Supabase — just SQLite and environment.
 """
 
 import os
+import stat
 from dataclasses import dataclass, field
 from typing import Optional
-from pathlib import Path
 
-from . import _branding, __version__
+from . import _branding
 
 
 def _default_user_agent() -> str:
@@ -80,6 +80,7 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 7432
     api_key: Optional[str] = None  # Bearer token auth (optional)
+    cors_origins: str = ""  # comma-separated explicit origins; disabled by default
     job_ttl: int = 3600  # seconds to keep completed jobs
     max_concurrent_jobs: int = 10
     request_timeout: int = 300  # seconds
@@ -170,6 +171,68 @@ def _merge_config(config: HuginnConfig, data: dict):
         config.log_level = data["log_level"]
 
 
+def read_secret_file(path: str, setting: str, owner_env: str) -> str:
+    """Read a secret without following links or accepting broad modes.
+
+    The normal owner is the service process itself. Root-run containers may
+    explicitly name the UID which owns a read-only host bind mount through
+    an explicit owner environment setting. That exception is configuration, never an
+    inferred trust of an arbitrary file owner.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise RuntimeError(f"Cannot safely read {setting}: O_NOFOLLOW is unavailable")
+
+    configured_owner = os.environ.get(owner_env)
+    if configured_owner is None:
+        expected_owner = os.geteuid()
+    else:
+        try:
+            expected_owner = int(configured_owner, 10)
+        except ValueError as exc:
+            raise RuntimeError(f"{owner_env} must be a non-negative integer UID") from exc
+        if expected_owner < 0:
+            raise RuntimeError(f"{owner_env} must be a non-negative integer UID")
+
+    flags = os.O_RDONLY | nofollow
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(f"Cannot securely open {setting} {path}: {exc}") from exc
+
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(f"{setting} {path} must be a regular file")
+        if metadata.st_uid != expected_owner:
+            raise RuntimeError(f"{setting} {path} must be owned by UID {expected_owner}")
+        mode = stat.S_IMODE(metadata.st_mode)
+        if mode & ~0o600:
+            raise RuntimeError(
+                f"{setting} {path} permissions must be 0600 or stricter"
+            )
+        with os.fdopen(fd, "r", encoding="utf-8") as key_file:
+            fd = -1
+            api_key = key_file.read().strip()
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+    if not api_key:
+        raise RuntimeError(f"{setting} {path} is empty")
+    return api_key
+
+
+def _read_api_key_file(path: str, prefix: str) -> str:
+    return read_secret_file(
+        path,
+        f"{prefix}_API_KEY_FILE",
+        f"{prefix}_SECRET_OWNER_UID",
+    )
+
+
 def _apply_env(config: HuginnConfig):
     """Apply environment variable overrides.
 
@@ -181,13 +244,7 @@ def _apply_env(config: HuginnConfig):
     _P = _branding.env_prefix  # local alias to keep the table readable
     api_key_file = os.environ.get(f"{_P}_API_KEY_FILE")
     if api_key_file:
-        try:
-            api_key = Path(api_key_file).read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise RuntimeError(f"Cannot read {_P}_API_KEY_FILE {api_key_file}: {exc}") from exc
-        if not api_key:
-            raise RuntimeError(f"{_P}_API_KEY_FILE {api_key_file} is empty")
-        config.server.api_key = api_key
+        config.server.api_key = _read_api_key_file(api_key_file, _P)
     env_map = {
         f"{_P}_BROWSER_BACKEND": ("browser", "backend"),
         f"{_P}_HEADLESS": ("browser", "headless"),
@@ -204,6 +261,7 @@ def _apply_env(config: HuginnConfig):
         f"{_P}_HOST": ("server", "host"),
         f"{_P}_PORT": ("server", "port"),
         f"{_P}_RATE_LIMIT": ("server", "rate_limit"),
+        f"{_P}_CORS_ORIGINS": ("server", "cors_origins"),
         f"{_P}_DATA_DIR": (None, "data_dir"),
         f"{_P}_DB_PATH": (None, "db_path"),
         f"{_P}_LOG_LEVEL": (None, "log_level"),
@@ -219,6 +277,10 @@ def _apply_env(config: HuginnConfig):
         f"{_P}_USER_AGENT": ("browser", "user_agent"),
     }
     for env_var, (section, attr) in env_map.items():
+        # A configured key file is authoritative. In particular, an empty
+        # HUGINN_API_KEY from a sourced example file must never disable auth.
+        if api_key_file and env_var == f"{_P}_API_KEY":
+            continue
         val = os.environ.get(env_var)
         if val is not None:
             target = getattr(config, section) if section else config

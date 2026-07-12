@@ -5,7 +5,9 @@ past bot walls that block plain HTTP — keyless, no paid anti-bot service.
 
 Enabled by setting HUGINN_STARSEARCH_TCP=host:port (e.g. 127.0.0.1:7676). The
 Huginn container reaches the host daemon over TCP because it runs network_mode:
-host. Falls through to Playwright on any failure.
+host. This bridge reports StarSearch failures to its caller; production does
+not silently fall through to Playwright. Compatibility fallback is a separate,
+explicit BrowserManager setting and image variant.
 """
 from __future__ import annotations
 
@@ -15,12 +17,12 @@ import json
 import os
 import re
 import urllib.parse
-from pathlib import Path
-from typing import Any, List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import markdownify
 from bs4 import BeautifulSoup
 
+from .config import read_secret_file
 from .models import OutputFormat, ScrapeData
 
 
@@ -29,10 +31,11 @@ def _handshake(client_version: str) -> dict:
     token = os.environ.get("HUGINN_STARSEARCH_TOKEN")
     token_file = os.environ.get("HUGINN_STARSEARCH_TOKEN_FILE")
     if token_file:
-        try:
-            token = Path(token_file).read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise RuntimeError(f"cannot read HUGINN_STARSEARCH_TOKEN_FILE: {exc}") from exc
+        token = read_secret_file(
+            token_file,
+            "HUGINN_STARSEARCH_TOKEN_FILE",
+            "HUGINN_SECRET_OWNER_UID",
+        )
     if token:
         payload["auth_token"] = token
     return payload

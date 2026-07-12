@@ -342,6 +342,8 @@ class BrowserManager:
                     "BrowserManager: StarSearch primary (Playwright fallback=%s)",
                     self.allow_playwright_fallback,
                 )
+                if not self.allow_playwright_fallback:
+                    return
             else:
                 message = "browser.backend=starsearch but HUGINN_STARSEARCH_TCP is unset"
                 if not self.allow_playwright_fallback:
@@ -421,6 +423,10 @@ class BrowserManager:
         # Resolve: explicit arg > instance attr > default True
         if ignore_https_errors is None:
             ignore_https_errors = getattr(self, "ignore_https_errors", True)
+        if self._backend_name == "starsearch" and not self.allow_playwright_fallback:
+            raise RuntimeError(
+                "Playwright context requested while StarSearch-only production mode is active"
+            )
         if not self._browser:
             await self.start()
 

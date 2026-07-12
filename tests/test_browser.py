@@ -419,3 +419,20 @@ class TestEnhancedActions:
 
         # Hover was attempted even though it failed
         page.hover.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_starsearch_only_start_does_not_launch_playwright(monkeypatch):
+    from huginn.config import BrowserConfig
+
+    monkeypatch.setenv("HUGINN_STARSEARCH_TCP", "127.0.0.1:7676")
+    browser = BrowserManager(
+        config=BrowserConfig(
+            backend="starsearch",
+            allow_playwright_fallback=False,
+        )
+    )
+    with patch("huginn.browser.async_playwright") as playwright:
+        await browser.start()
+    playwright.assert_not_called()
+    assert browser._browser is None

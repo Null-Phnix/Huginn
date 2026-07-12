@@ -55,7 +55,7 @@ Blackreach handles "go find me state space model papers from 2024." Huginn handl
 | **Research** | Multi-hop deep dives with ChromaDB vector memory persistence |
 | **Watch** | Page change detection with webhook notifications |
 | **Batch/jobs** | Durable IDs, polling, cancellation, replay, and persisted state |
-| **Browser sessions** | Authenticated StarSearch lifecycle and typed commands |
+| **Browser sessions** | Authenticated StarSearch lifecycle, named persistent profiles, and typed commands |
 | **Stream/cache** | SSE/NDJSON progress, success-only caching, and request tracing |
 
 ---
@@ -64,18 +64,20 @@ Blackreach handles "go find me state space model papers from 2024." Huginn handl
 
 - StarSearch changes browser identity signals; it does not create a new IP, residential egress, or geographic location.
 - `direct` egress is the default. Real rotation requires explicitly configured proxy endpoints; unhealthy endpoints cool down and no proxy policy silently falls back to direct.
-- Browser sessions are local, authenticated, capacity-limited StarSearch sessions. This is not managed multi-host Browserbase, public live view, or durable remote CDP.
+- Browser sessions are local, authenticated, capacity-limited StarSearch sessions. Named contexts preserve Chromium profile state on this host, but runtime session IDs do not survive restart. This is not managed multi-host Browserbase, public live view, or durable remote CDP.
+- Browser-origin access is disabled by default. Set `HUGINN_CORS_ORIGINS` to a comma-separated allowlist only for a trusted UI; wildcard CORS requires API authentication.
+- The production image does not install Playwright Chromium; StarSearch is the sole browser runtime. A compatibility image must be built explicitly with `HUGINN_INSTALL_PLAYWRIGHT_BROWSER=1` and still requires `HUGINN_ALLOW_PLAYWRIGHT_FALLBACK=true` at runtime.
 - Structured LLM extraction still needs a configured local or hosted model. Search, scrape, crawl, screenshots, and browser commands do not need an LLM key.
 - DNS rebinding after initial validation remains a documented residual risk. Redirects and browser subresources are revalidated.
 - Keyless search currently has one browser-rendered engine, so a second engine and health scoring remain important resilience work.
 
 ## Near-Term Direction
 
-1. Durable browser contexts and an explicitly scoped remote debugging boundary.
+1. An explicitly scoped remote debugging boundary for local operators.
 2. A provider plugin for managed proxy inventory, health checks, and geographic/session policy.
 3. DNS pinning or equivalent connect-time destination enforcement.
 4. Search-engine failover and scoring.
-5. Retention policies for research memory and long-lived job/replay state.
+5. Retention policies for named contexts, research memory, and long-lived job/replay state.
 
 ---
 
@@ -106,7 +108,22 @@ curl -X POST http://127.0.0.1:7432/v1/search \
   -H "Authorization: Bearer $(<~/.config/huginn/api-key)" \
   -H "Content-Type: application/json" \
   -d '{"query": "Prometheus monitoring", "limit": 5}'
+
+# Open or create a host-local persistent browser context. The API key must be
+# configured; named contexts never accept raw per-request proxy credentials.
+curl -X POST http://127.0.0.1:7432/v1/browser/sessions \
+  -H "Authorization: Bearer $(<~/.config/huginn/api-key)" \
+  -H "Content-Type: application/json" \
+  -d '{"context_id":"hermes-research","context_mode":"open_or_create","allowed_domains":["example.com"],"allow_evaluate":false,"allow_cookie_access":false}'
 ```
+
+The context's locale, egress identity, domain/internal-network policy, and
+evaluate/cookie permissions are fixed on first creation. Reopening with weaker
+or different policy fails with `context_config_mismatch`. A StarSearch restart
+marks Huginn runtime handles `interrupted`; a Huginn crash can be recovered by
+listing contexts and closing the daemon-authoritative `active_session_id`.
+Context responses use `context_id`; deprecated `id` (session create) and `name`
+(list/delete) aliases are temporarily returned so existing clients can migrate.
 
 `render_mode` accepts `auto`, `full`, `starsearch`, and `light`. Use
 `starsearch` when the request must use the shared daemon and fail closed; use
@@ -191,6 +208,8 @@ huginn config                   # Show current config
 | `/v1/batch/scrape` | POST | Start a durable batch scrape |
 | `/v1/browser/sessions` | POST/GET | Create or list authenticated browser sessions |
 | `/v1/browser/sessions/{id}/commands` | POST | Execute a typed StarSearch command |
+| `/v1/browser/contexts` | GET | List authenticated host-local persistent contexts |
+| `/v1/browser/contexts/{context_id}` | DELETE | Delete an inactive persistent context and profile |
 
 ### Native Huginn Surface
 
@@ -271,14 +290,16 @@ production settings are:
 | Variable | Production value/purpose |
 |---|---|
 | `HUGINN_HOST` | `127.0.0.1`; opt into wider exposure deliberately |
-| `HUGINN_API_KEY_FILE` | Bearer key file; preferred over a direct secret value |
+| `HUGINN_API_KEY_FILE` | Bearer key file; must be regular, non-symlinked, owner-only (`0600` or stricter) |
+| `HUGINN_SECRET_OWNER_UID` | Explicit owner UID for a host secret bind-mounted into the root-run Compose container; omit for direct installs |
 | `HUGINN_DATA_DIR` | Persistent state root; Compose uses `/data` |
 | `HUGINN_BROWSER_BACKEND` | `starsearch` |
 | `HUGINN_STARSEARCH_TCP` | Authenticated daemon address, normally `127.0.0.1:7676` |
-| `HUGINN_STARSEARCH_TOKEN_FILE` | StarSearch TCP bearer-token file |
+| `HUGINN_STARSEARCH_TOKEN_FILE` | StarSearch TCP bearer-token file; same regular-file, owner, and mode checks apply |
 | `HUGINN_ALLOW_PLAYWRIGHT_FALLBACK` | `false` in production |
+| `HUGINN_CORS_ORIGINS` | Empty by default; comma-separated trusted browser origins |
 | `HUGINN_PROXY_PROVIDER` | `direct` or `static`; direct means host egress |
-| `HUGINN_PROXY_URLS_FILE` | Secret file for configured proxy endpoints |
+| `HUGINN_PROXY_URLS_FILE` | Secret proxy-endpoint file; same regular-file, owner, and mode checks apply |
 | `HUGINN_PROXY_ROTATION` | `round_robin` or `sticky` |
 | `HUGINN_DB_PATH` | Explicit SQLite path, otherwise derived from `HUGINN_DATA_DIR` |
 

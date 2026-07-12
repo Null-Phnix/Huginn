@@ -172,6 +172,29 @@ class TestAPICreation:
         app = create_app(config)
         assert app is not None
         assert app.title == "Huginn"
+        assert all(
+            middleware.cls.__name__ != "CORSMiddleware"
+            for middleware in app.user_middleware
+        )
+
+    def test_wildcard_cors_requires_api_auth(self):
+        from huginn.api import create_app
+
+        config = HuginnConfig()
+        config.server.cors_origins = "*"
+        with pytest.raises(RuntimeError, match="requires HUGINN_API_KEY"):
+            create_app(config)
+
+    def test_explicit_cors_origin_is_opt_in(self):
+        from huginn.api import create_app
+
+        config = HuginnConfig()
+        config.server.cors_origins = "https://agents.example"
+        app = create_app(config)
+        assert any(
+            middleware.cls.__name__ == "CORSMiddleware"
+            for middleware in app.user_middleware
+        )
 
     def test_create_app_custom_config(self):
         from huginn.api import create_app

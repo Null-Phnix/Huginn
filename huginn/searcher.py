@@ -8,14 +8,13 @@ when BRAVE_API_KEY is set, with arxiv fallback for academic queries.
 import asyncio
 import logging
 import os
-import re
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import httpx
 
 from .browser import BrowserManager
-from .models import OutputFormat, SearchResultItem, ScrapeData
+from .models import OutputFormat, SearchResultItem
 from .scraper import Scraper
 from .utils import scrape_failure
 
@@ -33,6 +32,34 @@ def _is_academic_query(query: str) -> bool:
     """Detect if query is academic in nature."""
     query_lower = query.lower()
     return any(keyword in query_lower for keyword in ACADEMIC_KEYWORDS)
+
+
+def _normalize_search_result_url(href: str, *, base_url: Optional[str] = None) -> str:
+    """Return an absolute destination URL instead of an engine tracking URL.
+
+    DuckDuckGo HTML/Lite commonly returns protocol-relative ``/l/?uddg=``
+    wrappers. Those are valid browser links but poor API results and can break
+    deterministic follow-up scraping. Malformed and non-HTTP links are dropped.
+    """
+    candidate = href.strip()
+    if not candidate:
+        return ""
+    if base_url:
+        candidate = urljoin(base_url, candidate)
+    elif candidate.startswith("//"):
+        candidate = f"https:{candidate}"
+
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+
+    hostname = parsed.hostname.lower()
+    if (hostname == "duckduckgo.com" or hostname.endswith(".duckduckgo.com")) and parsed.path.rstrip("/") == "/l":
+        target = parse_qs(parsed.query).get("uddg", [""])[0]
+        target_url = urlparse(target)
+        if target_url.scheme in {"http", "https"} and target_url.hostname:
+            return target
+    return candidate
 
 
 class Searcher:
@@ -333,8 +360,17 @@ class Searcher:
                 return results;
             }""")
 
-            logger.info("DuckDuckGo HTML returned %d results", len(parsed) if parsed else 0)
-            return (parsed or [])[:limit]
+            normalized = []
+            for result in parsed or []:
+                link = _normalize_search_result_url(
+                    result.get("link", ""),
+                    base_url="https://html.duckduckgo.com/",
+                )
+                if link:
+                    normalized.append({**result, "link": link})
+
+            logger.info("DuckDuckGo HTML returned %d results", len(normalized))
+            return normalized[:limit]
         finally:
             await context.close()
 
@@ -359,8 +395,11 @@ class Searcher:
             if not link_a:
                 continue
             title = link_a.get_text(strip=True)
-            href = link_a.get("href", "")
-            if not href or href.startswith("javascript:"):
+            href = _normalize_search_result_url(
+                link_a.get("href", ""),
+                base_url="https://lite.duckduckgo.com/",
+            )
+            if not href:
                 continue
             snippet = ""
             next_row = row.find_next_sibling("tr")

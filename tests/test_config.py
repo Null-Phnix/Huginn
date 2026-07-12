@@ -3,16 +3,14 @@ Tests for Huginn configuration module.
 """
 
 import os
-import tempfile
 from unittest.mock import patch
 
 import pytest
 
 from huginn.config import (
-    HuginnConfig,
     BrowserConfig,
     CrawlConfig,
-    ExtractConfig,
+    HuginnConfig,
     ServerConfig,
     load_config,
 )
@@ -141,12 +139,108 @@ class TestLoadConfig:
     ):
         secret_file = tmp_path / "api-key"
         secret_file.write_text("local-secret-key")
+        secret_file.chmod(0o600)
         monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
         monkeypatch.delenv("HUGINN_API_KEY", raising=False)
 
         config = load_config()
 
         assert config.server.api_key == "local-secret-key"
+
+    @pytest.mark.parametrize("direct_value", ["", "different-key"])
+    def test_api_key_file_is_authoritative_over_direct_environment_value(
+        self, monkeypatch, tmp_path, direct_value
+    ):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("file-key")
+        secret_file.chmod(0o600)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
+        monkeypatch.setenv("HUGINN_API_KEY", direct_value)
+
+        assert load_config().server.api_key == "file-key"
+
+    @pytest.mark.parametrize("mode", [0o600, 0o400])
+    def test_api_key_file_accepts_owner_only_modes(
+        self, monkeypatch, tmp_path, mode
+    ):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("local-secret-key")
+        secret_file.chmod(mode)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
+        monkeypatch.delenv("HUGINN_SECRET_OWNER_UID", raising=False)
+
+        assert load_config().server.api_key == "local-secret-key"
+
+    @pytest.mark.parametrize("mode", [0o604, 0o610, 0o700, 0o4600])
+    def test_api_key_file_rejects_permissions_broader_than_0600(
+        self, monkeypatch, tmp_path, mode
+    ):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("local-secret-key")
+        secret_file.chmod(mode)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
+        monkeypatch.delenv("HUGINN_SECRET_OWNER_UID", raising=False)
+
+        with pytest.raises(RuntimeError, match="0600 or stricter"):
+            load_config()
+
+    def test_api_key_file_rejects_symlink(self, monkeypatch, tmp_path):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("local-secret-key")
+        secret_file.chmod(0o600)
+        link = tmp_path / "api-key-link"
+        link.symlink_to(secret_file)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(link))
+
+        with pytest.raises(RuntimeError, match="Cannot securely open"):
+            load_config()
+
+    def test_api_key_file_rejects_non_regular_file(self, monkeypatch, tmp_path):
+        directory = tmp_path / "api-key-dir"
+        directory.mkdir(mode=0o600)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(directory))
+
+        with pytest.raises(RuntimeError, match="regular file"):
+            load_config()
+
+    def test_api_key_file_requires_current_owner_by_default(
+        self, monkeypatch, tmp_path
+    ):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("local-secret-key")
+        secret_file.chmod(0o600)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
+        monkeypatch.delenv("HUGINN_SECRET_OWNER_UID", raising=False)
+        monkeypatch.setattr(
+            "huginn.config.os.geteuid", lambda: secret_file.stat().st_uid + 1
+        )
+
+        with pytest.raises(RuntimeError, match="must be owned by UID"):
+            load_config()
+
+    def test_api_key_file_allows_explicit_secret_owner_uid(
+        self, monkeypatch, tmp_path
+    ):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("local-secret-key")
+        secret_file.chmod(0o600)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
+        monkeypatch.setenv("HUGINN_SECRET_OWNER_UID", str(secret_file.stat().st_uid))
+
+        assert load_config().server.api_key == "local-secret-key"
+
+    @pytest.mark.parametrize("owner", ["not-a-uid", "-1"])
+    def test_api_key_file_rejects_invalid_secret_owner_uid(
+        self, monkeypatch, tmp_path, owner
+    ):
+        secret_file = tmp_path / "api-key"
+        secret_file.write_text("local-secret-key")
+        secret_file.chmod(0o600)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(secret_file))
+        monkeypatch.setenv("HUGINN_SECRET_OWNER_UID", owner)
+
+        with pytest.raises(RuntimeError, match="non-negative integer UID"):
+            load_config()
 
     def test_yaml_data_dir_moves_derived_database_path(self, tmp_path):
         import yaml

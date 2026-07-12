@@ -20,29 +20,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from . import _branding, __version__
-from .config import HuginnConfig, load_config
-from .job_store import JobStore
-from .replay_log import ReplayLog
-from .metrics import MetricsMiddleware
-from .scheduler import Scheduler
+from . import __version__, _branding
 from .browser import BrowserManager
-from .proxy import build_proxy_provider
-from .state import get_state, reset_state, limiter
-from .tasks import register_scheduler_handlers
-from .utils import make_verify_api_key
+from .config import HuginnConfig
+from .job_store import JobStore
 
 # ─── Module-level LLM helpers (re-exported from huginn.llm) ───────────────────
 # The actual implementation lives in huginn.llm for testability and reuse.
 # Re-exported here so existing callers (e.g. tests) can keep importing
 # from huginn.api without breaking.
-
 from .llm import (  # noqa: E402, F401
-    LLM_PROVIDER_CONFIG,
     _LLM_PROVIDER_CONFIG,  # back-compat alias
-    summarize_text,
+    LLM_PROVIDER_CONFIG,
     _summarize_text,  # back-compat alias
+    summarize_text,
 )
+from .metrics import MetricsMiddleware
+from .proxy import build_proxy_provider
+from .replay_log import ReplayLog
+from .scheduler import Scheduler
+from .state import get_state, limiter, reset_state
+from .tasks import register_scheduler_handlers
+from .utils import make_verify_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +101,15 @@ async def lifespan(app: FastAPI):
         for url, task in list(state.watcher._monitor_tasks.items()):
             task.cancel()
             logger.info(f"Stopped monitoring {url}")
+    from .routers.browser_sessions import close_all_browser_sessions
+    browser_session_drain = await close_all_browser_sessions()
+    if browser_session_drain["failed"]:
+        logger.warning(
+            "StarSearch browser-session drain incomplete: %s",
+            browser_session_drain,
+        )
+    elif browser_session_drain["closed"]:
+        logger.info("Closed tracked StarSearch browser sessions: %s", browser_session_drain)
     await state.browser.stop()
     await state.job_store.close()
     if state.replay_log:
@@ -150,13 +158,24 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
 
     app.state.config = config
 
-    # CORS middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Browser-origin access is disabled by default. A wildcard plus anonymous
+    # local API would let any visited website drive localhost endpoints.
+    cors_origins = [
+        origin.strip()
+        for origin in config.server.cors_origins.split(",")
+        if origin.strip()
+    ]
+    if "*" in cors_origins and not config.server.api_key:
+        raise RuntimeError(
+            "HUGINN_CORS_ORIGINS=* requires HUGINN_API_KEY or HUGINN_API_KEY_FILE"
+        )
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Metrics middleware (must be added before routes)
     app.add_middleware(MetricsMiddleware)
@@ -171,22 +190,22 @@ def create_app(config: Optional[HuginnConfig] = None) -> FastAPI:
     # ─── Register Routers ─────────────────────────────────────────────────────
 
     from .routers import (
-        create_health_router,
-        create_scrape_router,
-        create_crawl_router,
-        create_map_router,
-        create_extract_router,
-        create_research_router,
-        create_search_router,
-        create_jobs_router,
+        create_aliases_router,
         create_batch_router,
-        create_watch_router,
-        create_schedule_router,
-        create_templates_router,
+        create_browser_sessions_router,
+        create_crawl_router,
+        create_extract_router,
+        create_health_router,
+        create_jobs_router,
+        create_map_router,
         create_memory_router,
         create_replay_router,
-        create_aliases_router,
-        create_browser_sessions_router,
+        create_research_router,
+        create_schedule_router,
+        create_scrape_router,
+        create_search_router,
+        create_templates_router,
+        create_watch_router,
     )
 
     app.include_router(create_health_router(verify_api_key))
