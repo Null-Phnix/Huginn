@@ -478,6 +478,13 @@ class SearchOptions(BaseModel):
     tbs: Optional[str] = None  # time range
     country: Optional[str] = None
     language: Optional[str] = None
+    engine: Literal["auto", "bing", "brave"] = Field(
+        "auto",
+        description=(
+            "StarSearch-rendered engine. 'auto' selects by live health score; "
+            "an explicit engine fails closed without silently changing destinations."
+        ),
+    )
 
 
 class SearchRequest(BaseModel):
@@ -488,7 +495,10 @@ class SearchRequest(BaseModel):
     search_options: Optional[SearchOptions] = Field(None)
     scrape_options: Optional[ScrapeOptions] = Field(None)
     # Huginn extension
-    fallback_chain: bool = Field(True)  # Bing->DDG->Brave
+    fallback_chain: bool = Field(
+        True,
+        description="In auto mode, try the next healthy StarSearch-rendered engine on failure.",
+    )
     scrape_results: bool = Field(True)   # Whether to scrape result URLs (disable for fast search-only)
 
 
@@ -499,11 +509,62 @@ class SearchResultItem(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class SearchEngineError(BaseModel):
+    """Machine-readable failure from one rendered search-engine attempt."""
+
+    code: str
+    message: str
+    retryable: bool = True
+
+
+class SearchEngineAttempt(BaseModel):
+    """One engine decision or execution in the search fallback chain."""
+
+    engine: Literal["bing", "brave"]
+    status: Literal["success", "empty", "error", "circuit_open"]
+    latency_ms: int = Field(0, ge=0)
+    result_count: int = Field(0, ge=0)
+    error: Optional[SearchEngineError] = None
+
+
+class SearchEngineHealth(BaseModel):
+    """Process-local health used for automatic engine selection."""
+
+    status: Literal["healthy", "degraded", "open", "untried"]
+    score: float
+    attempts: int = Field(0, ge=0)
+    successes: int = Field(0, ge=0)
+    consecutive_failures: int = Field(0, ge=0)
+    latency_ema_ms: float = Field(ge=0)
+    circuit_open_for_seconds: float = Field(0, ge=0)
+    last_error_code: Optional[str] = None
+
+
+class SearchMetadata(BaseModel):
+    """Selection and health evidence for a StarSearch-rendered search."""
+
+    selected_engine: Optional[Literal["bing", "brave"]] = None
+    render_mode: Literal["starsearch"] = "starsearch"
+    fallback_used: bool = False
+    attempts: List[SearchEngineAttempt] = Field(default_factory=list)
+    engines: Dict[str, SearchEngineHealth] = Field(default_factory=dict)
+
+
+class SearchEngineHealthResponse(BaseModel):
+    """GET /v1/search/engines response."""
+
+    success: bool = True
+    render_mode: Literal["starsearch"] = "starsearch"
+    engines: Dict[str, SearchEngineHealth] = Field(default_factory=dict)
+
+
 class SearchResponse(BaseModel):
     """POST /v1/search response."""
     success: bool
     data: List[SearchResultItem] = Field(default_factory=list)
     error: Optional[str] = None
+    error_code: Optional[str] = None
+    metadata: Optional[SearchMetadata] = None
 
 
 
@@ -761,6 +822,20 @@ class BrowserSessionContext(BaseModel):
     runtime_restart_survival: Literal[False] = False
 
 
+class BrowserEgressDescriptor(BaseModel):
+    """StarSearch's authoritative per-session socket routing contract."""
+
+    gateway_enforced: Literal[True] = True
+    mode: Literal["direct", "upstream"]
+    upstream_scheme: Optional[Literal["http", "https", "socks5"]] = None
+    upstream_identity: Optional[str] = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Password-free opaque routing identity for configured upstream egress",
+    )
+    resolution: Literal["local_frozen"] = "local_frozen"
+
+
 class BrowserSessionResponse(BaseModel):
     success: bool = True
     id: str
@@ -775,6 +850,7 @@ class BrowserSessionResponse(BaseModel):
     allow_evaluate: bool = False
     allow_cookie_access: bool = False
     proxy_configured: bool = False
+    egress: BrowserEgressDescriptor
     context: Optional[BrowserSessionContext] = None
     warning: Optional[str] = None
     daemon_instance_id: Optional[str] = None
@@ -822,6 +898,11 @@ class BrowserContextResponse(BaseModel):
             "the context cannot be reopened or deleted automatically"
         ),
     )
+    quarantine: Optional[Dict[str, Any]] = None
+    idle_seconds: int = Field(0, ge=0)
+    retention_expires_at: Optional[datetime] = None
+    retention_expired: bool = False
+    prune_eligible: bool = False
 
 
 class BrowserContextListResponse(BaseModel):
@@ -837,6 +918,48 @@ class BrowserContextDeleteResponse(BaseModel):
         deprecated=True,
     )
     status: Literal["deleted"] = "deleted"
+
+
+class BrowserContextPruneRequest(BaseModel):
+    dry_run: bool = Field(
+        True,
+        description="Safe default: report eligible inactive contexts without deleting them",
+    )
+
+
+class BrowserContextPruneCandidate(BaseModel):
+    name: str
+    last_opened_at: datetime
+    reasons: List[str] = Field(default_factory=list)
+
+
+class BrowserContextPruneResponse(BaseModel):
+    success: bool = True
+    dry_run: bool
+    total_before: int = Field(ge=0)
+    total_after: int = Field(ge=0)
+    max_contexts: int = Field(ge=1)
+    retention_seconds: int = Field(ge=0)
+    candidates: List[BrowserContextPruneCandidate] = Field(default_factory=list)
+    deleted: List[str] = Field(default_factory=list)
+    protected_active: List[str] = Field(default_factory=list)
+    protected_quarantined: List[str] = Field(default_factory=list)
+    remaining_over_limit: int = Field(ge=0)
+
+
+class BrowserContextRecoverRequest(BaseModel):
+    confirm: bool = Field(
+        False,
+        description="Must be true; recovery performs daemon-side process and profile-lock checks",
+    )
+
+
+class BrowserContextRecoverResponse(BaseModel):
+    success: bool = True
+    context_id: str
+    name: str
+    recovered: Literal[True] = True
+    stale_profile_locks_removed: List[str] = Field(default_factory=list)
 
 
 # ─── Page Watch / Change Detection ─────────────────────────────────────────────

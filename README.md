@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.3.0-7c3aed?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Huginn)
 [![Python](https://img.shields.io/badge/python-3.10%2B-4ade80?style=flat-square&labelColor=07061a)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-829_passing-22d3ee?style=flat-square&labelColor=07061a)](tests/)
+[![Tests](https://img.shields.io/badge/tests-877_passing-22d3ee?style=flat-square&labelColor=07061a)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-facc15?style=flat-square&labelColor=07061a)](LICENSE)
 
 **Local-first search, scraping, crawling, extraction, browser-session, and job API.**
@@ -68,16 +68,15 @@ Blackreach handles "go find me state space model papers from 2024." Huginn handl
 - Browser-origin access is disabled by default. Set `HUGINN_CORS_ORIGINS` to a comma-separated allowlist only for a trusted UI; wildcard CORS requires API authentication.
 - The production image does not install Playwright Chromium; StarSearch is the sole browser runtime. A compatibility image must be built explicitly with `HUGINN_INSTALL_PLAYWRIGHT_BROWSER=1` and still requires `HUGINN_ALLOW_PLAYWRIGHT_FALLBACK=true` at runtime.
 - Structured LLM extraction still needs a configured local or hosted model. Search, scrape, crawl, screenshots, and browser commands do not need an LLM key.
-- DNS rebinding after initial validation remains a documented residual risk. Redirects and browser subresources are revalidated.
-- Keyless search currently has one browser-rendered engine, so a second engine and health scoring remain important resilience work.
+- Every StarSearch browser session is forced through a private loopback gateway that resolves, validates, and connects to the exact destination address. Redirects and subresources remain revalidated. This is application/process-level enforcement, not a kernel namespace or cgroup policy against arbitrary future raw-socket browser features.
+- Keyless search renders both Bing and Brave Search through StarSearch. Health scoring and a bounded circuit breaker choose between them; this improves engine resilience but does not create independent network egress because both still use one configured provider lease across SERP fallback and optional result scraping. Exhausted configured inventory fails closed before search.
 
 ## Near-Term Direction
 
 1. An explicitly scoped remote debugging boundary for local operators.
-2. A provider plugin for managed proxy inventory, health checks, and geographic/session policy.
-3. DNS pinning or equivalent connect-time destination enforcement.
-4. Search-engine failover and scoring.
-5. Retention policies for named contexts, research memory, and long-lived job/replay state.
+2. Provider plugins for managed proxy inventory, health checks, and geographic/session policy.
+3. Optional kernel-enforced browser network isolation for deployments needing a boundary stronger than the current per-process gateway.
+4. Multi-host recovery and durable live-session orchestration.
 
 ---
 
@@ -109,12 +108,28 @@ curl -X POST http://127.0.0.1:7432/v1/search \
   -H "Content-Type: application/json" \
   -d '{"query": "Prometheus monitoring", "limit": 5}'
 
+# Inspect the scores and circuit state used by automatic engine selection
+curl http://127.0.0.1:7432/v1/search/engines \
+  -H "Authorization: Bearer $(<~/.config/huginn/api-key)"
+
 # Open or create a host-local persistent browser context. The API key must be
 # configured; named contexts never accept raw per-request proxy credentials.
 curl -X POST http://127.0.0.1:7432/v1/browser/sessions \
   -H "Authorization: Bearer $(<~/.config/huginn/api-key)" \
   -H "Content-Type: application/json" \
   -d '{"context_id":"hermes-research","context_mode":"open_or_create","allowed_domains":["example.com"],"allow_evaluate":false,"allow_cookie_access":false}'
+
+# Preview retention/quota cleanup. Applying requires an explicit dry_run=false.
+curl -X POST http://127.0.0.1:7432/v1/browser/contexts/prune \
+  -H "Authorization: Bearer $(<~/.config/huginn/api-key)" \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run":true}'
+
+# Recover a quarantined profile only after StarSearch proves no process owns it.
+curl -X POST http://127.0.0.1:7432/v1/browser/contexts/hermes-research/recover \
+  -H "Authorization: Bearer $(<~/.config/huginn/api-key)" \
+  -H "Content-Type: application/json" \
+  -d '{"confirm":true}'
 ```
 
 The context's locale, egress identity, domain/internal-network policy, and
@@ -124,6 +139,10 @@ marks Huginn runtime handles `interrupted`; a Huginn crash can be recovered by
 listing contexts and closing the daemon-authoritative `active_session_id`.
 Context responses use `context_id`; deprecated `id` (session create) and `name`
 (list/delete) aliases are temporarily returned so existing clients can migrate.
+Session and scrape responses expose StarSearch's authoritative `egress`
+descriptor. Huginn rejects browser runtimes that do not attest
+`gateway_enforced=true` and `resolution=local_frozen`; provider-selection data
+is nested separately and never presented as proof of network enforcement.
 
 `render_mode` accepts `auto`, `full`, `starsearch`, and `light`. Use
 `starsearch` when the request must use the shared daemon and fail closed; use
@@ -201,6 +220,7 @@ huginn config                   # Show current config
 | `/health`, `/health/ready` | GET | Liveness/readiness and StarSearch capacity |
 | `/health/detailed`, `/v1/metrics` | GET | Authenticated egress, pool, and operation detail |
 | `/v1/search` | POST | Browser-rendered keyless search |
+| `/v1/search/engines` | GET | Live Bing/Brave health scores and circuit state |
 | `/v1/scrape` | POST | Scrape one URL with formats/actions/screenshot |
 | `/v1/crawl` | POST | Start a durable crawl job |
 | `/v1/crawl/{id}` | GET/DELETE | Poll or delete a crawl job |
@@ -209,6 +229,8 @@ huginn config                   # Show current config
 | `/v1/browser/sessions` | POST/GET | Create or list authenticated browser sessions |
 | `/v1/browser/sessions/{id}/commands` | POST | Execute a typed StarSearch command |
 | `/v1/browser/contexts` | GET | List authenticated host-local persistent contexts |
+| `/v1/browser/contexts/prune` | POST | Preview or explicitly apply inactive retention/quota pruning |
+| `/v1/browser/contexts/{context_id}/recover` | POST | Confirmed fail-closed quarantine recovery |
 | `/v1/browser/contexts/{context_id}` | DELETE | Delete an inactive persistent context and profile |
 
 ### Native Huginn Surface
@@ -219,7 +241,7 @@ huginn config                   # Show current config
 | `/v1/sweep` | POST | Native crawl route with SSE/NDJSON support |
 | `/v1/flock` | POST | Native batch operation |
 | `/v1/distill` | POST | Structured LLM extraction with templates |
-| `/v1/seek` | POST | Web search |
+| `/v1/seek` | POST | Health-selected Bing/Brave search through StarSearch |
 | `/v1/chart`, `/v1/graph` | POST | Site map and BFS graph |
 | `/v1/research` | POST | Deep multi-hop research with memory |
 

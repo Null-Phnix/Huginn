@@ -1,5 +1,6 @@
 """Tests for Huginn's StarSearch JSON-lines bridge."""
 
+import hashlib
 import json
 
 import pytest
@@ -33,6 +34,20 @@ class FakeWriter:
 
     async def wait_closed(self):
         return None
+
+
+def egress(*, proxied=False, server="http://proxy.local:8080", username=""):
+    return {
+        "gateway_enforced": True,
+        "mode": "upstream" if proxied else "direct",
+        "upstream_scheme": "http" if proxied else None,
+        "upstream_identity": (
+            hashlib.sha256(f"{server}\0{username}".encode()).hexdigest()
+            if proxied
+            else None
+        ),
+        "resolution": "local_frozen",
+    }
 
 
 def test_handshake_reads_tcp_token_file(monkeypatch, tmp_path):
@@ -94,7 +109,7 @@ async def test_daemon_status_reports_live_capacity(monkeypatch):
 async def test_fetch_page_honors_session_options_cookies_actions_and_screenshot(monkeypatch):
     reader = FakeReader([
         {"starsearch": "1.0", "compatible": True},
-        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1"}},
+        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1", "egress": egress(proxied=True)}},
         {"ok": True, "sid": "sid-1", "result": {}},  # cookies
         {"ok": True, "sid": "sid-1", "result": {}},  # navigate
         {"ok": True, "sid": "sid-1", "result": {}},  # click
@@ -110,7 +125,7 @@ async def test_fetch_page_honors_session_options_cookies_actions_and_screenshot(
 
     monkeypatch.setattr(starsearch_scrape.asyncio, "open_connection", fake_open_connection)
 
-    html, screenshot = await starsearch_scrape._fetch_page(
+    html, screenshot, descriptor = await starsearch_scrape._fetch_page(
         "127.0.0.1:7676",
         "https://example.com/private",
         timeout=2,
@@ -127,6 +142,7 @@ async def test_fetch_page_honors_session_options_cookies_actions_and_screenshot(
 
     assert html == "<main>ok</main>"
     assert screenshot == "cG5n"
+    assert descriptor == egress(proxied=True)
     commands = [payload.get("cmd") for payload in writer.payloads]
     assert commands == [
         None,
@@ -140,7 +156,7 @@ async def test_fetch_page_honors_session_options_cookies_actions_and_screenshot(
         "close_session",
     ]
     opts = writer.payloads[1]["opts"]
-    assert opts["proxy"] == "http://proxy.local:8080"
+    assert opts["proxy"] == {"server": "http://proxy.local:8080"}
     assert opts["locale"] == "fr-CA"
     assert writer.payloads[2]["cookies"][0]["domain"] == "example.com"
     assert writer.closed is True
@@ -150,7 +166,7 @@ async def test_fetch_page_honors_session_options_cookies_actions_and_screenshot(
 async def test_fetch_page_accepts_pydantic_action_enum(monkeypatch):
     reader = FakeReader([
         {"starsearch": "1.0", "compatible": True},
-        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1"}},
+        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1", "egress": egress()}},
         {"ok": True, "sid": "sid-1", "result": {}},  # navigate
         {"ok": True, "sid": "sid-1", "result": {}},  # wait_for
         {"ok": True, "sid": "sid-1", "result": {"html": "<main>ok</main>"}},
@@ -164,13 +180,14 @@ async def test_fetch_page_accepts_pydantic_action_enum(monkeypatch):
     monkeypatch.setattr(starsearch_scrape.asyncio, "open_connection", fake_open_connection)
     action = Action(type=ActionType.WAIT_FOR_SELECTOR, selector="h1", timeout=5000)
 
-    html, _ = await starsearch_scrape._fetch_page(
+    html, _, descriptor = await starsearch_scrape._fetch_page(
         "127.0.0.1:7676",
         "https://example.com",
         actions=[action.model_dump()],
     )
 
     assert html == "<main>ok</main>"
+    assert descriptor["gateway_enforced"] is True
     wait_command = writer.payloads[3]
     assert wait_command["cmd"] == "wait_for"
     assert wait_command["selector"] == "h1"
@@ -191,7 +208,7 @@ def test_scrape_options_kwargs_serializes_action_enum_to_json_value():
 async def test_fetch_page_does_not_ignore_navigation_error(monkeypatch):
     reader = FakeReader([
         {"starsearch": "1.0", "compatible": True},
-        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1"}},
+        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1", "egress": egress()}},
         {"ok": False, "sid": "sid-1", "error": "SSRFBlocked"},
         {"ok": True, "sid": "sid-1", "result": {}},
     ])
@@ -205,6 +222,54 @@ async def test_fetch_page_does_not_ignore_navigation_error(monkeypatch):
     with pytest.raises(RuntimeError, match="navigate failed: SSRFBlocked"):
         await starsearch_scrape._fetch_page(
             "127.0.0.1:7676", "http://127.0.0.1/admin", timeout=1
+        )
+    assert writer.payloads[-1]["cmd"] == "close_session"
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_rejects_daemon_without_socket_egress_contract(monkeypatch):
+    reader = FakeReader([
+        {"starsearch": "1.0", "compatible": True},
+        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1"}},
+        {"ok": True, "sid": "sid-1", "result": {}},
+    ])
+    writer = FakeWriter()
+
+    async def fake_open_connection(*args, **kwargs):
+        return reader, writer
+
+    monkeypatch.setattr(starsearch_scrape.asyncio, "open_connection", fake_open_connection)
+
+    with pytest.raises(ValueError, match="missing its egress descriptor"):
+        await starsearch_scrape._fetch_page("127.0.0.1:7676", "https://example.com")
+    assert [payload.get("cmd") for payload in writer.payloads] == [
+        None,
+        "new_session",
+        "close_session",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_rejects_mismatched_upstream_identity(monkeypatch):
+    wrong = egress(proxied=True)
+    wrong["upstream_identity"] = "f" * 64
+    reader = FakeReader([
+        {"starsearch": "1.0", "compatible": True},
+        {"ok": True, "sid": "sid-1", "result": {"sid": "sid-1", "egress": wrong}},
+        {"ok": True, "sid": "sid-1", "result": {}},
+    ])
+    writer = FakeWriter()
+
+    async def fake_open_connection(*args, **kwargs):
+        return reader, writer
+
+    monkeypatch.setattr(starsearch_scrape.asyncio, "open_connection", fake_open_connection)
+
+    with pytest.raises(ValueError, match="does not match its proxy lease"):
+        await starsearch_scrape._fetch_page(
+            "127.0.0.1:7676",
+            "https://example.com",
+            proxy={"server": "http://proxy.local:8080"},
         )
     assert writer.payloads[-1]["cmd"] == "close_session"
 

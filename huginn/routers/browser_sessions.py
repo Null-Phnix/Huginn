@@ -17,6 +17,10 @@ from ..models import (
     BrowserCommand,
     BrowserContextDeleteResponse,
     BrowserContextListResponse,
+    BrowserContextPruneRequest,
+    BrowserContextPruneResponse,
+    BrowserContextRecoverRequest,
+    BrowserContextRecoverResponse,
     BrowserSessionCloseResponse,
     BrowserSessionCommandRequest,
     BrowserSessionCommandResponse,
@@ -25,7 +29,7 @@ from ..models import (
     BrowserSessionResponse,
 )
 from ..proxy import ProxyConfigurationError, ProxyEndpoint, ProxyUnavailable
-from ..starsearch_scrape import daemon_command, daemon_status
+from ..starsearch_scrape import daemon_command, daemon_status, validate_egress_descriptor
 from ..state import get_state
 from ..utils import get_proxy_provider, proxy_failure_likely
 
@@ -64,6 +68,7 @@ def _public_session(session_id: str, metadata: dict[str, Any]) -> dict[str, Any]
         "allow_evaluate": metadata.get("allow_evaluate", False),
         "allow_cookie_access": metadata.get("allow_cookie_access", False),
         "proxy_configured": metadata["proxy_configured"],
+        "egress": metadata["egress"],
         "daemon_instance_id": metadata.get("daemon_instance_id"),
     }
     if metadata.get("context"):
@@ -130,11 +135,13 @@ def _validate_context_name(name: str) -> str:
 def _daemon_context_error(exc: Exception) -> HTTPException:
     message = _safe_daemon_error(exc)
     mappings = (
+        ("RecoveryConfirmationRequired", 400, "recovery_confirmation_required", False),
         ("InvalidContextName", 422, "invalid_context_name", False),
         ("ContextNotFound", 404, "context_not_found", False),
         ("ContextAlreadyExists", 409, "context_already_exists", False),
         ("ContextInUse", 409, "context_in_use", True),
         ("ContextQuarantined", 409, "context_quarantined", False),
+        ("ContextLimitExceeded", 409, "context_limit_exceeded", True),
         ("ContextConfigMismatch", 409, "context_config_mismatch", False),
         ("ContextCorrupt", 500, "context_corrupt", False),
         ("ContextStoreUnsafe", 503, "context_store_unsafe", False),
@@ -176,6 +183,9 @@ def _public_context(raw: dict[str, Any]) -> dict[str, Any]:
         "runtime_restart_survival",
         "scope",
         "active",
+        "idle_seconds",
+        "retention_expired",
+        "prune_eligible",
     }
     if not isinstance(raw, dict) or not required.issubset(raw):
         raise ValueError("context summary is missing required fields")
@@ -184,8 +194,18 @@ def _public_context(raw: dict[str, Any]) -> dict[str, Any]:
         or raw["runtime_restart_survival"] is not False
         or raw["scope"] != "host"
         or not isinstance(raw["active"], bool)
+        or not isinstance(raw["idle_seconds"], int)
+        or not isinstance(raw["retention_expired"], bool)
+        or not isinstance(raw["prune_eligible"], bool)
     ):
         raise ValueError("context summary has unsupported persistence semantics")
+    quarantine = raw.get("quarantine")
+    if quarantine is not None:
+        if not isinstance(quarantine, dict):
+            raise ValueError("context quarantine metadata is invalid")
+        quarantine = dict(quarantine)
+        if quarantine.get("quarantined_at") is not None:
+            quarantine["quarantined_at"] = _context_timestamp(quarantine["quarantined_at"])
     return {
         "context_id": raw["name"],
         "name": raw["name"],
@@ -198,7 +218,50 @@ def _public_context(raw: dict[str, Any]) -> dict[str, Any]:
         "active": raw["active"],
         "active_session_id": raw.get("active_session_id"),
         "quarantined": bool(raw.get("quarantined", False)),
+        "quarantine": quarantine,
+        "idle_seconds": raw["idle_seconds"],
+        "retention_expires_at": _context_timestamp(raw.get("retention_expires_at")),
+        "retention_expired": raw["retention_expired"],
+        "prune_eligible": raw["prune_eligible"],
     }
+
+
+def _public_prune_report(raw: Any, requested_dry_run: bool) -> dict[str, Any]:
+    required = {
+        "dry_run",
+        "total_before",
+        "total_after",
+        "max_contexts",
+        "retention_seconds",
+        "candidates",
+        "deleted",
+        "protected_active",
+        "protected_quarantined",
+        "remaining_over_limit",
+    }
+    if not isinstance(raw, dict) or not required.issubset(raw):
+        raise ValueError("context prune response is missing required fields")
+    if raw["dry_run"] is not requested_dry_run or not isinstance(raw["candidates"], list):
+        raise ValueError("context prune response did not honor the requested mode")
+    result = dict(raw)
+    candidates = []
+    for candidate in raw["candidates"]:
+        if (
+            not isinstance(candidate, dict)
+            or not isinstance(candidate.get("name"), str)
+            or not isinstance(candidate.get("last_opened_at"), (int, float))
+            or not isinstance(candidate.get("reasons"), list)
+        ):
+            raise ValueError("context prune candidate is invalid")
+        candidates.append(
+            {
+                "name": candidate["name"],
+                "last_opened_at": _context_timestamp(candidate["last_opened_at"]),
+                "reasons": candidate["reasons"],
+            }
+        )
+    result["candidates"] = candidates
+    return {"success": True, **result}
 
 
 def _public_session_context(raw: Any, requested_name: str) -> dict[str, Any]:
@@ -382,9 +445,12 @@ def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIR
                 },
             )
         proxy_lease = None
+        expected_upstream_identity = None
         try:
             if req.proxy:
-                proxy_payload = ProxyEndpoint.parse(req.proxy).as_browser_proxy()
+                proxy_endpoint = ProxyEndpoint.parse(req.proxy)
+                proxy_payload = proxy_endpoint.as_browser_proxy()
+                expected_upstream_identity = proxy_endpoint.starsearch_identity
             else:
                 lease_key = (
                     f"browser-context:{req.context_id}"
@@ -396,6 +462,8 @@ def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIR
                     strict_sticky=bool(req.context_id),
                 )
                 proxy_payload = proxy_lease.as_browser_proxy()
+                if proxy_lease.endpoint:
+                    expected_upstream_identity = proxy_lease.endpoint.starsearch_identity
             opts: dict[str, Any] = {
                 "proxy": proxy_payload,
                 "locale": req.locale,
@@ -473,6 +541,11 @@ def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIR
         context = daemon_result.get("context")
         public_context = None
         try:
+            egress = validate_egress_descriptor(
+                daemon_result.get("egress"),
+                proxy_configured=bool(proxy_payload),
+                expected_upstream_identity=expected_upstream_identity,
+            )
             if req.context_id:
                 public_context = _public_session_context(context, req.context_id)
             elif context is not None:
@@ -503,6 +576,7 @@ def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIR
             "allow_evaluate": req.allow_evaluate,
             "allow_cookie_access": req.allow_cookie_access,
             "proxy_configured": bool(proxy_payload),
+            "egress": egress,
             "proxy_lease": proxy_lease,
             "context": public_context,
             "status": "active",
@@ -739,6 +813,85 @@ def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIR
                 },
             ) from exc
         return {"success": True, "contexts": public_contexts}
+
+    @router.post("/contexts/prune", response_model=BrowserContextPruneResponse)
+    async def prune_contexts(
+        req: BrowserContextPruneRequest,
+        auth=Depends(verify_api_key),
+    ):
+        del auth
+        _require_context_auth(config)
+        try:
+            response = await daemon_command(
+                {"v": 1, "cmd": "prune_contexts", "dry_run": req.dry_run}
+            )
+            return _public_prune_report(response.get("result"), req.dry_run)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "invalid_daemon_response",
+                    "message": str(exc),
+                    "layer": "starsearch",
+                },
+            ) from exc
+        except Exception as exc:
+            raise _daemon_context_error(exc) from exc
+
+    @router.post(
+        "/contexts/{context_id}/recover",
+        response_model=BrowserContextRecoverResponse,
+    )
+    async def recover_context(
+        context_id: str,
+        req: BrowserContextRecoverRequest,
+        auth=Depends(verify_api_key),
+    ):
+        del auth
+        _require_context_auth(config)
+        _validate_context_name(context_id)
+        if not req.confirm:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "recovery_confirmation_required",
+                    "message": "Set confirm=true to request fail-closed quarantine recovery",
+                    "layer": "huginn",
+                    "retryable": False,
+                },
+            )
+        try:
+            response = await daemon_command(
+                {
+                    "v": 1,
+                    "cmd": "recover_context",
+                    "name": context_id,
+                    "confirm": True,
+                }
+            )
+        except Exception as exc:
+            raise _daemon_context_error(exc) from exc
+        result = response.get("result") or {}
+        if (
+            result.get("name") != context_id
+            or result.get("recovered") is not True
+            or not isinstance(result.get("stale_profile_locks_removed"), list)
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "invalid_daemon_response",
+                    "message": "Context recovery response did not confirm safe recovery",
+                    "layer": "starsearch",
+                },
+            )
+        return {
+            "success": True,
+            "context_id": context_id,
+            "name": context_id,
+            "recovered": True,
+            "stale_profile_locks_removed": result["stale_profile_locks_removed"],
+        }
 
     @router.delete("/contexts/{context_id}", response_model=BrowserContextDeleteResponse)
     async def delete_context(context_id: str, auth=Depends(verify_api_key)):

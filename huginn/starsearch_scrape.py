@@ -24,6 +24,7 @@ from bs4 import BeautifulSoup
 
 from .config import read_secret_file
 from .models import OutputFormat, ScrapeData
+from .proxy import ProxyEndpoint
 
 
 def _handshake(client_version: str) -> dict:
@@ -145,6 +146,50 @@ def _response_error(response: dict, command: str) -> RuntimeError:
     return RuntimeError(f"StarSearch {command} failed: {message}")
 
 
+def validate_egress_descriptor(
+    raw: Any,
+    *,
+    proxy_configured: bool,
+    expected_upstream_identity: Optional[str] = None,
+) -> dict[str, Any]:
+    """Validate StarSearch's authoritative socket-egress contract.
+
+    Huginn must not infer enforcement from the proxy options it sent.  A daemon
+    missing this descriptor is an older/unsafe runtime and is rejected before
+    navigation, rather than silently degrading to Chromium-managed networking.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("StarSearch session is missing its egress descriptor")
+    expected_mode = "upstream" if proxy_configured else "direct"
+    allowed_schemes = {"http", "https", "socks5"}
+    if raw.get("gateway_enforced") is not True:
+        raise ValueError("StarSearch did not confirm socket-enforced egress")
+    if raw.get("mode") != expected_mode:
+        raise ValueError(
+            f"StarSearch egress mode mismatch: expected {expected_mode}, got {raw.get('mode')!r}"
+        )
+    if raw.get("resolution") != "local_frozen":
+        raise ValueError("StarSearch did not confirm locally frozen destination resolution")
+    scheme = raw.get("upstream_scheme")
+    identity = raw.get("upstream_identity")
+    if proxy_configured:
+        if scheme not in allowed_schemes:
+            raise ValueError("StarSearch returned an invalid upstream proxy scheme")
+        if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity):
+            raise ValueError("StarSearch returned an invalid upstream routing identity")
+        if identity != expected_upstream_identity:
+            raise ValueError("StarSearch upstream routing identity does not match its proxy lease")
+    elif scheme is not None or identity is not None:
+        raise ValueError("StarSearch direct egress unexpectedly reported an upstream proxy")
+    return {
+        "gateway_enforced": True,
+        "mode": expected_mode,
+        "upstream_scheme": scheme,
+        "upstream_identity": identity,
+        "resolution": "local_frozen",
+    }
+
+
 async def _fetch_page(
     addr: str,
     url: str,
@@ -158,7 +203,7 @@ async def _fetch_page(
     proxy: Optional[Dict[str, str]] = None,
     locale: str = "en-US",
     allow_private_network: bool = False,
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, Optional[str], dict[str, Any]]:
     """Execute a complete scrape session over StarSearch's JSON-lines protocol.
 
     Every command response is checked.  The former bridge ignored navigation
@@ -251,13 +296,7 @@ async def _fetch_page(
         hs = await send(_handshake("huginn"))
         if not hs.get("compatible"):
             raise RuntimeError(f"handshake rejected: {hs.get('error') or 'incompatible protocol'}")
-        proxy_options: Any = None
-        if proxy:
-            proxy_options = (
-                proxy
-                if proxy.get("username") or proxy.get("password")
-                else proxy.get("server")
-            )
+        proxy_options: Any = proxy if proxy else None
         r = await send(
             {
                 "v": 1,
@@ -280,6 +319,19 @@ async def _fetch_page(
         sid = r.get("sid")
         if not sid:
             raise RuntimeError("StarSearch new_session returned no session id")
+        egress = validate_egress_descriptor(
+            (r.get("result") or {}).get("egress"),
+            proxy_configured=bool(proxy),
+            expected_upstream_identity=(
+                ProxyEndpoint.parse(
+                    proxy["server"],
+                    username=proxy.get("username"),
+                    password=proxy.get("password"),
+                ).starsearch_identity
+                if proxy
+                else None
+            ),
+        )
 
         if cookies:
             domain = urllib.parse.urlparse(url).hostname or ""
@@ -322,7 +374,7 @@ async def _fetch_page(
         if screenshot and not captured:
             shot = await command("screenshot")
             captured = (shot.get("result") or {}).get("data")
-        return html, captured
+        return html, captured, egress
     finally:
         try:
             if sid:
@@ -345,6 +397,7 @@ def _html_to_scrapedata(
     include_tags: Optional[List[str]] = None,
     exclude_tags: Optional[List[str]] = None,
     screenshot: Optional[str] = None,
+    egress: Optional[dict[str, Any]] = None,
 ) -> ScrapeData:
     """Mirror Scraper.lightweight_scrape's HTML -> ScrapeData conversion."""
     soup = BeautifulSoup(html, "html.parser")
@@ -354,10 +407,17 @@ def _html_to_scrapedata(
     lang_tag = soup.find("html")
     language = lang_tag.get("lang", "en") if lang_tag else "en"
 
-    result = ScrapeData(metadata={
-        "url": url, "title": title, "description": description,
-        "language": language, "status_code": 200, "render_mode": "starsearch",
-    })
+    metadata = {
+        "url": url,
+        "title": title,
+        "description": description,
+        "language": language,
+        "status_code": 200,
+        "render_mode": "starsearch",
+    }
+    if egress is not None:
+        metadata["egress"] = egress
+    result = ScrapeData(metadata=metadata)
 
     main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
     content_el = main if (main and only_main_content) else (soup.body or soup)
@@ -427,7 +487,7 @@ async def scrape(
                 _action_type(action) == "screenshot"
                 for action in actions or []
             )
-            html, screenshot_data = await _fetch_page(
+            html, screenshot_data, egress = await _fetch_page(
                 addr,
                 url,
                 timeout=timeout,
@@ -450,6 +510,7 @@ async def scrape(
                 include_tags=include_tags,
                 exclude_tags=exclude_tags,
                 screenshot=screenshot_data,
+                egress=egress,
             )
         except Exception:
             if attempt == retries - 1:
@@ -471,19 +532,54 @@ def _decode_bing_url(href: str) -> str:
     return href
 
 
+def _normalize_result_url(
+    href: str,
+    *,
+    base_url: str,
+    decode_bing: bool = False,
+) -> str:
+    """Return a safe absolute HTTP(S) destination from a SERP link.
+
+    Search pages contain relative navigation links, tracking wrappers, and
+    occasionally non-navigation schemes.  API consumers must receive the real
+    destination URL so a follow-up scrape never silently navigates back into a
+    search engine or executes a ``javascript:``/``data:`` URL.
+    """
+    candidate = urllib.parse.urljoin(base_url, (href or "").strip())
+    if decode_bing:
+        candidate = _decode_bing_url(candidate)
+    parsed = urllib.parse.urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    if decode_bing and parsed.hostname.lower().endswith("bing.com") and parsed.path == "/ck/a":
+        # A malformed/unknown wrapper is not the requested destination. Do not
+        # expose it as if it were a usable search result.
+        return ""
+    # Fragments are presentation-only and create duplicate API results.
+    return urllib.parse.urlunparse(parsed._replace(fragment=""))
+
+
 def _parse_bing_serp(html: str, limit: int) -> List[Dict[str, str]]:
     """Parse a Bing SERP into [{title, link, snippet}] (link key matches _scrape_results)."""
-    from bs4 import BeautifulSoup as _BS
-    soup = _BS(html, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     out: List[Dict[str, str]] = []
+    seen: set[str] = set()
     for li in soup.select("li.b_algo"):
         a = li.select_one("h2 a")
         if not a or not a.get("href"):
             continue
+        link = _normalize_result_url(
+            a["href"],
+            base_url="https://www.bing.com/search",
+            decode_bing=True,
+        )
+        if not link or link in seen:
+            continue
+        seen.add(link)
         cap = li.select_one(".b_caption p") or li.select_one("p")
         out.append({
             "title": a.get_text(" ", strip=True),
-            "link": _decode_bing_url(a["href"]),
+            "link": link,
             "snippet": cap.get_text(" ", strip=True) if cap else "",
         })
         if len(out) >= limit:
@@ -491,21 +587,104 @@ def _parse_bing_serp(html: str, limit: int) -> List[Dict[str, str]]:
     return out
 
 
-async def search_bing(query: str, limit: int = 5, retries: int = 3) -> List[Dict[str, str]]:
-    """Keyless web search via StarSearch -> Bing. Returns [{title, link, snippet}] or []."""
+def _parse_brave_serp(html: str, limit: int) -> List[Dict[str, str]]:
+    """Parse Brave Search's rendered web-result cards.
+
+    Brave changes generated Svelte class suffixes frequently, so the parser
+    deliberately anchors on the stable ``data-type=web`` result boundary and
+    semantic title/content classes instead of build-specific class names.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for card in soup.select("div.snippet[data-type='web']"):
+        anchor = card.select_one("a[href].l1") or card.select_one("a[href]")
+        if not anchor:
+            continue
+        link = _normalize_result_url(
+            anchor.get("href", ""),
+            base_url="https://search.brave.com/search",
+        )
+        if not link or link in seen:
+            continue
+        seen.add(link)
+        title_el = card.select_one(".search-snippet-title") or card.select_one(".title")
+        snippet_el = card.select_one(".generic-snippet .content") or card.select_one(
+            ".generic-snippet"
+        )
+        title = title_el.get_text(" ", strip=True) if title_el else anchor.get_text(" ", strip=True)
+        if not title:
+            continue
+        out.append(
+            {
+                "title": title,
+                "link": link,
+                "snippet": snippet_el.get_text(" ", strip=True) if snippet_el else "",
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+STARSEARCH_SEARCH_ENGINES = {
+    "bing": {
+        "url": "https://www.bing.com/search?q={query}",
+        "parser": _parse_bing_serp,
+    },
+    "brave": {
+        "url": "https://search.brave.com/search?q={query}&source=web",
+        "parser": _parse_brave_serp,
+    },
+}
+
+
+async def search_web(
+    engine: str,
+    query: str,
+    limit: int = 5,
+    retries: int = 3,
+    *,
+    proxy: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Run one keyless, browser-rendered search engine through StarSearch.
+
+    The engine URL is explicit and never substituted. Transport/navigation
+    failures are raised after bounded retries so Huginn can distinguish an
+    unhealthy engine from a valid empty result set and update its circuit.
+    """
+    config = STARSEARCH_SEARCH_ENGINES.get(engine)
+    if config is None:
+        raise ValueError(f"unsupported StarSearch search engine: {engine}")
     addr = tcp_addr()
     if not addr:
-        return []
-    url = "https://www.bing.com/search?q=" + urllib.parse.quote_plus(query)
+        raise RuntimeError("StarSearch TCP is not configured")
+    url = config["url"].format(query=urllib.parse.quote_plus(query))
+    last_error: Optional[Exception] = None
     for attempt in range(retries):
         try:
-            html, _ = await _fetch_page(addr, url)
-            return _parse_bing_serp(html, limit) if html else []
-        except Exception:
+            html, _, egress = await _fetch_page(addr, url, proxy=proxy)
+            if not html:
+                raise RuntimeError(f"{engine} returned an empty rendered document")
+            return [{**result, "_egress": egress} for result in config["parser"](html, limit)]
+        except Exception as exc:
+            last_error = exc
             if attempt == retries - 1:
-                return []
+                break
             await asyncio.sleep(0.4 * (attempt + 1))
-    return []
+    assert last_error is not None
+    raise last_error
+
+
+async def search_bing(
+    query: str,
+    limit: int = 5,
+    retries: int = 3,
+    *,
+    proxy: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Compatibility wrapper for StarSearch-rendered Bing search."""
+    return await search_web("bing", query, limit, retries, proxy=proxy)
 
 
 if __name__ == "__main__":

@@ -292,6 +292,7 @@ class TestRouterFactories:
         router = create_search_router(HuginnConfig(), verify_api_key=None)
         paths = self._get_router_paths(router)
         assert "/v1/seek" in paths
+        assert "/v1/search/engines" in paths
 
     def test_jobs_router(self):
         from huginn.routers import create_jobs_router

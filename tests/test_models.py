@@ -199,6 +199,15 @@ class TestSearchModels:
         req = SearchRequest(query="test query")
         assert req.query == "test query"
         assert req.fallback_chain is True
+        assert req.search_options is None
+
+    def test_search_engine_selection_is_typed(self):
+        from huginn.models import SearchOptions
+
+        assert SearchOptions().engine == "auto"
+        assert SearchOptions(engine="brave").engine == "brave"
+        with pytest.raises(ValueError):
+            SearchOptions(engine="duckduckgo")
 
     def test_search_response(self):
         resp = SearchResponse(
@@ -211,6 +220,7 @@ class TestSearchModels:
             ],
         )
         assert len(resp.data) == 1
+        assert resp.metadata is None
 
 
 class TestModelFields:

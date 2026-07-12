@@ -1,75 +1,194 @@
-"""
-Huginn Searcher — Web search with automated scraping.
+"""Huginn Searcher — resilient keyless search through StarSearch.
 
-The /v1/seek endpoint engine. Uses Brave Search API as primary (free JSON API)
-when BRAVE_API_KEY is set, with arxiv fallback for academic queries.
+Production search renders independent Bing and Brave Search pages in the
+shared StarSearch browser runtime. A process-local health registry scores
+latency and success, opens bounded circuits after repeated failures, and makes
+every engine selection/failure visible in the API response.
 """
 
 import asyncio
 import logging
-import os
-from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qs, quote, urljoin, urlparse
-
-import httpx
+import threading
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from .browser import BrowserManager
-from .models import OutputFormat, SearchResultItem
+from .models import (
+    OutputFormat,
+    SearchEngineAttempt,
+    SearchEngineError,
+    SearchEngineHealth,
+    SearchMetadata,
+    SearchResultItem,
+)
 from .scraper import Scraper
-from .utils import scrape_failure
+from .utils import build_egress_metadata, proxy_failure_likely, scrape_failure
 
 logger = logging.getLogger(__name__)
 
-# Brave Search API configuration
-BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
-BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
-
-# Academic query keywords to detect when to use arxiv fallback
-ACADEMIC_KEYWORDS = ["arxiv", "paper", "research paper", "pdf", "citation", "journal", "conference", "thesis", "dissertation", "world model", "arxiv.org"]
+STARSEARCH_ENGINE_NAMES = ("bing", "brave")
 
 
-def _is_academic_query(query: str) -> bool:
-    """Detect if query is academic in nature."""
-    query_lower = query.lower()
-    return any(keyword in query_lower for keyword in ACADEMIC_KEYWORDS)
+@dataclass
+class _EngineState:
+    """Mutable health state for one search engine."""
+
+    success_ema: float
+    latency_ema_ms: float
+    attempts: int = 0
+    successes: int = 0
+    consecutive_failures: int = 0
+    circuit_open_until: float = 0.0
+    last_error_code: Optional[str] = None
 
 
-def _normalize_search_result_url(href: str, *, base_url: Optional[str] = None) -> str:
-    """Return an absolute destination URL instead of an engine tracking URL.
+class SearchEngineHealthRegistry:
+    """Thread-safe, process-local engine scoring and circuit breaker.
 
-    DuckDuckGo HTML/Lite commonly returns protocol-relative ``/l/?uddg=``
-    wrappers. Those are valid browser links but poor API results and can break
-    deterministic follow-up scraping. Malformed and non-HTTP links are dropped.
+    Health is intentionally runtime state rather than durable user state: a
+    daemon/container restart provides a clean probe window, while every search
+    response exposes the current evidence. Two consecutive failures open an
+    engine for 30 seconds; the other independent rendered engine remains
+    eligible.
     """
-    candidate = href.strip()
-    if not candidate:
-        return ""
-    if base_url:
-        candidate = urljoin(base_url, candidate)
-    elif candidate.startswith("//"):
-        candidate = f"https:{candidate}"
 
-    parsed = urlparse(candidate)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return ""
+    def __init__(self, *, failure_threshold: int = 2, cooldown_seconds: float = 30.0):
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        # A small Bing prior preserves the historical primary until measured
+        # health provides a reason to choose Brave first.
+        self._states = {
+            "bing": _EngineState(success_ema=0.90, latency_ema_ms=1800.0),
+            "brave": _EngineState(success_ema=0.88, latency_ema_ms=1900.0),
+        }
+        self._lock = threading.Lock()
 
-    hostname = parsed.hostname.lower()
-    if (hostname == "duckduckgo.com" or hostname.endswith(".duckduckgo.com")) and parsed.path.rstrip("/") == "/l":
-        target = parse_qs(parsed.query).get("uddg", [""])[0]
-        target_url = urlparse(target)
-        if target_url.scheme in {"http", "https"} and target_url.hostname:
-            return target
-    return candidate
+    @staticmethod
+    def _score(state: _EngineState) -> float:
+        latency_penalty = min(state.latency_ema_ms, 15_000.0) / 300.0
+        return round(max(0.0, state.success_ema * 100.0 - latency_penalty), 2)
 
+    def select(
+        self,
+        *,
+        requested: str = "auto",
+        fallback_chain: bool = True,
+    ) -> Tuple[List[str], List[str]]:
+        """Return eligible engines in score order plus currently open engines."""
+        now = time.monotonic()
+        with self._lock:
+            names = [requested] if requested != "auto" else list(STARSEARCH_ENGINE_NAMES)
+            eligible = [name for name in names if self._states[name].circuit_open_until <= now]
+            opened = [name for name in names if self._states[name].circuit_open_until > now]
+            eligible.sort(key=lambda name: self._score(self._states[name]), reverse=True)
+            if requested == "auto" and not fallback_chain:
+                eligible = eligible[:1]
+            return eligible, opened
+
+    def record_success(self, engine: str, latency_ms: int) -> None:
+        with self._lock:
+            state = self._states[engine]
+            state.attempts += 1
+            state.successes += 1
+            state.consecutive_failures = 0
+            state.circuit_open_until = 0.0
+            state.last_error_code = None
+            state.success_ema = state.success_ema * 0.7 + 0.3
+            state.latency_ema_ms = state.latency_ema_ms * 0.7 + max(0, latency_ms) * 0.3
+
+    def record_failure(self, engine: str, latency_ms: int, error_code: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            state = self._states[engine]
+            state.attempts += 1
+            state.consecutive_failures += 1
+            state.last_error_code = error_code
+            state.success_ema *= 0.7
+            state.latency_ema_ms = state.latency_ema_ms * 0.7 + max(0, latency_ms) * 0.3
+            if state.consecutive_failures >= self.failure_threshold:
+                state.circuit_open_until = now + self.cooldown_seconds
+
+    def snapshot(self) -> Dict[str, SearchEngineHealth]:
+        now = time.monotonic()
+        with self._lock:
+            result: Dict[str, SearchEngineHealth] = {}
+            for name, state in self._states.items():
+                open_for = max(0.0, state.circuit_open_until - now)
+                if open_for > 0:
+                    status = "open"
+                elif state.attempts == 0:
+                    status = "untried"
+                elif state.consecutive_failures:
+                    status = "degraded"
+                else:
+                    status = "healthy"
+                result[name] = SearchEngineHealth(
+                    status=status,
+                    score=self._score(state),
+                    attempts=state.attempts,
+                    successes=state.successes,
+                    consecutive_failures=state.consecutive_failures,
+                    latency_ema_ms=round(state.latency_ema_ms, 2),
+                    circuit_open_for_seconds=round(open_for, 2),
+                    last_error_code=state.last_error_code,
+                )
+            return result
+
+
+SEARCH_ENGINE_HEALTH = SearchEngineHealthRegistry()
 
 class Searcher:
-    """Web search using Brave API (primary) with arxiv fallback for academic queries."""
+    """Health-scored Bing/Brave web search rendered only by StarSearch."""
 
-    def __init__(self, browser: BrowserManager, fallback_chain: bool = True):
+    def __init__(
+        self,
+        browser: BrowserManager,
+        fallback_chain: bool = True,
+        *,
+        health_registry: Optional[SearchEngineHealthRegistry] = None,
+        proxy_provider: Any = None,
+        proxy_lease: Any = None,
+    ):
         self.browser = browser
         self.scraper = Scraper(browser)
         self.fallback_chain = fallback_chain
-        self._brave_key = BRAVE_API_KEY
+        self.health_registry = health_registry or SEARCH_ENGINE_HEALTH
+        self.proxy_provider = proxy_provider
+        self.proxy_lease = proxy_lease
+        self.proxy = proxy_lease.as_browser_proxy() if proxy_lease else None
+        self.last_metadata = SearchMetadata(engines=self.health_registry.snapshot())
+
+    def _report_proxy_success(self) -> None:
+        if self.proxy_lease:
+            self.proxy_lease.report_success()
+
+    def _report_proxy_failure(self, exc: Exception) -> None:
+        if self.proxy_lease and proxy_failure_likely(message=str(exc)):
+            self.proxy_lease.report_failure(str(exc))
+
+    def _egress_metadata(self, existing: Any) -> Any:
+        if self.proxy_provider is None or self.proxy_lease is None:
+            return existing
+        return build_egress_metadata(existing, self.proxy_provider, self.proxy_lease)
+
+    @staticmethod
+    def _classify_engine_error(exc: Exception) -> SearchEngineError:
+        message = str(exc) or type(exc).__name__
+        lowered = message.lower()
+        if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timeout" in lowered:
+            code = "timeout"
+        elif isinstance(exc, (ConnectionError, OSError)) or "connection" in lowered:
+            code = "connection_error"
+        elif "capacityexceeded" in lowered or "capacity" in lowered:
+            code = "service_unavailable"
+        elif "captcha" in lowered or "challenge" in lowered:
+            code = "captcha_detected"
+        elif "navigate" in lowered:
+            code = "navigation_failed"
+        else:
+            code = "upstream_error"
+        return SearchEngineError(code=code, message=message, retryable=True)
 
     async def search(
         self,
@@ -79,352 +198,132 @@ class Searcher:
         tbs: Optional[str] = None,
         country: Optional[str] = None,
         language: Optional[str] = None,
+        engine: str = "auto",
         scrape_results: bool = True,
         scrape_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResultItem]:
         """
-        Search the web using Brave API or arxiv fallback.
+        Search the web through health-selected StarSearch-rendered engines.
 
         Args:
             query: Search query
             limit: Number of results to return
             scrape_formats: Formats for scraped results
-            tbs: Time range filter (Brave API only)
-            country: Country code for localization
-            language: Language code for results
+            tbs: Reserved search filter for schema compatibility
+            country: Reserved localization hint for schema compatibility
+            language: Reserved language hint for schema compatibility
+            engine: ``auto``, ``bing``, or ``brave``
             scrape_results: Whether to scrape result URLs (disable for fast search-only)
         """
         if scrape_formats is None:
             scrape_formats = [OutputFormat.MARKDOWN]
+        if engine not in {"auto", *STARSEARCH_ENGINE_NAMES}:
+            raise ValueError(f"unsupported search engine: {engine}")
 
-        # Primary: StarSearch anti-detect browser -> Bing (keyless, beats the
-        # CAPTCHAs that block plain-HTTP engines like DDG). Unifies Huginn search
-        # with Blackreach onto one StarSearch-backed backend.
-        try:
-            from . import starsearch_scrape
-            if starsearch_scrape.tcp_addr():
-                bing = await starsearch_scrape.search_bing(query, limit)
-                if bing:
-                    logger.info("Using StarSearch->Bing for query: %s", query)
-                    if scrape_results:
-                        return await self._scrape_results(bing, scrape_formats, scrape_kwargs)
-                    return [
-                        SearchResultItem(metadata={"title": r["title"], "url": r["link"], "snippet": r["snippet"]})
-                        for r in bing[:limit]
-                    ]
-        except Exception as e:
-            logger.warning("StarSearch->Bing search failed: %s", e)
+        from . import starsearch_scrape
 
-        # Check for Brave API key first
-        if self._brave_key:
-            try:
-                logger.info("Using Brave Search API for query: %s", query)
-                results = await self._brave_search(query, limit, language)
-                if results:
-                    if scrape_results:
-                        scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
-                        return scraped
-                    else:
-                        # Return lightweight result items with just metadata
-                        return [
-                            SearchResultItem(
-                                metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
-                            )
-                            for r in results[:limit]
-                        ]
-            except Exception as e:
-                logger.warning("Brave API search failed: %s", e)
-                if not self.fallback_chain:
-                    raise
-
-        # Fall back to arxiv for academic queries
-        if _is_academic_query(query):
-            try:
-                logger.info("Falling back to arxiv for academic query: %s", query)
-                results = await self._arxiv_search(query, limit)
-                if results:
-                    if scrape_results:
-                        scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
-                        return scraped
-                    else:
-                        return [
-                            SearchResultItem(
-                                metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
-                            )
-                            for r in results[:limit]
-                        ]
-            except Exception as e:
-                logger.warning("Arxiv search failed: %s", e)
-                if not self.fallback_chain:
-                    raise
-
-        # Try DuckDuckGo Lite (fast, no browser, no API key)
-        try:
-            logger.info("Trying DDG Lite search for: %s", query)
-            results = await self._ddg_lite_search(query, limit)
-            if results:
-                if scrape_results:
-                    scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
-                    return scraped
-                else:
-                    return [
-                        SearchResultItem(
-                            metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
-                        )
-                        for r in results[:limit]
-                    ]
-        except Exception as e:
-            logger.warning("DDG Lite search failed: %s", e)
-
-        # Final fallback: DuckDuckGo HTML via browser
-        try:
-            logger.info("Falling back to DuckDuckGo HTML for query: %s", query)
-            results = await self._ddg_search(query, limit)
-            if results:
-                if scrape_results:
-                    scraped = await self._scrape_results(results, scrape_formats, scrape_kwargs)
-                    return scraped
-                else:
-                    return [
-                        SearchResultItem(
-                            metadata={"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")}
-                        )
-                        for r in results[:limit]
-                    ]
-        except Exception as e:
-            logger.warning("DuckDuckGo search failed: %s", e)
-
-        logger.error("All search backends failed")
-        return []
-
-    async def _brave_search(
-        self,
-        query: str,
-        limit: int = 5,
-        language: Optional[str] = None,
-    ) -> List[Dict]:
-        """Search using Brave Search JSON API."""
-        headers = {
-            "Accept": "application/json",
-            "X-Subscription-Token": self._brave_key,
-        }
-        params = {
-            "q": query,
-            "count": min(limit, 20),
-        }
-        if language:
-            params["language"] = language.split("-")[0]
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(BRAVE_API_URL, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-        results = []
-        web_results = data.get("web", {}).get("results", [])
-        for i, item in enumerate(web_results[:limit]):
-            results.append({
-                "title": item.get("title", ""),
-                "link": item.get("url", ""),
-                "snippet": item.get("description", ""),
-            })
-
-        logger.info("Brave API returned %d results", len(results))
-        return results
-
-    async def _arxiv_search(self, query: str, limit: int = 5) -> List[Dict]:
-        """Search arxiv.org for academic papers."""
-        encoded = quote(query)
-        url = f"https://arxiv.org/search/?searchtype=all&query={encoded}&start=0&max_results={limit}"
-
-        context = None
-        try:
-            context = await self.browser.new_context()
-            page = await self.browser.new_page(context)
-            success = await self.browser.navigate(page, url)
-            if not success:
-                return []
-
-            # Wait for results
-            await asyncio.sleep(2)
-
-            # Extract results via JavaScript
-            parsed = await page.evaluate("""() => {
-                // Arxiv uses <li class="arxiv-result"> blocks
-                // Title: <p class="title is-5 mathjax">
-                // Link: <p class="list-title is-inline-block"><a href="/abs/...">
-                // Abstract: <span class="abstract-short">
-                const items = document.querySelectorAll('li.arxiv-result');
-                const results = [];
-                for (const el of items) {
-                    const titleEl = el.querySelector('p.title.is-5.mathjax, p.title');
-                    const linkEl = el.querySelector('p.list-title a[href*="/abs/"]');
-                    const abstractEl = el.querySelector('span.abstract-short');
-                    let href = linkEl ? linkEl.getAttribute('href') : '';
-                    // href may be absolute or relative
-                    let link = href;
-                    if (href.startsWith('/')) {
-                        link = 'https://arxiv.org' + href;
-                    } else if (!href.startsWith('http')) {
-                        link = 'https://arxiv.org/abs/' + href;
-                    }
-                    let title = titleEl ? titleEl.textContent.trim() : '';
-                    // Strip search hit markers
-                    title = title.replace(/\\s*World\\s*Modeling\\s*/g, ' World Modeling ').trim();
-                    if (title.startsWith('World Modeling')) title = title.substring('World Modeling'.length).trim();
-                    if (link) {
-                        results.push({
-                            title,
-                            link,
-                            snippet: abstractEl ? abstractEl.textContent.replace(/^Abstract:\\s*/, '').trim() : ''
-                        });
-                    }
-                }
-                return results;
-            }""")
-
-            # Fallback selector if main one didn't work
-            if not parsed or all(not r.get('title') for r in parsed):
-                parsed = await page.evaluate("""() => {
-                    const items = document.querySelectorAll('li.arxiv-result');
-                    const results = [];
-                    for (const el of items) {
-                        // Try to get title from the full text content
-                        const allText = el.textContent || '';
-                        const linkEl = el.querySelector('a[href*="/abs/"]');
-                        let href = linkEl ? linkEl.getAttribute('href') : '';
-                        let link = href;
-                        if (href.startsWith('/')) {
-                            link = 'https://arxiv.org' + href;
-                        } else if (!href.startsWith('http')) {
-                            link = 'https://arxiv.org/abs/' + href;
-                        }
-                        // Extract title: it's the text between the arxiv ID link and Authors
-                        const titleMatch = allText.match(/A Frame is Worth One Token|Efficient Generative World Modeling/);
-                        results.push({
-                            title: titleMatch ? titleMatch[0] : '',
-                            link: link,
-                            snippet: ''
-                        });
-                    }
-                    return results;
-                }""")
-
-            logger.info("Arxiv returned %d results", len(parsed))
-            return parsed[:limit]
-
-        finally:
-            if context:
-                try:
-                    await context.close()
-                except Exception:
-                    pass
-
-    async def _ddg_search(self, query: str, limit: int = 5) -> List[Dict]:
-        """Search DuckDuckGo HTML (no API key needed, uses browser)."""
-        encoded = quote(query)
-        url = f"https://html.duckduckgo.com/html/?q={encoded}&kl=us-en"
-
-        context = await self.browser.new_context()
-        try:
-            page = await self.browser.new_page(context)
-            success = await self.browser.navigate(page, url)
-            if not success:
-                return []
-
-            # Wait for results to render
-            await asyncio.sleep(2)
-
-            # Extract results from DuckDuckGo HTML
-            parsed = await page.evaluate("""() => {
-                const results = [];
-                const items = document.querySelectorAll('.result, .web-result');
-                for (const el of items) {
-                    const titleEl = el.querySelector('.result__a, .web-result__title a, h2 a');
-                    const snippetEl = el.querySelector('.result__snippet, .web-result__snippet, .result__tonk a');
-                    const href = titleEl ? titleEl.getAttribute('href') : '';
-                    if (titleEl && href) {
-                        // DDG sometimes gives relative URLs
-                        let link = href;
-                        if (href.startsWith('/')) {
-                            link = 'https://html.duckduckgo.com' + href;
-                        }
-                        results.push({
-                            title: titleEl.textContent.trim(),
-                            link: link,
-                            snippet: snippetEl ? snippetEl.textContent.trim() : ''
-                        });
-                    }
-                    if (results.length >= 10) break;
-                }
-                return results;
-            }""")
-
-            normalized = []
-            for result in parsed or []:
-                link = _normalize_search_result_url(
-                    result.get("link", ""),
-                    base_url="https://html.duckduckgo.com/",
-                )
-                if link:
-                    normalized.append({**result, "link": link})
-
-            logger.info("DuckDuckGo HTML returned %d results", len(normalized))
-            return normalized[:limit]
-        finally:
-            await context.close()
-
-    async def _ddg_lite_search(self, query: str, limit: int = 5) -> List[Dict]:
-        """Search DuckDuckGo Lite (HTML, no JS, no API key needed)."""
-        encoded = quote(query)
-        url = f"https://lite.duckduckgo.com/lite/?q={encoded}"
-
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-                "Accept": "text/html",
-            })
-            response.raise_for_status()
-            html = response.text
-
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "html.parser")
-        results = []
-        for row in soup.find_all("tr"):
-            link_a = row.find("a", class_="result-link")
-            if not link_a:
-                continue
-            title = link_a.get_text(strip=True)
-            href = _normalize_search_result_url(
-                link_a.get("href", ""),
-                base_url="https://lite.duckduckgo.com/",
+        ordered, opened = self.health_registry.select(
+            requested=engine,
+            fallback_chain=self.fallback_chain,
+        )
+        attempts: List[SearchEngineAttempt] = [
+            SearchEngineAttempt(
+                engine=name,
+                status="circuit_open",
+                error=SearchEngineError(
+                    code="circuit_open",
+                    message=f"{name} search circuit is cooling down",
+                    retryable=True,
+                ),
             )
-            if not href:
+            for name in opened
+        ]
+        executed = 0
+        for name in ordered:
+            executed += 1
+            started = time.monotonic()
+            try:
+                results = await starsearch_scrape.search_web(
+                    name,
+                    query,
+                    limit,
+                    proxy=self.proxy,
+                )
+            except Exception as exc:
+                self._report_proxy_failure(exc)
+                latency_ms = max(0, round((time.monotonic() - started) * 1000))
+                error = self._classify_engine_error(exc)
+                self.health_registry.record_failure(name, latency_ms, error.code)
+                attempts.append(
+                    SearchEngineAttempt(
+                        engine=name,
+                        status="error",
+                        latency_ms=latency_ms,
+                        error=error,
+                    )
+                )
+                logger.warning("StarSearch->%s search failed: %s", name, exc)
                 continue
-            snippet = ""
-            next_row = row.find_next_sibling("tr")
-            if next_row:
-                snippet_td = next_row.find("td", class_="result-snippet")
-                if snippet_td:
-                    snippet = snippet_td.get_text(strip=True)
-            results.append({"title": title, "link": href, "snippet": snippet})
-            if len(results) >= limit:
-                break
 
-        logger.info("DDG Lite returned %d results", len(results))
-        return results
+            latency_ms = max(0, round((time.monotonic() - started) * 1000))
+            if not results:
+                error = SearchEngineError(
+                    code="empty_results",
+                    message=f"{name} rendered successfully but yielded no web results",
+                    retryable=True,
+                )
+                self.health_registry.record_failure(name, latency_ms, error.code)
+                attempts.append(
+                    SearchEngineAttempt(
+                        engine=name,
+                        status="empty",
+                        latency_ms=latency_ms,
+                        error=error,
+                    )
+                )
+                logger.warning("StarSearch->%s yielded no parseable web results", name)
+                continue
 
-    async def _search_with_engine(
-        self,
-        engine: str,
-        query: str,
-        limit: int = 5,
-        tbs: Optional[str] = None,
-        country: Optional[str] = None,
-        language: Optional[str] = None,
-    ) -> List[Dict]:
-        """Legacy fallback search using browser scraping (Bing/DuckDuckGo)."""
-        pass  # Deprecated - kept for compatibility
+            self.health_registry.record_success(name, latency_ms)
+            self._report_proxy_success()
+            attempts.append(
+                SearchEngineAttempt(
+                    engine=name,
+                    status="success",
+                    latency_ms=latency_ms,
+                    result_count=len(results),
+                )
+            )
+            self.last_metadata = SearchMetadata(
+                selected_engine=name,
+                fallback_used=executed > 1 or bool(opened),
+                attempts=attempts,
+                engines=self.health_registry.snapshot(),
+            )
+            annotated = [{**result, "engine": name, "render_mode": "starsearch"} for result in results]
+            logger.info("Using StarSearch->%s for query with %d results", name, len(results))
+            if scrape_results:
+                return await self._scrape_results(annotated, scrape_formats, scrape_kwargs)
+            return [
+                SearchResultItem(
+                    metadata={
+                        "title": result.get("title", ""),
+                        "url": result.get("link", ""),
+                        "snippet": result.get("snippet", ""),
+                        "engine": name,
+                        "render_mode": "starsearch",
+                        "egress": self._egress_metadata(result.get("_egress")),
+                    }
+                )
+                for result in results[:limit]
+            ]
+
+        self.last_metadata = SearchMetadata(
+            attempts=attempts,
+            engines=self.health_registry.snapshot(),
+        )
+        logger.error("All eligible StarSearch-rendered search engines failed")
+        return []
 
     async def _scrape_results(
         self,
@@ -447,11 +346,18 @@ class Searcher:
                         **(scrape_kwargs or {}),
                         "url": result["link"],
                         "formats": scrape_formats,
+                        "proxy": self.proxy,
                     }
                     data = await self.scraper.scrape(**kwargs)
                     failure = scrape_failure(data)
                     if failure:
                         raise RuntimeError(failure[1])
+                    self._report_proxy_success()
+                    if self.proxy_provider is not None and self.proxy_lease is not None:
+                        data.metadata = data.metadata or {}
+                        data.metadata["egress"] = self._egress_metadata(
+                            data.metadata.get("egress")
+                        )
                     item = SearchResultItem(
                         markdown=data.markdown,
                         html=data.html,
@@ -459,11 +365,14 @@ class Searcher:
                             "title": result.get("title", ""),
                             "url": result.get("link", ""),
                             "snippet": result.get("snippet", ""),
+                            "engine": result.get("engine", ""),
+                            "render_mode": result.get("render_mode", "starsearch"),
                             **(data.metadata or {}),
                         }
                     )
                     return item
                 except Exception as e:
+                    self._report_proxy_failure(e)
                     logger.warning(f"Failed to scrape {result.get('link', '')}: {e}")
                     # Return just the search snippet
                     return SearchResultItem(
@@ -471,6 +380,8 @@ class Searcher:
                             "title": result.get("title", ""),
                             "url": result.get("link", ""),
                             "snippet": result.get("snippet", ""),
+                            "engine": result.get("engine", ""),
+                            "render_mode": result.get("render_mode", "starsearch"),
                         }
                     )
 

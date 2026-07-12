@@ -79,6 +79,16 @@ class ProxyEndpoint:
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     @property
+    def starsearch_identity(self) -> str:
+        """Exact password-free identity attested by StarSearch.
+
+        Keep this separate from Huginn's provider/rendezvous identity, whose
+        version prefix is intentionally local to the provider implementation.
+        """
+        material = f"{self.server}\0{self.username or ''}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    @property
     def public_identity(self) -> str:
         """Opaque identity safe for health output and logs."""
         return f"proxy-{self.routing_identity[:16]}"

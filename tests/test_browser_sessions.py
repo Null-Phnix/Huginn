@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +13,23 @@ from huginn.api import create_app
 from huginn.config import HuginnConfig
 from huginn.proxy import ProxyEndpoint, StaticProxyProvider
 from huginn.state import get_state, reset_state
+
+
+def _egress(proxy: dict | None = None) -> dict:
+    proxied = bool(proxy)
+    return {
+        "gateway_enforced": True,
+        "mode": "upstream" if proxied else "direct",
+        "upstream_scheme": "http" if proxied else None,
+        "upstream_identity": (
+            hashlib.sha256(
+                f"{proxy['server']}\0{proxy.get('username', '')}".encode()
+            ).hexdigest()
+            if proxy
+            else None
+        ),
+        "resolution": "local_frozen",
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +50,7 @@ def daemon(monkeypatch):
             result = {
                 "sid": "sid-123",
                 "daemon_instance_id": "a" * 32,
+                "egress": _egress(payload.get("opts", {}).get("proxy")),
             }
             context = payload.get("opts", {}).get("context")
             if context:
@@ -58,8 +77,45 @@ def daemon(monkeypatch):
                             "runtime_restart_survival": False,
                             "scope": "host",
                             "active": False,
+                            "quarantined": False,
+                            "quarantine": None,
+                            "idle_seconds": 100,
+                            "retention_expires_at": 1_707_776_100,
+                            "retention_expired": False,
+                            "prune_eligible": False,
                         }
                     ]
+                },
+            }
+        if payload["cmd"] == "prune_contexts":
+            return {
+                "ok": True,
+                "result": {
+                    "dry_run": payload["dry_run"],
+                    "total_before": 2,
+                    "total_after": 2 if payload["dry_run"] else 1,
+                    "max_contexts": 100,
+                    "retention_seconds": 7_776_000,
+                    "candidates": [
+                        {
+                            "name": "expired-context",
+                            "last_opened_at": 1_600_000_000,
+                            "reasons": ["retention_expired"],
+                        }
+                    ],
+                    "deleted": [] if payload["dry_run"] else ["expired-context"],
+                    "protected_active": [],
+                    "protected_quarantined": ["quarantined-context"],
+                    "remaining_over_limit": 0,
+                },
+            }
+        if payload["cmd"] == "recover_context":
+            return {
+                "ok": True,
+                "result": {
+                    "name": payload["name"],
+                    "recovered": True,
+                    "stale_profile_locks_removed": ["SingletonLock"],
                 },
             }
         if payload["cmd"] == "delete_context":
@@ -122,6 +178,7 @@ async def test_session_lifecycle_and_command_mapping(daemon):
     assert created.status_code == 200
     assert created.json()["id"] == "sid-123"
     assert created.json()["proxy_configured"] is False
+    assert created.json()["egress"] == _egress()
     assert navigated.status_code == 200
     assert navigated.json()["result"]["url"] == "https://example.com/path"
     assert fetched.status_code == 200
@@ -154,6 +211,7 @@ async def test_command_requires_command_specific_fields(daemon):
         "allowed_domains": [],
         "allow_internal_network": False,
         "proxy_configured": False,
+        "egress": _egress(),
     }
     app = create_app(HuginnConfig())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -285,6 +343,51 @@ async def test_named_context_uses_stable_provider_lease_and_typed_routes(daemon,
 
 
 @pytest.mark.asyncio
+async def test_context_prune_and_confirmed_recovery_are_typed_and_fail_closed(daemon):
+    config = HuginnConfig()
+    config.server.api_key = "test-secret"
+    app = create_app(config)
+    headers = {"Authorization": "Bearer test-secret"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        plan = await client.post("/v1/browser/contexts/prune", json={}, headers=headers)
+        refused = await client.post(
+            "/v1/browser/contexts/quarantined-context/recover",
+            json={"confirm": False},
+            headers=headers,
+        )
+        recovered = await client.post(
+            "/v1/browser/contexts/quarantined-context/recover",
+            json={"confirm": True},
+            headers=headers,
+        )
+        applied = await client.post(
+            "/v1/browser/contexts/prune",
+            json={"dry_run": False},
+            headers=headers,
+        )
+
+    assert plan.status_code == 200
+    assert plan.json()["dry_run"] is True
+    assert plan.json()["deleted"] == []
+    assert plan.json()["candidates"][0]["name"] == "expired-context"
+    assert plan.json()["protected_quarantined"] == ["quarantined-context"]
+    assert refused.status_code == 400
+    assert refused.json()["detail"]["code"] == "recovery_confirmation_required"
+    assert recovered.json() == {
+        "success": True,
+        "context_id": "quarantined-context",
+        "name": "quarantined-context",
+        "recovered": True,
+        "stale_profile_locks_removed": ["SingletonLock"],
+    }
+    assert applied.json()["dry_run"] is False
+    assert applied.json()["deleted"] == ["expired-context"]
+    calls = [call.args[0] for call in daemon.call_args_list]
+    assert sum(call["cmd"] == "recover_context" for call in calls) == 1
+    assert calls[-1] == {"v": 1, "cmd": "prune_contexts", "dry_run": False}
+
+
+@pytest.mark.asyncio
 async def test_proxy_health_only_recovers_after_successful_network_command(daemon, monkeypatch):
     endpoint = ProxyEndpoint.parse("http://account:secret@proxy.example:8080")
     provider = StaticProxyProvider([endpoint], failure_threshold=3, cooldown_seconds=60)
@@ -303,6 +406,12 @@ async def test_proxy_health_only_recovers_after_successful_network_command(daemo
                 "result": {
                     "sid": "sid-proxy",
                     "daemon_instance_id": "a" * 32,
+                    "egress": _egress(
+                        {
+                            "server": "http://proxy.example:8080",
+                            "username": "account",
+                        }
+                    ),
                 },
             }
         if payload["cmd"] == "navigate":
@@ -433,6 +542,7 @@ async def test_close_failure_retains_retry_handle(monkeypatch):
         "allowed_domains": [],
         "allow_internal_network": False,
         "proxy_configured": False,
+        "egress": _egress(),
     }
     app = create_app(HuginnConfig())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -472,6 +582,7 @@ async def test_commands_are_serialized_per_session(monkeypatch):
         "allowed_domains": [],
         "allow_internal_network": False,
         "proxy_configured": False,
+        "egress": _egress(),
     }
     app = create_app(HuginnConfig())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

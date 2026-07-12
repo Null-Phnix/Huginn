@@ -9,11 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..config import HuginnConfig
 from ..models import ErrorCode, OutputFormat, ScrapeRequest, ScrapeResponse
-from ..scraper import Scraper
 from ..proxy import ProxyUnavailable
+from ..scraper import Scraper
 from ..state import get_state, limiter
 from ..utils import (
+    EGRESS_CACHE_CONTRACT,
     _map_exception_to_error_code,
+    attach_egress_metadata,
     get_proxy_provider,
     proxy_failure_likely,
     scrape_failure,
@@ -28,6 +30,7 @@ def _cache_context(req: ScrapeRequest, egress_identity: Optional[dict] = None) -
     payload.pop("url", None)
     payload.pop("formats", None)
     payload["_egress"] = egress_identity or {"mode": "direct"}
+    payload["_egress_contract"] = EGRESS_CACHE_CONTRACT
     return payload
 
 
@@ -49,8 +52,9 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
     if not state.browser:
         raise HTTPException(status_code=503, detail="Browser not initialized")
 
-    from ..circuit_breaker import get_circuit_breaker, CircuitOpenError as CBCircuitOpen, extract_domain
-    from ..cache import get_cached_scrape_result, cache_scrape_result
+    from ..cache import cache_scrape_result, get_cached_scrape_result
+    from ..circuit_breaker import CircuitOpenError as CBCircuitOpen
+    from ..circuit_breaker import extract_domain, get_circuit_breaker
 
     cb = get_circuit_breaker()
     domain = extract_domain(req.url)
@@ -132,12 +136,7 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
 
         if proxy_lease:
             proxy_lease.report_success()
-        data.metadata = data.metadata or {}
-        data.metadata["egress"] = {
-            "mode": proxy_provider.mode,
-            "proxied": bool(proxy_lease and proxy_lease.configured),
-            "endpoint": proxy_lease.endpoint.label if proxy_lease and proxy_lease.endpoint else None,
-        }
+        attach_egress_metadata(data, proxy_provider, proxy_lease)
         if cacheable and (data.markdown or data.html or data.raw_html or data.links or data.screenshot):
             await cache_scrape_result(
                 req.url,

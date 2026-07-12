@@ -21,11 +21,13 @@ from .models import (
     FlockResultItem,
     OutputFormat,
 )
-from .scraper import Scraper
 from .proxy import ProxyUnavailable
+from .scraper import Scraper
 from .state import get_state
 from .utils import (
+    EGRESS_CACHE_CONTRACT,
     _map_exception_to_error_code,
+    attach_egress_metadata,
     get_proxy_provider,
     proxy_failure_likely,
     scrape_failure,
@@ -210,8 +212,8 @@ async def run_distill(job_id: str, req: DistillRequest):
 
 async def run_flock(job_id: str, req: FlockRequest):
     """Background task for batch scrape (flock) jobs."""
-    from .circuit_breaker import get_circuit_breaker, extract_domain
-    from .cache import get_cached_scrape_result, cache_scrape_result
+    from .cache import cache_scrape_result, get_cached_scrape_result
+    from .circuit_breaker import extract_domain, get_circuit_breaker
     from .models import ErrorCode
 
     state = get_state()
@@ -228,6 +230,7 @@ async def run_flock(job_id: str, req: FlockRequest):
     cache_context.pop("urls", None)
     cache_context.pop("formats", None)
     cache_context["_egress"] = proxy_provider.cache_identity()
+    cache_context["_egress_contract"] = EGRESS_CACHE_CONTRACT
 
     async def scrape_one(url: str) -> FlockResultItem:
         from .scraper import _is_valid_http_url
@@ -281,12 +284,7 @@ async def run_flock(job_id: str, req: FlockRequest):
                         error_code=ErrorCode.from_http_status(status),
                     )
                 proxy_lease.report_success()
-                data.metadata = data.metadata or {}
-                data.metadata["egress"] = {
-                    "mode": proxy_provider.mode,
-                    "proxied": proxy_lease.configured,
-                    "endpoint": proxy_lease.endpoint.label if proxy_lease.endpoint else None,
-                }
+                attach_egress_metadata(data, proxy_provider, proxy_lease)
                 if data.markdown or data.html or data.raw_html or data.links or data.screenshot:
                     await cache_scrape_result(
                         url,

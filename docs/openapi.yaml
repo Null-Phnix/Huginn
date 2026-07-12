@@ -465,6 +465,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/search/engines:
+    get:
+      tags:
+      - Search
+      summary: Search Engine Health
+      description: Return the live health scores and circuit state used by auto search.
+      operationId: search_engine_health_v1_search_engines_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEngineHealthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/jobs:
     get:
       tags:
@@ -1936,6 +1965,80 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/browser/contexts/prune:
+    post:
+      tags:
+      - Browser Sessions
+      summary: Prune Contexts
+      operationId: prune_contexts_v1_browser_contexts_prune_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserContextPruneRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserContextPruneResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/browser/contexts/{context_id}/recover:
+    post:
+      tags:
+      - Browser Sessions
+      summary: Recover Context
+      operationId: recover_context_v1_browser_contexts__context_id__recover_post
+      parameters:
+      - name: context_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Context Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserContextRecoverRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserContextRecoverResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/browser/contexts/{context_id}:
     delete:
       tags:
@@ -2093,6 +2196,130 @@ components:
       - create_new
       - open_or_create
       title: BrowserContextMode
+    BrowserContextPruneCandidate:
+      properties:
+        name:
+          type: string
+          title: Name
+        last_opened_at:
+          type: string
+          format: date-time
+          title: Last Opened At
+        reasons:
+          items:
+            type: string
+          type: array
+          title: Reasons
+      type: object
+      required:
+      - name
+      - last_opened_at
+      title: BrowserContextPruneCandidate
+    BrowserContextPruneRequest:
+      properties:
+        dry_run:
+          type: boolean
+          title: Dry Run
+          description: 'Safe default: report eligible inactive contexts without deleting
+            them'
+          default: true
+      type: object
+      title: BrowserContextPruneRequest
+    BrowserContextPruneResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        dry_run:
+          type: boolean
+          title: Dry Run
+        total_before:
+          type: integer
+          minimum: 0.0
+          title: Total Before
+        total_after:
+          type: integer
+          minimum: 0.0
+          title: Total After
+        max_contexts:
+          type: integer
+          minimum: 1.0
+          title: Max Contexts
+        retention_seconds:
+          type: integer
+          minimum: 0.0
+          title: Retention Seconds
+        candidates:
+          items:
+            $ref: '#/components/schemas/BrowserContextPruneCandidate'
+          type: array
+          title: Candidates
+        deleted:
+          items:
+            type: string
+          type: array
+          title: Deleted
+        protected_active:
+          items:
+            type: string
+          type: array
+          title: Protected Active
+        protected_quarantined:
+          items:
+            type: string
+          type: array
+          title: Protected Quarantined
+        remaining_over_limit:
+          type: integer
+          minimum: 0.0
+          title: Remaining Over Limit
+      type: object
+      required:
+      - dry_run
+      - total_before
+      - total_after
+      - max_contexts
+      - retention_seconds
+      - remaining_over_limit
+      title: BrowserContextPruneResponse
+    BrowserContextRecoverRequest:
+      properties:
+        confirm:
+          type: boolean
+          title: Confirm
+          description: Must be true; recovery performs daemon-side process and profile-lock
+            checks
+          default: false
+      type: object
+      title: BrowserContextRecoverRequest
+    BrowserContextRecoverResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        context_id:
+          type: string
+          title: Context Id
+        name:
+          type: string
+          title: Name
+        recovered:
+          type: boolean
+          const: true
+          title: Recovered
+          default: true
+        stale_profile_locks_removed:
+          items:
+            type: string
+          type: array
+          title: Stale Profile Locks Removed
+      type: object
+      required:
+      - context_id
+      - name
+      title: BrowserContextRecoverResponse
     BrowserContextResponse:
       properties:
         context_id:
@@ -2144,6 +2371,31 @@ components:
           description: Fail-closed marker set when Chromium termination could not
             be confirmed; the context cannot be reopened or deleted automatically
           default: false
+        quarantine:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Quarantine
+        idle_seconds:
+          type: integer
+          minimum: 0.0
+          title: Idle Seconds
+          default: 0
+        retention_expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Retention Expires At
+        retention_expired:
+          type: boolean
+          title: Retention Expired
+          default: false
+        prune_eligible:
+          type: boolean
+          title: Prune Eligible
+          default: false
       type: object
       required:
       - context_id
@@ -2152,6 +2404,46 @@ components:
       - last_opened_at
       - locale
       title: BrowserContextResponse
+    BrowserEgressDescriptor:
+      properties:
+        gateway_enforced:
+          type: boolean
+          const: true
+          title: Gateway Enforced
+          default: true
+        mode:
+          type: string
+          enum:
+          - direct
+          - upstream
+          title: Mode
+        upstream_scheme:
+          anyOf:
+          - type: string
+            enum:
+            - http
+            - https
+            - socks5
+          - type: 'null'
+          title: Upstream Scheme
+        upstream_identity:
+          anyOf:
+          - type: string
+            pattern: ^[0-9a-f]{64}$
+          - type: 'null'
+          title: Upstream Identity
+          description: Password-free opaque routing identity for configured upstream
+            egress
+        resolution:
+          type: string
+          const: local_frozen
+          title: Resolution
+          default: local_frozen
+      type: object
+      required:
+      - mode
+      title: BrowserEgressDescriptor
+      description: StarSearch's authoritative per-session socket routing contract.
     BrowserSessionCloseResponse:
       properties:
         success:
@@ -2440,6 +2732,8 @@ components:
           type: boolean
           title: Proxy Configured
           default: false
+        egress:
+          $ref: '#/components/schemas/BrowserEgressDescriptor'
         context:
           anyOf:
           - $ref: '#/components/schemas/BrowserSessionContext'
@@ -2463,6 +2757,7 @@ components:
       - expires_at
       - locale
       - human_level
+      - egress
       title: BrowserSessionResponse
     CrawlGraph:
       properties:
@@ -3734,6 +4029,160 @@ components:
       - success
       title: ScrapeResponse
       description: POST /v1/scrape response.
+    SearchEngineAttempt:
+      properties:
+        engine:
+          type: string
+          enum:
+          - bing
+          - brave
+          title: Engine
+        status:
+          type: string
+          enum:
+          - success
+          - empty
+          - error
+          - circuit_open
+          title: Status
+        latency_ms:
+          type: integer
+          minimum: 0.0
+          title: Latency Ms
+          default: 0
+        result_count:
+          type: integer
+          minimum: 0.0
+          title: Result Count
+          default: 0
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/SearchEngineError'
+          - type: 'null'
+      type: object
+      required:
+      - engine
+      - status
+      title: SearchEngineAttempt
+      description: One engine decision or execution in the search fallback chain.
+    SearchEngineError:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+        retryable:
+          type: boolean
+          title: Retryable
+          default: true
+      type: object
+      required:
+      - code
+      - message
+      title: SearchEngineError
+      description: Machine-readable failure from one rendered search-engine attempt.
+    SearchEngineHealth:
+      properties:
+        status:
+          type: string
+          enum:
+          - healthy
+          - degraded
+          - open
+          - untried
+          title: Status
+        score:
+          type: number
+          title: Score
+        attempts:
+          type: integer
+          minimum: 0.0
+          title: Attempts
+          default: 0
+        successes:
+          type: integer
+          minimum: 0.0
+          title: Successes
+          default: 0
+        consecutive_failures:
+          type: integer
+          minimum: 0.0
+          title: Consecutive Failures
+          default: 0
+        latency_ema_ms:
+          type: number
+          minimum: 0.0
+          title: Latency Ema Ms
+        circuit_open_for_seconds:
+          type: number
+          minimum: 0.0
+          title: Circuit Open For Seconds
+          default: 0
+        last_error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Error Code
+      type: object
+      required:
+      - status
+      - score
+      - latency_ema_ms
+      title: SearchEngineHealth
+      description: Process-local health used for automatic engine selection.
+    SearchEngineHealthResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+          default: true
+        render_mode:
+          type: string
+          const: starsearch
+          title: Render Mode
+          default: starsearch
+        engines:
+          additionalProperties:
+            $ref: '#/components/schemas/SearchEngineHealth'
+          type: object
+          title: Engines
+      type: object
+      title: SearchEngineHealthResponse
+      description: GET /v1/search/engines response.
+    SearchMetadata:
+      properties:
+        selected_engine:
+          anyOf:
+          - type: string
+            enum:
+            - bing
+            - brave
+          - type: 'null'
+          title: Selected Engine
+        render_mode:
+          type: string
+          const: starsearch
+          title: Render Mode
+          default: starsearch
+        fallback_used:
+          type: boolean
+          title: Fallback Used
+          default: false
+        attempts:
+          items:
+            $ref: '#/components/schemas/SearchEngineAttempt'
+          type: array
+          title: Attempts
+        engines:
+          additionalProperties:
+            $ref: '#/components/schemas/SearchEngineHealth'
+          type: object
+          title: Engines
+      type: object
+      title: SearchMetadata
+      description: Selection and health evidence for a StarSearch-rendered search.
     SearchOptions:
       properties:
         limit:
@@ -3755,6 +4204,16 @@ components:
           - type: string
           - type: 'null'
           title: Language
+        engine:
+          type: string
+          enum:
+          - auto
+          - bing
+          - brave
+          title: Engine
+          description: StarSearch-rendered engine. 'auto' selects by live health score;
+            an explicit engine fails closed without silently changing destinations.
+          default: auto
       type: object
       title: SearchOptions
       description: Search-specific options.
@@ -3781,6 +4240,8 @@ components:
         fallback_chain:
           type: boolean
           title: Fallback Chain
+          description: In auto mode, try the next healthy StarSearch-rendered engine
+            on failure.
           default: true
         scrape_results:
           type: boolean
@@ -3806,6 +4267,15 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Code
+        metadata:
+          anyOf:
+          - $ref: '#/components/schemas/SearchMetadata'
+          - type: 'null'
       type: object
       required:
       - success

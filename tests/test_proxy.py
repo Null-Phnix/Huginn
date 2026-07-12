@@ -1,8 +1,11 @@
 """Proxy provider rotation, stickiness, health, and redaction tests."""
 
+import hashlib
+
 import pytest
 
 from huginn.config import HuginnConfig
+from huginn.models import ScrapeData
 from huginn.proxy import (
     ProxyConfigurationError,
     ProxyEndpoint,
@@ -10,6 +13,7 @@ from huginn.proxy import (
     StaticProxyProvider,
     build_proxy_provider,
 )
+from huginn.utils import attach_egress_metadata
 
 
 def test_endpoint_extracts_credentials_without_exposing_them_in_server_or_label():
@@ -35,6 +39,10 @@ def test_endpoint_identity_distinguishes_accounts_without_exposing_credentials()
     public_output = repr(provider.status()) + repr(provider.cache_identity())
     for credential in ("alice", "bob", "old-secret", "new-secret", "bob-secret"):
         assert credential not in public_output
+    assert alice.starsearch_identity == hashlib.sha256(
+        b"http://proxy.example:8080\0alice"
+    ).hexdigest()
+    assert alice.starsearch_identity == alice_rotated.starsearch_identity
 
 
 @pytest.mark.parametrize("url", ["ftp://proxy.example:21", "http://missing-port.example"])
@@ -156,3 +164,44 @@ def test_explicit_static_mode_requires_an_endpoint():
     config.proxy.provider = "static"
     with pytest.raises(ProxyConfigurationError):
         build_proxy_provider(config)
+
+
+def test_scrape_metadata_preserves_starsearch_enforcement_proof():
+    endpoint = ProxyEndpoint.parse("socks5://account:secret@proxy.example:1080")
+    provider = StaticProxyProvider([endpoint])
+    lease = provider.acquire()
+    data = ScrapeData(
+        metadata={
+            "egress": {
+                "gateway_enforced": True,
+                "mode": "upstream",
+                "upstream_scheme": "socks5",
+                "upstream_identity": "a" * 64,
+                "resolution": "local_frozen",
+            }
+        }
+    )
+
+    attach_egress_metadata(data, provider, lease)
+
+    assert data.metadata["egress"]["gateway_enforced"] is True
+    assert data.metadata["egress"]["resolution"] == "local_frozen"
+    assert data.metadata["egress"]["provider"] == {
+        "mode": "static",
+        "proxied": True,
+        "endpoint": "socks5://proxy.example:1080",
+    }
+
+
+def test_non_starsearch_scrape_metadata_never_claims_gateway_enforcement():
+    provider = build_proxy_provider(HuginnConfig())
+    data = ScrapeData(metadata={})
+
+    attach_egress_metadata(data, provider, provider.acquire())
+
+    assert data.metadata["egress"] == {
+        "gateway_enforced": False,
+        "mode": "direct",
+        "resolution": None,
+        "provider": {"mode": "direct", "proxied": False, "endpoint": None},
+    }

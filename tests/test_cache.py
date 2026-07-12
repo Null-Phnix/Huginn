@@ -3,12 +3,14 @@ Tests for the response cache module.
 """
 
 import asyncio
-import pytest
 
 from huginn.cache import (
     AsyncTTLCache,
     make_cache_key,
 )
+from huginn.models import ScrapeRequest
+from huginn.routers.scrape import _cache_context
+from huginn.utils import EGRESS_CACHE_CONTRACT
 
 
 class TestAsyncTTLCache:
@@ -111,3 +113,16 @@ class TestMakeCacheKey:
         k1 = make_cache_key("https://example.com", (), {"timeout": None})
         k2 = make_cache_key("https://example.com", (), {})
         assert k1 == k2
+
+    def test_socket_gateway_contract_invalidates_legacy_scrape_entries(self):
+        request = ScrapeRequest(url="https://example.com", render_mode="starsearch")
+        current = _cache_context(request, {"mode": "direct"})
+        legacy = dict(current)
+        legacy.pop("_egress_contract")
+
+        assert current["_egress_contract"] == EGRESS_CACHE_CONTRACT
+        assert make_cache_key(request.url, ("markdown",), current) != make_cache_key(
+            request.url,
+            ("markdown",),
+            legacy,
+        )

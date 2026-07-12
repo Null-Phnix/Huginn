@@ -12,9 +12,14 @@ from fastapi import Header, HTTPException
 
 from .config import HuginnConfig
 from .models import ErrorCode, ScrapeData, ScrapeOptions
-from .state import get_state, limiter
+from .state import get_state
 
 logger = logging.getLogger(__name__)
+
+# Persistent caches created before socket enforcement can contain the former
+# provider-only egress shape. Include this in every scrape-derived cache key so
+# an upgrade cannot relabel old unenforced content as gateway-attested output.
+EGRESS_CACHE_CONTRACT = "starsearch_socket_gateway_v1"
 
 # SSE format helper — avoids f-string issues with newlines
 _SSE_TEMPLATE = "event: {}\ndata: {}\n\n"
@@ -69,6 +74,37 @@ def get_proxy_provider(config: HuginnConfig):
     if state.proxy_provider is None:
         state.proxy_provider = build_proxy_provider(config)
     return state.proxy_provider
+
+
+def build_egress_metadata(existing: Any, provider: Any, lease: Any) -> dict[str, Any]:
+    """Preserve StarSearch proof while adding Huginn provider selection."""
+    configured = bool(lease and lease.configured)
+    provider_metadata = {
+        "mode": provider.mode,
+        "proxied": configured,
+        "endpoint": lease.endpoint.label if configured and lease.endpoint else None,
+    }
+    if isinstance(existing, dict) and existing.get("gateway_enforced") is True:
+        return {**existing, "provider": provider_metadata}
+    return {
+        "gateway_enforced": False,
+        "mode": "upstream" if configured else "direct",
+        "resolution": None,
+        "provider": provider_metadata,
+    }
+
+
+def attach_egress_metadata(data: ScrapeData, provider: Any, lease: Any) -> None:
+    """Preserve StarSearch's enforcement proof and add Huginn routing context.
+
+    The provider reports selection/health policy; only StarSearch can attest
+    that the browser was actually forced through its socket gateway. Non-
+    StarSearch fallback results are therefore marked explicitly unenforced.
+    """
+    data.metadata = data.metadata or {}
+    data.metadata["egress"] = build_egress_metadata(
+        data.metadata.get("egress"), provider, lease
+    )
 
 
 def proxy_failure_likely(status: int | None = None, message: str = "") -> bool:
