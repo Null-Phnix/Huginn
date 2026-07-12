@@ -28,11 +28,11 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install -e ".[dev]"
-          pip install cryptography
+          python -m pip install uv==0.10.4
+          uv sync --locked --extra dev
 
       - name: Install Playwright browser
-        run: playwright install chromium
+        run: uv run playwright install chromium
 
       - name: Run unit tests
         # Use bare `pytest` (no path arg) so it picks up both tests/ and
@@ -42,7 +42,7 @@ jobs:
         # live network + Playwright chromium); the other three ignores from
         # earlier versions reference files that no longer exist.
         run: |
-          pytest \
+          uv run pytest \
             --timeout=30 \
             -x \
             -q \
@@ -57,7 +57,7 @@ jobs:
         # end-to-end. Non-zero exit on FAIL — catches broken Playwright,
         # missing LLM creds, or webhook signing issues before merge.
         run: |
-          huginn doctor --check || true
+          uv run huginn doctor --check || true
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
