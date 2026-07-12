@@ -60,8 +60,10 @@ jobs:
           huginn doctor --check || true
 
       - name: Upload coverage report
-        uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        if: always() && matrix.python-version == '3.11'
         with:
-          files: ./coverage.xml
-          fail_ci_if_error: false
+          name: huginn-coverage-py311
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
