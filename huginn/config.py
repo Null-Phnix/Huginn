@@ -23,7 +23,7 @@ def _default_user_agent() -> str:
 @dataclass
 class BrowserConfig:
     """Browser backend configuration."""
-    backend: str = "playwright"  # "starsearch" = primary daemon + Playwright fallback
+    backend: str = "playwright"  # production Compose explicitly selects StarSearch
     headless: bool = True
     starsearch_socket: Optional[str] = None  # auto-detect if None
     viewport_width: int = 1920
@@ -77,7 +77,7 @@ class ExtractConfig:
 @dataclass
 class ServerConfig:
     """API server configuration."""
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 7432
     api_key: Optional[str] = None  # Bearer token auth (optional)
     job_ttl: int = 3600  # seconds to keep completed jobs
@@ -201,6 +201,7 @@ def _apply_env(config: HuginnConfig):
         f"{_P}_LLM_MODEL": ("extract", "llm_model"),
         f"{_P}_MENTAL_MODEL": ("extract", "mental_model_enabled"),
         f"{_P}_API_KEY": ("server", "api_key"),
+        f"{_P}_HOST": ("server", "host"),
         f"{_P}_PORT": ("server", "port"),
         f"{_P}_RATE_LIMIT": ("server", "rate_limit"),
         f"{_P}_DATA_DIR": (None, "data_dir"),

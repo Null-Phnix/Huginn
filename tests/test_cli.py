@@ -71,6 +71,40 @@ class TestCLIConfig:
         assert "browser" in result.output
 
 
+class TestCLIServe:
+    """Server flags must not erase environment/YAML configuration."""
+
+    def test_serve_uses_environment_when_flags_are_omitted(self, monkeypatch):
+        calls = {}
+
+        def fake_create_app(config):
+            calls["config"] = config
+            return object()
+
+        def fake_run(app, **kwargs):
+            calls["app"] = app
+            calls.update(kwargs)
+
+        monkeypatch.setattr("huginn.api.create_app", fake_create_app)
+        monkeypatch.setattr("uvicorn.run", fake_run)
+
+        result = runner.invoke(
+            cli,
+            ["serve"],
+            env={
+                "HUGINN_HOST": "127.0.0.9",
+                "HUGINN_PORT": "7440",
+                "HUGINN_LOG_LEVEL": "WARNING",
+            },
+        )
+
+        assert result.exit_code == 0, result.output
+        assert calls["config"].server.host == "127.0.0.9"
+        assert calls["host"] == "127.0.0.9"
+        assert calls["port"] == 7440
+        assert calls["log_level"] == "warning"
+
+
 class TestInteractiveDispatch:
     """Test that _interactive_mode handles full command names."""
 

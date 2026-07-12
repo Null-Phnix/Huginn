@@ -838,20 +838,28 @@ def research_cmd(query, depth, sources, output, outfmt):
 # ─── serve ──────────────────────────────────────────────────────────────────────
 
 @cli.command(name="serve")
-@click.option("--host", default="0.0.0.0", show_default=True)
-@click.option("--port", default=7432, show_default=True)
+@click.option(
+    "--host", default=None, help="Bind host (default: config/HUGINN_HOST or 127.0.0.1)"
+)
+@click.option(
+    "--port", type=int, default=None, help="Bind port (default: config/HUGINN_PORT or 7432)"
+)
 @click.option("--config", default=None, help="Config file path")
 @click.option("--no-stealth/--stealth", default=False, help="Disable stealth modes")
 @click.option("--no-headless/--headless", default=False, help="Show browser window")
 @click.option("--api-key", default=None, help="API key override")
-@click.option("--log-level", default="INFO", type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
-              show_default=True)
+@click.option(
+    "--log-level",
+    default=None,
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    help="Log level (default: config/HUGINN_LOG_LEVEL or INFO)",
+)
 def serve_cmd(host, port, config, no_stealth, no_headless, api_key, log_level):
     """Start the API server.
 
     \b
     Examples:
-      huginn serve                    # Default: localhost:7432
+      huginn serve                    # Default: 127.0.0.1:7432
       huginn serve --port 8080        # Custom port
       huginn serve --api-key secret   # Require auth
     """

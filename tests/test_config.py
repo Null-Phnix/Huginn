@@ -32,7 +32,7 @@ class TestHuginnConfig:
         assert config.crawl.concurrency == 5
         assert config.extract.llm_provider == "openai"
         assert config.extract.mental_model_enabled is True
-        assert config.server.host == "0.0.0.0"
+        assert config.server.host == "127.0.0.1"
         assert config.server.port == 7432
         assert config.server.api_key is None
         assert config.browser.allow_playwright_fallback is False
@@ -95,12 +95,14 @@ class TestLoadConfig:
     def test_env_var_overrides(self):
         """Environment variables should override config."""
         with patch.dict(os.environ, {
+            "HUGINN_HOST": "127.0.0.9",
             "HUGINN_PORT": "9999",
             "HUGINN_HEADLESS": "false",
             "HUGINN_MAX_DEPTH": "7",
             "HUGINN_LLM_PROVIDER": "anthropic",
         }):
             config = load_config()
+            assert config.server.host == "127.0.0.9"
             assert config.server.port == 9999
             assert config.browser.headless is False
             assert config.crawl.max_depth == 7
