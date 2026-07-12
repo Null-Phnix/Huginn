@@ -170,7 +170,7 @@ generate_selectors("search box")  # NLP → CSS
 ## Testing the Complete System
 
 ```bash
-cd /mnt/GameDrive/AI_Projects/Blackreach
+cd /mnt/WorkDrive/AI_Projects/Blackreach
 
 # Run a simple test
 python blackreach.py "go to wikipedia and search for cats"

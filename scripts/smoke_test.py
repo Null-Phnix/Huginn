@@ -14,11 +14,14 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from threading import Thread
 from typing import List, Optional
 
-sys.path.insert(0, "/mnt/AI_Projects/BlackCrawl")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
+from huginn import __version__
 from huginn.browser import BrowserManager
 from huginn.scraper import Scraper, RenderMode
 from huginn.models import OutputFormat
@@ -197,12 +200,14 @@ async def main():
 
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "huginn_version": "1.2.0",
+        "huginn_version": __version__,
         "passed": passed,
         "total": total,
         "results": [asdict(r) for r in results],
     }
-    with open("/mnt/AI_Projects/BlackCrawl/benchmarks/results/smoke_latest.json", "w") as f:
+    report_path = PROJECT_ROOT / "benchmarks" / "results" / "smoke_latest.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
 
     sys.exit(0 if passed == total else 1)

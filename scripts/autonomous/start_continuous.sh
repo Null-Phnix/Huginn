@@ -1,7 +1,8 @@
 #!/bin/bash
 # Start continuous autonomous development loop
 
-WORK_DIR="/mnt/AI_Projects/Blackreach"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORK_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LOG_DIR="$WORK_DIR/deep_work_logs"
 
 echo "=========================================="

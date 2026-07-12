@@ -2,7 +2,13 @@
 
 import pytest
 
+from mcp_server import blackreach_http_server as retired_http
 from mcp_server import server
+
+
+def test_copied_blackreach_gateway_is_quarantined():
+    with pytest.raises(SystemExit, match="copied Blackreach HTTP gateway is retired"):
+        retired_http.main()
 
 
 def test_headers_read_api_key_file(monkeypatch, tmp_path):

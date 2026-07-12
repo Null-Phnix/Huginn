@@ -1,68 +1,47 @@
-# Start Here — Project Blackreach
+# Start Here — Huginn
 
-## What Is This?
+Huginn is the deterministic data plane in the local Blackreach web-tool
+suite. It owns search, scrape, crawl, extraction, batch work, caching, durable
+jobs, and authenticated browser-session policy. StarSearch owns browser
+execution; Blackreach owns goal-driven browsing; `blackreach-mcp` is the one
+adapter agents should register.
 
-Ghost Hand evolved. A general-purpose autonomous browser agent that:
-- Takes any goal
-- Figures out where to go
-- Downloads/extracts what you need
-- Uses local models (no restrictions)
+## Production start
 
-## Prerequisites
-
-```bash
-# 1. Install a capable local model
-ollama pull qwen2.5:14b-instruct
-
-# 2. Test it works
-ollama run qwen2.5:14b-instruct "Say hello"
-
-# 3. Python deps (when ready to build)
-pip install playwright aiosqlite
-playwright install chromium
-```
-
-## To Start Building
-
-Open Claude Code in this folder:
-```bash
-cd /mnt/AI_Projects/Blackreach
-claude
-```
-
-Then say:
-> "Read ARCHITECTURE.md. Let's build Blackreach Phase 1 — the core ReAct loop. Start with the basic agent that can observe a page, think about what to do, and take an action."
-
-## What You Can Steal from Ghost Hand
-
-Location: `/mnt/AI_Projects/The Library of Alexandria/The Ghost Hand/`
-
-Reusable:
-- `ghost_hand/puppet.py` — Playwright browser setup
-- `ghost_hand/loop.py` — Agent loop structure (refactor needed)
-- Download handling logic
-
-Don't copy:
-- Site-specific strategies
-- Mythology prompts
-- Hardcoded paths
-
-## The Goal
+Install StarSearch and the local secret files first, following the complete
+[`WEB_TOOL_SUITE.md`](https://github.com/Null-Phnix/Blackreach/blob/main/docs/WEB_TOOL_SUITE.md)
+runbook. Then:
 
 ```bash
-blackreach "find and download the top 10 papers on mixture of experts from 2024"
+cd /mnt/WorkDrive/AI_Projects/BlackCrawl
+docker compose up -d --build
+curl --fail http://127.0.0.1:7432/health/ready
 ```
 
-And it just... does it.
+The production Compose profile binds loopback, requires bearer auth for
+data-bearing routes, persists `/data/huginn.db`, selects StarSearch, and fails
+closed instead of silently launching Playwright.
 
-## Development Order
+## Development
 
-1. **ReAct loop** — observe/think/act cycle working
-2. **Local LLM** — talking to Ollama
-3. **Actions** — click, type, download, etc.
-4. **Memory** — don't repeat yourself
-5. **Planner** — break complex goals into steps
-6. **Recovery** — handle failures gracefully
-7. **CLI** — nice interface
+```bash
+cd /mnt/WorkDrive/AI_Projects/BlackCrawl
+python -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest -q
+```
 
-Start with #1. Get one loop working. Everything else builds on that.
+Use Playwright only when deliberately testing the compatibility backend. It
+is not the production browser path and it does not provide proxy egress.
+
+## Agent access
+
+Do not register `mcp_server/server.py` beside the suite adapter. Build and
+register only:
+
+```text
+/mnt/WorkDrive/AI_Projects/blackreach-mcp/dist/index.js
+```
+
+That keeps MCP schemas, job IDs, errors, screenshots, sessions, and agent
+browsing consistent across Hermes, Claude, and Codex.

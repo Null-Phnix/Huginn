@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 import argparse
 
 # Paths
-PROJECT_DIR = Path("/mnt/AI_Projects/Blackreach")
+PROJECT_DIR = Path(__file__).resolve().parents[2]
 LOG_DIR = PROJECT_DIR / "deep_work_logs"
 STOP_FILE = LOG_DIR / "STOP"
 STATUS_FILE = LOG_DIR / "smart_status.json"

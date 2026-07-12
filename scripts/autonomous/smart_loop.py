@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 import signal
 
 # Configuration
-WORK_DIR = Path("/mnt/AI_Projects/Blackreach")
+WORK_DIR = Path(__file__).resolve().parents[2]
 LOG_DIR = WORK_DIR / "deep_work_logs"
 STOP_FILE = LOG_DIR / "STOP"
 STATUS_FILE = LOG_DIR / "smart_status.json"
@@ -92,7 +92,7 @@ This is a quick decision session - analyze and decide in under 15 minutes.
 {recent_work}
 
 ## PROJECT LOCATION
-/mnt/AI_Projects/Blackreach
+{WORK_DIR}
 
 ## YOUR TASK
 

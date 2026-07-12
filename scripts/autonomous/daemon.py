@@ -527,7 +527,7 @@ def main():
     parser.add_argument("--hours", type=float, default=2.0,
                         help="Hours per agent (default: 2)")
     parser.add_argument("--work-dir", type=str,
-                        default="/mnt/AI_Projects/Blackreach",
+                        default=str(Path(__file__).resolve().parents[2]),
                         help="Working directory")
     parser.add_argument("--check-interval", type=int, default=60,
                         help="Seconds between status checks (default: 60)")

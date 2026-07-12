@@ -2,7 +2,8 @@
 # Deep Work Timer - Forces agents to work for specified duration
 # Tracks elapsed time and logs activity
 
-WORK_DIR="/mnt/AI_Projects/Blackreach"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$WORK_DIR/deep_work_logs"
 AGENT_NAME="${1:-unnamed}"
 DURATION_HOURS="${2:-2}"
