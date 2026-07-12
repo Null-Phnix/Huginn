@@ -94,6 +94,16 @@ class TestMapExceptionToErrorCode:
         code = _map_exception_to_error_code(e)
         assert code == ErrorCode.INVALID_URL
 
+    def test_unsupported_render_mode_maps_to_unsupported_option(self):
+        from huginn.models import ErrorCode
+        from huginn.scraper import UnsupportedRenderModeError
+        from huginn.utils import _map_exception_to_error_code
+
+        code = _map_exception_to_error_code(
+            UnsupportedRenderModeError("unsupported render mode")
+        )
+        assert code == ErrorCode.UNSUPPORTED_OPTION
+
     def test_unknown_exception_falls_back(self):
         from huginn.utils import _map_exception_to_error_code
         from huginn.models import ErrorCode

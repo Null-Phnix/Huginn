@@ -173,6 +173,7 @@ class TestRenderMode:
         assert RenderMode.AUTO == "auto"
         assert RenderMode.FULL == "full"
         assert RenderMode.LIGHT == "light"
+        assert RenderMode.STARSEARCH == "starsearch"
 
     def test_detect_static_headers(self):
         """Static HTML headers should suggest LIGHT rendering."""
@@ -272,6 +273,11 @@ class TestLightweightScrape:
         opts = ScrapeOptions(render_mode="full")
         assert opts.render_mode == "full"
 
+    def test_explicit_starsearch_render_mode_is_accepted(self):
+        from huginn.models import ScrapeRequest
+        req = ScrapeRequest(url="https://example.com", render_mode="starsearch")
+        assert req.render_mode == "starsearch"
+
 
 class TestErrorClassification:
     """Test enhanced classify_error with text-pattern detection."""
@@ -321,6 +327,73 @@ class TestScraperResilienceConstructor:
 
 
 class TestStarSearchFailClosed:
+    @pytest.mark.asyncio
+    async def test_explicit_starsearch_mode_uses_daemon(self):
+        from huginn.models import ScrapeData
+        from huginn.scraper import Scraper
+
+        browser = MagicMock()
+        browser.backend = "playwright"
+        browser.allow_playwright_fallback = True
+        browser.allow_private_network = False
+        scraper = Scraper(browser)
+        daemon_result = ScrapeData(
+            markdown="# Example",
+            metadata={
+                "url": "https://starsearch-success.example.com",
+                "status_code": 200,
+            },
+        )
+
+        with patch("huginn.starsearch_scrape.tcp_addr", return_value="127.0.0.1:7676"), patch(
+            "huginn.starsearch_scrape.scrape",
+            AsyncMock(return_value=daemon_result),
+        ) as daemon_scrape:
+            result = await scraper.scrape(
+                "https://starsearch-success.example.com",
+                render_mode="starsearch",
+            )
+
+        assert result.markdown == "# Example"
+        daemon_scrape.assert_awaited_once()
+        browser.new_context.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_starsearch_mode_never_falls_back(self):
+        from huginn.scraper import Scraper
+
+        browser = MagicMock()
+        browser.backend = "playwright"
+        browser.allow_playwright_fallback = True
+        browser.allow_private_network = False
+        scraper = Scraper(browser)
+
+        with patch("huginn.starsearch_scrape.tcp_addr", return_value="127.0.0.1:7676"), patch(
+            "huginn.starsearch_scrape.scrape",
+            AsyncMock(side_effect=RuntimeError("daemon unavailable")),
+        ):
+            with pytest.raises(RuntimeError, match="daemon unavailable"):
+                await scraper.scrape(
+                    "https://starsearch-failure.example.com",
+                    render_mode="starsearch",
+                )
+
+        browser.new_context.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invalid_render_mode_has_typed_error(self):
+        from huginn.scraper import Scraper, UnsupportedRenderModeError
+
+        browser = MagicMock()
+        browser.allow_private_network = False
+        scraper = Scraper(browser)
+
+        with pytest.raises(UnsupportedRenderModeError, match="expected one of"):
+            await scraper.scrape(
+                "https://invalid-render-mode.example.com",
+                render_mode="not-a-renderer",
+            )
+
     @pytest.mark.asyncio
     async def test_daemon_failure_does_not_fall_back_to_playwright(self):
         from huginn.scraper import Scraper

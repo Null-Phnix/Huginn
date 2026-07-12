@@ -52,12 +52,16 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml
 
-      - name: Deep health check
-        # Run huginn doctor --check to verify the full stack works
-        # end-to-end. Non-zero exit on FAIL — catches broken Playwright,
-        # missing LLM creds, or webhook signing issues before merge.
+      - name: Inspect optional runtime dependencies
+        # CI has no StarSearch daemon or model credentials. Keep this report
+        # informational instead of pretending it is a live end-to-end check.
+        run: uv run huginn doctor
+
+      - name: Verify generated OpenAPI is current
+        if: matrix.python-version == '3.11'
         run: |
-          uv run huginn doctor --check || true
+          uv run python scripts/generate_openapi.py
+          git diff --exit-code -- docs/openapi.json docs/openapi.yaml
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

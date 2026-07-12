@@ -29,6 +29,7 @@ def _map_exception_to_error_code(e: Exception) -> Optional[str]:
     """Map exception type to Huginn ErrorCode string."""
     name = type(e).__name__.lower()
     mapping = {
+        "unsupportedrendermodeerror": ErrorCode.UNSUPPORTED_OPTION,
         "unsupportedstarsearchoptionerror": ErrorCode.UNSUPPORTED_OPTION,
         "timeouterror": ErrorCode.TIMEOUT,
         "httpx.timeout": ErrorCode.TIMEOUT,

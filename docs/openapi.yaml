@@ -1,11 +1,14 @@
 openapi: 3.1.0
 info:
   title: Huginn
-  version: 1.0.0
+  version: 1.3.0
 paths:
   /health:
     get:
+      tags:
+      - Health
       summary: Health
+      description: Comprehensive health check endpoint.
       operationId: health_health_get
       responses:
         '200':
@@ -13,8 +16,93 @@ paths:
           content:
             application/json:
               schema: {}
+  /health/detailed:
+    get:
+      tags:
+      - Health
+      summary: Health Detailed
+      description: Detailed health check with circuit breaker and cache statistics.
+      operationId: health_detailed_health_detailed_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /health/ready:
+    get:
+      tags:
+      - Health
+      summary: Readiness
+      description: "Kubernetes readiness probe \u2014 returns 503 if not ready."
+      operationId: readiness_health_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /health/live:
+    get:
+      tags:
+      - Health
+      summary: Liveness
+      description: Kubernetes liveness probe.
+      operationId: liveness_health_live_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /v1/metrics:
+    get:
+      tags:
+      - Health
+      summary: Metrics
+      description: 'Return per-endpoint metrics: call count, avg latency, success
+        rate.'
+      operationId: metrics_v1_metrics_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/probe:
     post:
+      tags:
+      - Scrape
       summary: Scrape
       description: Scrape a single URL and return content in requested formats.
       operationId: scrape_v1_probe_post
@@ -48,9 +136,11 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /v1/sweep:
     post:
+      tags:
+      - Crawl
       summary: Start Sweep
-      description: Start an async crawl job. Returns job ID for polling, or SSE stream
-        if stream=True.
+      description: Start an async crawl job. Returns job ID for polling, or streams
+        if requested.
       operationId: start_sweep_v1_sweep_post
       parameters:
       - name: authorization
@@ -81,6 +171,8 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /v1/sweep/{job_id}:
     get:
+      tags:
+      - Crawl
       summary: Get Sweep Status
       description: Get crawl job status and results.
       operationId: get_sweep_status_v1_sweep__job_id__get
@@ -113,6 +205,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
     delete:
+      tags:
+      - Crawl
       summary: Cancel Crawl
       description: Cancel a running crawl job.
       operationId: cancel_crawl_v1_sweep__job_id__delete
@@ -145,6 +239,8 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /v1/chart:
     post:
+      tags:
+      - Map
       summary: Chart Site
       description: "Fast URL discovery \u2014 returns all links without full content\
         \ extraction."
@@ -177,8 +273,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/graph:
+    post:
+      tags:
+      - Map
+      summary: Graph Site
+      description: 'Map a site as a directed graph of pages and links.
+
+
+        BFS crawl up to max_depth, returning nodes (pages with metadata)
+
+        and edges (source -> target links). Useful for site architecture
+
+        analysis, link visualization, and audit.'
+      operationId: graph_site_v1_graph_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/distill:
     post:
+      tags:
+      - Extract
       summary: Start Distill
       description: Start an async extraction job. Returns job ID for polling, or SSE
         stream if stream=True.
@@ -212,6 +352,8 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /v1/distill/{job_id}:
     get:
+      tags:
+      - Extract
       summary: Get Distill Status
       description: Get extraction job status and results.
       operationId: get_distill_status_v1_distill__job_id__get
@@ -243,8 +385,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/research:
+    post:
+      tags:
+      - Research
+      summary: Deep Research
+      description: 'Conduct autonomous deep research on any topic.
+
+
+        Iteratively explores multiple sources, tracks beliefs with confidence
+
+        scores, detects contradictions, and synthesizes a structured report.
+
+
+        This is Huginn''s agentic research endpoint; quality depends on the
+
+        configured model, source access, and evidence returned by the browser.'
+      operationId: deep_research_v1_research_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResearchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/seek:
     post:
+      tags:
+      - Search
       summary: Search
       description: Search the web and scrape results.
       operationId: search_v1_seek_post
@@ -278,6 +467,8 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /v1/jobs:
     get:
+      tags:
+      - Jobs
       summary: List Jobs
       description: List all jobs, optionally filtered by status.
       operationId: list_jobs_v1_jobs_get
@@ -320,6 +511,8 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /v1/jobs/{job_id}:
     delete:
+      tags:
+      - Jobs
       summary: Delete Job
       description: Delete a job.
       operationId: delete_job_v1_jobs__job_id__delete
@@ -352,8 +545,10 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /v1/flock:
     post:
+      tags:
+      - Batch
       summary: Flock Scrape
-      description: Scrape multiple URLs concurrently.
+      description: Scrape multiple URLs concurrently with partial results support.
       operationId: flock_scrape_v1_flock_post
       parameters:
       - name: authorization
@@ -377,6 +572,1331 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FlockResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/watch:
+    post:
+      tags:
+      - Watch
+      summary: Watch Page
+      description: 'Start watching a page for content changes.
+
+
+        Takes an initial snapshot and returns the content hash.
+
+        Use GET /v1/watch/{url} to check status,
+
+        and DELETE /v1/watch/{url} to stop watching.'
+      operationId: watch_page_v1_watch_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/watch/{url}:
+    get:
+      tags:
+      - Watch
+      summary: Get Watch Status
+      description: Get the current status and history of a watched page.
+      operationId: get_watch_status_v1_watch__url__get
+      parameters:
+      - name: url
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Url
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Watch
+      summary: Unwatch Page
+      description: Stop watching a page.
+      operationId: unwatch_page_v1_watch__url__delete
+      parameters:
+      - name: url
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Url
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/watch/{url}/check:
+    post:
+      tags:
+      - Watch
+      summary: Check Watch
+      description: 'Manually trigger a check for a watched URL.
+
+        Returns the new snapshot and any detected changes.'
+      operationId: check_watch_v1_watch__url__check_post
+      parameters:
+      - name: url
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Url
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/watches:
+    get:
+      tags:
+      - Watch
+      summary: List Watches
+      description: List all watched URLs.
+      operationId: list_watches_v1_watches_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/schedule:
+    post:
+      tags:
+      - Schedule
+      summary: Create Schedule
+      description: Create a new crawl/distill schedule.
+      operationId: create_schedule_v1_schedule_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - Schedule
+      summary: List Schedules
+      description: List all schedules.
+      operationId: list_schedules_v1_schedule_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScheduleResponse'
+                title: Response List Schedules V1 Schedule Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/schedule/{schedule_id}:
+    get:
+      tags:
+      - Schedule
+      summary: Get Schedule
+      description: Get a specific schedule.
+      operationId: get_schedule_v1_schedule__schedule_id__get
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Schedule Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Schedule
+      summary: Delete Schedule
+      description: Delete a schedule.
+      operationId: delete_schedule_v1_schedule__schedule_id__delete
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Schedule Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/schedule/{schedule_id}/pause:
+    post:
+      tags:
+      - Schedule
+      summary: Pause Schedule
+      description: Pause a schedule.
+      operationId: pause_schedule_v1_schedule__schedule_id__pause_post
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Schedule Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/schedule/{schedule_id}/resume:
+    post:
+      tags:
+      - Schedule
+      summary: Resume Schedule
+      description: Resume a schedule.
+      operationId: resume_schedule_v1_schedule__schedule_id__resume_post
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Schedule Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/templates:
+    get:
+      tags:
+      - Templates
+      summary: List Templates Api
+      description: List all available extraction template with schemas.
+      operationId: list_templates_api_v1_templates_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/templates/{template_name}:
+    get:
+      tags:
+      - Templates
+      summary: Get Template Api
+      description: Get a single template's full details.
+      operationId: get_template_api_v1_templates__template_name__get
+      parameters:
+      - name: template_name
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Template Name
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/memory/query:
+    get:
+      tags:
+      - Memory
+      summary: Memory Query
+      description: Semantic search over accumulated research memory.
+      operationId: memory_query_v1_memory_query_get
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Query text
+          title: Q
+        description: Query text
+      - name: n
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 50
+          minimum: 1
+          default: 5
+          title: N
+      - name: min_relevance
+        in: query
+        required: false
+        schema:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          default: 0.0
+          title: Min Relevance
+      - name: type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Filter by type: finding, citation, snippet, report_summary'
+          title: Type
+        description: 'Filter by type: finding, citation, snippet, report_summary'
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/memory/reports:
+    get:
+      tags:
+      - Memory
+      summary: Memory Reports
+      description: List stored research reports.
+      operationId: memory_reports_v1_memory_reports_get
+      parameters:
+      - name: n
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 10
+          title: N
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/memory/related:
+    get:
+      tags:
+      - Memory
+      summary: Memory Related
+      description: Find topics related to the given topic in research memory.
+      operationId: memory_related_v1_memory_related_get
+      parameters:
+      - name: topic
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Topic to find related concepts for
+          title: Topic
+        description: Topic to find related concepts for
+      - name: n
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 20
+          minimum: 1
+          default: 5
+          title: N
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/replay:
+    get:
+      tags:
+      - Replay
+      summary: List Replay
+      description: List scrape replay log entries (audit trail).
+      operationId: list_replay_v1_replay_get
+      parameters:
+      - name: url
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: method
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Method
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/replay/stats:
+    get:
+      tags:
+      - Replay
+      summary: Replay Stats
+      description: Aggregate stats for the scrape replay log.
+      operationId: replay_stats_v1_replay_stats_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/replay/{log_id}:
+    get:
+      tags:
+      - Replay
+      summary: Get Replay Entry
+      description: Get a single replay log entry by ID.
+      operationId: get_replay_entry_v1_replay__log_id__get
+      parameters:
+      - name: log_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Log Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/replay/cleanup:
+    delete:
+      tags:
+      - Replay
+      summary: Cleanup Replay
+      description: Remove replay log entries older than max_age_hours (default 7 days).
+      operationId: cleanup_replay_v1_replay_cleanup_delete
+      parameters:
+      - name: max_age_hours
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 87600
+          minimum: 1
+          default: 168
+          title: Max Age Hours
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/scrape:
+    post:
+      tags:
+      - Scrape
+      summary: Scrape Alias
+      description: Firecrawl-compatible alias for /v1/probe.
+      operationId: scrape_alias_v1_scrape_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScrapeRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScrapeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/crawl:
+    post:
+      tags:
+      - Crawl
+      summary: Crawl Alias
+      description: Firecrawl-compatible alias for /v1/sweep.
+      operationId: crawl_alias_v1_crawl_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrawlRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/crawl/{job_id}:
+    get:
+      tags:
+      - Crawl
+      summary: Crawl Status Alias
+      description: Firecrawl-compatible alias for /v1/sweep/{job_id}.
+      operationId: crawl_status_alias_v1_crawl__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Crawl
+      summary: Crawl Cancel Alias
+      description: Firecrawl-compatible alias for DELETE /v1/sweep/{job_id}.
+      operationId: crawl_cancel_alias_v1_crawl__job_id__delete
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/crawl/{job_id}/cancel:
+    post:
+      tags:
+      - Crawl
+      summary: Crawl Cancel Post Alias
+      description: "Firecrawl-compatible alias \u2014 POST to cancel a crawl."
+      operationId: crawl_cancel_post_alias_v1_crawl__job_id__cancel_post
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/map:
+    post:
+      tags:
+      - Map
+      summary: Map Alias
+      description: Firecrawl-compatible alias for /v1/chart.
+      operationId: map_alias_v1_map_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MapRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/extract:
+    post:
+      tags:
+      - Extract
+      summary: Extract Alias
+      description: Firecrawl-compatible alias for /v1/distill.
+      operationId: extract_alias_v1_extract_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DistillRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/extract/{job_id}:
+    get:
+      tags:
+      - Extract
+      summary: Extract Status Alias
+      description: Firecrawl-compatible alias for /v1/distill/{job_id}.
+      operationId: extract_status_alias_v1_extract__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/search:
+    post:
+      tags:
+      - Search
+      summary: Search Alias
+      description: Firecrawl-compatible alias for /v1/seek.
+      operationId: search_alias_v1_search_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/batch/scrape:
+    post:
+      tags:
+      - Batch
+      summary: Batch Scrape Alias
+      description: Start an asynchronous Firecrawl-style batch scrape job.
+      operationId: batch_scrape_alias_v1_batch_scrape_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FlockRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/batch/scrape/{job_id}:
+    get:
+      tags:
+      - Batch
+      summary: Batch Scrape Status Alias
+      description: "Firecrawl-compatible alias for batch scrape status \u2014 maps\
+        \ to job store."
+      operationId: batch_scrape_status_alias_v1_batch_scrape__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Batch
+      summary: Cancel Batch Scrape Alias
+      description: Cancel an in-flight batch scrape.
+      operationId: cancel_batch_scrape_alias_v1_batch_scrape__job_id__delete
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/browser/sessions:
+    post:
+      tags:
+      - Browser Sessions
+      summary: Create Session
+      operationId: create_session_v1_browser_sessions_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserSessionCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - Browser Sessions
+      summary: List Sessions
+      operationId: list_sessions_v1_browser_sessions_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/browser/sessions/{session_id}:
+    get:
+      tags:
+      - Browser Sessions
+      summary: Get Session
+      operationId: get_session_v1_browser_sessions__session_id__get
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Browser Sessions
+      summary: Close Session
+      operationId: close_session_v1_browser_sessions__session_id__delete
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/browser/sessions/{session_id}/commands:
+    post:
+      tags:
+      - Browser Sessions
+      summary: Run Command
+      operationId: run_command_v1_browser_sessions__session_id__commands_post
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserSessionCommandRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
         '422':
           description: Validation Error
           content:
@@ -445,6 +1965,157 @@ components:
       - hover
       - wait_for_selector
       title: ActionType
+    BrowserCommand:
+      type: string
+      enum:
+      - navigate
+      - click
+      - type
+      - scroll
+      - hover
+      - wait_for
+      - screenshot
+      - get_content
+      - evaluate
+      - get_cookies
+      - set_cookies
+      - go_back
+      - go_forward
+      title: BrowserCommand
+    BrowserSessionCommandRequest:
+      properties:
+        command:
+          $ref: '#/components/schemas/BrowserCommand'
+        url:
+          anyOf:
+          - type: string
+            maxLength: 8192
+          - type: 'null'
+          title: Url
+        selector:
+          anyOf:
+          - type: string
+            maxLength: 4096
+          - type: 'null'
+          title: Selector
+        text:
+          anyOf:
+          - type: string
+            maxLength: 200000
+          - type: 'null'
+          title: Text
+        script:
+          anyOf:
+          - type: string
+            maxLength: 200000
+          - type: 'null'
+          title: Script
+        key:
+          anyOf:
+          - type: string
+            maxLength: 128
+          - type: 'null'
+          title: Key
+        direction:
+          type: string
+          pattern: ^(up|down|left|right)$
+          title: Direction
+          default: down
+        amount:
+          type: integer
+          maximum: 100000.0
+          minimum: 0.0
+          title: Amount
+          default: 300
+        timeout_s:
+          type: integer
+          maximum: 300.0
+          minimum: 1.0
+          title: Timeout S
+          default: 30
+        human:
+          type: boolean
+          title: Human
+          default: true
+        cookies:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+            maxItems: 200
+          - type: 'null'
+          title: Cookies
+      type: object
+      required:
+      - command
+      title: BrowserSessionCommandRequest
+    BrowserSessionCreateRequest:
+      properties:
+        locale:
+          type: string
+          maxLength: 32
+          minLength: 2
+          title: Locale
+          default: en-US
+        human_level:
+          type: integer
+          maximum: 3.0
+          minimum: 0.0
+          title: Human Level
+          default: 1
+        max_idle_s:
+          type: integer
+          maximum: 3600.0
+          minimum: 30.0
+          title: Max Idle S
+          default: 900
+        allowed_domains:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Allowed Domains
+        allow_internal_network:
+          type: boolean
+          title: Allow Internal Network
+          default: false
+        proxy:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Proxy
+      type: object
+      title: BrowserSessionCreateRequest
+    CrawlGraph:
+      properties:
+        nodes:
+          items:
+            $ref: '#/components/schemas/PageNode'
+          type: array
+          title: Nodes
+        edges:
+          items:
+            $ref: '#/components/schemas/PageEdge'
+          type: array
+          title: Edges
+        start_url:
+          type: string
+          title: Start Url
+        total_discovered:
+          type: integer
+          title: Total Discovered
+          default: 0
+        total_crawled:
+          type: integer
+          title: Total Crawled
+          default: 0
+      type: object
+      required:
+      - start_url
+      title: CrawlGraph
+      description: Directed graph of discovered pages and their interconnections.
     CrawlRequest:
       properties:
         url:
@@ -495,12 +2166,26 @@ components:
           type: boolean
           title: Stream
           default: false
+        format:
+          type: string
+          title: Format
+          description: 'Response format: json (default), jsonl (NDJSON stream), sse
+            (Server-Sent Events)'
+          default: json
         webhook_url:
           anyOf:
           - type: string
           - type: 'null'
           title: Webhook Url
           description: URL to POST job completion/failure notifications
+        maxConcurrency:
+          anyOf:
+          - type: integer
+            maximum: 100.0
+            minimum: 1.0
+          - type: 'null'
+          title: Maxconcurrency
+          description: Per-job override of crawl concurrency (1-100).
       type: object
       required:
       - url
@@ -540,6 +2225,26 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+          description: Machine-readable error code
+        warnings:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Warnings
+          description: Non-fatal warnings (e.g. some URLs failed when partial=True)
+        partial:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Partial
+          description: True when some URLs failed but partial results are returned
+          default: false
       type: object
       required:
       - success
@@ -564,6 +2269,15 @@ components:
           - type: string
           - type: 'null'
           title: System Prompt
+        examples:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+          - type: 'null'
+          title: Examples
+          description: Example extraction results to guide the LLM (max 3)
       type: object
       title: DistillOptions
       description: LLM extraction options.
@@ -619,6 +2333,13 @@ components:
           - type: 'null'
           title: Webhook Url
           description: URL to POST job completion/failure notifications
+        template:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Template
+          description: 'Use a built-in template: product, article, job_posting, real_estate,
+            person, event, review, faq, recipe, research_paper'
       type: object
       title: DistillRequest
       description: "POST /v1/distill request body \u2014 structured data extraction\
@@ -641,12 +2362,61 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+        warnings:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Warnings
       type: object
       required:
       - success
       - status
       title: DistillStatusResponse
       description: GET /v1/distill/{id} response.
+    ErrorCode:
+      type: string
+      enum:
+      - success
+      - bad_request
+      - invalid_url
+      - missing_required
+      - unsupported_format
+      - unsupported_option
+      - validation_error
+      - unauthorized
+      - forbidden
+      - not_found
+      - rate_limited
+      - content_too_large
+      - timeout
+      - connection_error
+      - upstream_error
+      - circuit_open
+      - service_unavailable
+      - internal_error
+      - navigation_failed
+      - captcha_detected
+      - blocked_by_robots
+      - ssl_error
+      - invalid_response
+      - empty_content
+      - partial_failure
+      - all_urls_failed
+      - job_not_found
+      - job_expired
+      title: ErrorCode
+      description: 'Machine-readable error codes for all Huginn endpoints.
+
+
+        Unlike error messages, these codes are stable across versions and
+
+        can be used for programmatic error handling.'
     FlockRequest:
       properties:
         urls:
@@ -689,6 +2459,12 @@ components:
           - type: 'null'
           title: Webhook Url
           description: URL to POST job completion/failure notifications
+        ignoreInvalidURLs:
+          type: boolean
+          title: Ignoreinvalidurls
+          description: Skip invalid URLs (bad scheme, missing host) with a warning
+            instead of failing.
+          default: false
       type: object
       required:
       - urls
@@ -709,6 +2485,22 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+        partial:
+          type: boolean
+          title: Partial
+          description: True when some URLs failed but partial results are returned
+          default: false
+        warnings:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Warnings
       type: object
       required:
       - success
@@ -731,12 +2523,72 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+          description: Machine-readable error code
+        cached:
+          type: boolean
+          title: Cached
+          description: Whether result was served from cache
+          default: false
       type: object
       required:
       - url
       - success
       title: FlockResultItem
       description: Single result in a batch scrape response.
+    GraphRequest:
+      properties:
+        url:
+          type: string
+          title: Url
+        include_subdomains:
+          type: boolean
+          title: Include Subdomains
+          default: false
+        limit:
+          type: integer
+          maximum: 5000.0
+          minimum: 1.0
+          title: Limit
+          default: 500
+        max_depth:
+          type: integer
+          maximum: 10.0
+          minimum: 1.0
+          title: Max Depth
+          description: BFS depth limit
+          default: 3
+      type: object
+      required:
+      - url
+      title: GraphRequest
+      description: "POST /v1/graph request body \u2014 BFS site graph mapping."
+    GraphResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        data:
+          anyOf:
+          - $ref: '#/components/schemas/CrawlGraph'
+          - type: 'null'
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+      type: object
+      required:
+      - success
+      title: GraphResponse
+      description: POST /v1/graph response.
     HTTPValidationError:
       properties:
         detail:
@@ -790,6 +2642,13 @@ components:
           type: integer
           title: Limit
           default: 5000
+        sitemap:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sitemap
+          description: 'Sitemap mode: "include" (default), "skip", or "only".'
+          default: include
       type: object
       required:
       - url
@@ -810,6 +2669,10 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
       type: object
       required:
       - success
@@ -826,12 +2689,346 @@ components:
       - metadata
       - pdf
       title: OutputFormat
+    PageEdge:
+      properties:
+        source:
+          type: string
+          title: Source
+        target:
+          type: string
+          title: Target
+      type: object
+      required:
+      - source
+      - target
+      title: PageEdge
+      description: A directed link between two pages.
+    PageNode:
+      properties:
+        url:
+          type: string
+          title: Url
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        status_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Status Code
+        content_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content Type
+        depth:
+          type: integer
+          title: Depth
+          default: 0
+      type: object
+      required:
+      - url
+      title: PageNode
+      description: A single page in a crawl graph.
     ProxyMode:
       type: string
       enum:
       - basic
       - stealth
       title: ProxyMode
+    ResearchCitation:
+      properties:
+        url:
+          type: string
+          title: Url
+        title:
+          type: string
+          title: Title
+        domain:
+          type: string
+          title: Domain
+        quote:
+          type: string
+          title: Quote
+        relevance_score:
+          type: number
+          title: Relevance Score
+        timestamp:
+          type: string
+          title: Timestamp
+        accessed_at:
+          type: string
+          format: date-time
+          title: Accessed At
+      type: object
+      required:
+      - url
+      - title
+      - domain
+      - quote
+      - relevance_score
+      - timestamp
+      - accessed_at
+      title: ResearchCitation
+      description: A source citation in research response.
+    ResearchFinding:
+      properties:
+        topic:
+          type: string
+          title: Topic
+        claim:
+          type: string
+          title: Claim
+        supporting_citations:
+          items:
+            $ref: '#/components/schemas/ResearchCitation'
+          type: array
+          title: Supporting Citations
+        confidence:
+          type: number
+          title: Confidence
+        contradicts:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Contradicts
+        needs_verification:
+          type: boolean
+          title: Needs Verification
+          default: false
+        verified:
+          type: boolean
+          title: Verified
+          default: false
+      type: object
+      required:
+      - topic
+      - claim
+      - supporting_citations
+      - confidence
+      title: ResearchFinding
+      description: A discrete finding from research.
+    ResearchRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: The research question or topic
+        depth:
+          type: integer
+          maximum: 5.0
+          minimum: 1.0
+          title: Depth
+          description: Research depth (iterations)
+          default: 3
+        max_sources:
+          type: integer
+          maximum: 100.0
+          minimum: 1.0
+          title: Max Sources
+          description: Maximum sources to consult
+          default: 20
+        target_length:
+          type: string
+          title: Target Length
+          description: 'Target report length: brief, standard, or comprehensive'
+          default: standard
+        background_questions:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Background Questions
+          description: Specific sub-questions to investigate
+        urls:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Urls
+          description: Pre-specified URLs to scrape before doing any web search or
+            query decomposition
+      type: object
+      required:
+      - query
+      title: ResearchRequest
+      description: POST /v1/research request.
+    ResearchResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        query:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Query
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+        report:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Report
+        findings:
+          items:
+            $ref: '#/components/schemas/ResearchFinding'
+          type: array
+          title: Findings
+        citations:
+          items:
+            $ref: '#/components/schemas/ResearchCitation'
+          type: array
+          title: Citations
+        confidence:
+          type: number
+          title: Confidence
+          default: 0.0
+        sources_consulted:
+          type: integer
+          title: Sources Consulted
+          default: 0
+        research_duration_seconds:
+          type: number
+          title: Research Duration Seconds
+          default: 0.0
+        depth_achieved:
+          type: integer
+          title: Depth Achieved
+          default: 0
+        warnings:
+          items:
+            type: string
+          type: array
+          title: Warnings
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+      type: object
+      required:
+      - success
+      title: ResearchResponse
+      description: POST /v1/research response.
+    ScheduleRequest:
+      properties:
+        name:
+          type: string
+          title: Name
+          description: Human-readable name for this schedule
+        job_type:
+          type: string
+          title: Job Type
+          description: 'Type of job: sweep, distill, flock, or probe'
+        cron:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cron
+          description: Cron expression (e.g. '0 9 * * *' for daily at 9am)
+        interval_seconds:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Interval Seconds
+          description: Run every N seconds (alternative to cron)
+        request:
+          additionalProperties: true
+          type: object
+          title: Request
+          description: The job request body to execute
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+          description: URL to POST when scheduled job fires
+        enabled:
+          type: boolean
+          title: Enabled
+          default: true
+      type: object
+      required:
+      - name
+      - job_type
+      - request
+      title: ScheduleRequest
+      description: POST /v1/schedule request body.
+    ScheduleResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        job_type:
+          type: string
+          title: Job Type
+        cron:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cron
+        interval_seconds:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Interval Seconds
+        request_json:
+          type: string
+          title: Request Json
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+        enabled:
+          type: boolean
+          title: Enabled
+        status:
+          type: string
+          title: Status
+          default: active
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+        last_run:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Run
+        next_run:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Next Run
+      type: object
+      required:
+      - id
+      - name
+      - job_type
+      - request_json
+      - enabled
+      title: ScheduleResponse
+      description: Schedule response model.
     ScrapeData:
       properties:
         markdown:
@@ -873,6 +3070,19 @@ components:
             type: object
           - type: 'null'
           title: Extract
+        pdf_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Pdf Text
+        change_tracking:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Change Tracking
+          description: 'Change tracking result: {previous_hash, current_hash, diff,
+            changed}.'
       type: object
       title: ScrapeData
       description: Scrape result data.
@@ -939,8 +3149,40 @@ components:
         render_mode:
           type: string
           title: Render Mode
-          description: 'Rendering mode: auto, full (browser), light (httpx)'
+          description: 'Rendering mode: auto, full (configured browser), starsearch
+            (forced/fail-closed), light (httpx)'
           default: auto
+        cookies:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Cookies
+        location:
+          anyOf:
+          - $ref: '#/components/schemas/Location'
+          - type: 'null'
+        skipTlsVerification:
+          type: boolean
+          title: Skiptlsverification
+          default: true
+        mobile:
+          type: boolean
+          title: Mobile
+          default: false
+        blockAds:
+          type: boolean
+          title: Blockads
+          default: false
+        removeBase64Images:
+          type: boolean
+          title: Removebase64Images
+          default: false
+        changeTracking:
+          type: boolean
+          title: Changetracking
+          default: false
       type: object
       title: ScrapeOptions
       description: Options passed to scrape during crawl.
@@ -961,6 +3203,14 @@ components:
             type: object
           - type: 'null'
           title: Headers
+        cookies:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Cookies
+          description: Cookies to set on requests
         wait_for:
           anyOf:
           - type: integer
@@ -1027,8 +3277,40 @@ components:
         render_mode:
           type: string
           title: Render Mode
-          description: 'Rendering mode: auto, full (browser), light (httpx)'
+          description: 'Rendering mode: auto, full (configured browser), starsearch
+            (forced/fail-closed), light (httpx)'
           default: auto
+        skipTlsVerification:
+          type: boolean
+          title: Skiptlsverification
+          description: Skip TLS certificate verification. Default True (matches Firecrawl).
+          default: true
+        summary:
+          type: boolean
+          title: Summary
+          description: Generate a 1-2 sentence summary of the page using LLM.
+          default: false
+        mobile:
+          type: boolean
+          title: Mobile
+          description: Emulate a mobile device (iPhone 13) for the scrape.
+          default: false
+        blockAds:
+          type: boolean
+          title: Blockads
+          description: Block requests to known ad network domains.
+          default: false
+        removeBase64Images:
+          type: boolean
+          title: Removebase64Images
+          description: Strip data:image/...;base64,... URIs from extracted markdown.
+          default: false
+        changeTracking:
+          type: boolean
+          title: Changetracking
+          description: "Track content changes \u2014 response includes previous_hash,\
+            \ current_hash, diff."
+          default: false
       type: object
       required:
       - url
@@ -1048,6 +3330,29 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+          description: Machine-readable error code
+        cached:
+          type: boolean
+          title: Cached
+          description: Whether result was served from cache
+          default: false
+        warnings:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Warnings
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+          description: Auto-generated 1-2 sentence summary
       type: object
       required:
       - success
@@ -1082,6 +3387,13 @@ components:
         query:
           type: string
           title: Query
+        limit:
+          anyOf:
+          - type: integer
+            maximum: 100.0
+            minimum: 1.0
+          - type: 'null'
+          title: Limit
         search_options:
           anyOf:
           - $ref: '#/components/schemas/SearchOptions'
@@ -1093,6 +3405,10 @@ components:
         fallback_chain:
           type: boolean
           title: Fallback Chain
+          default: true
+        scrape_results:
+          type: boolean
+          title: Scrape Results
           default: true
       type: object
       required:
@@ -1166,3 +3482,177 @@ components:
       - msg
       - type
       title: ValidationError
+    WatchRequest:
+      properties:
+        url:
+          type: string
+          title: Url
+          description: URL to watch for changes
+        selectors:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Selectors
+          description: 'CSS selectors to monitor (default: whole page)'
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+          description: Webhook URL to fire when content changes
+        check_interval_seconds:
+          type: integer
+          maximum: 604800.0
+          minimum: 60.0
+          title: Check Interval Seconds
+          description: 'How often to check for changes (default: 1 hour)'
+          default: 3600
+      type: object
+      required:
+      - url
+      title: WatchRequest
+      description: POST /v1/watch request.
+    WatchResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        url:
+          type: string
+          title: Url
+        domain:
+          type: string
+          title: Domain
+        content_hash:
+          type: string
+          title: Content Hash
+        change_count:
+          type: integer
+          title: Change Count
+          default: 0
+        last_check:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Check
+        last_change:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Change
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        error_code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+      type: object
+      required:
+      - success
+      - url
+      - domain
+      - content_hash
+      title: WatchResponse
+      description: POST /v1/watch response.
+    WatchSnapshot:
+      properties:
+        content_hash:
+          type: string
+          title: Content Hash
+        detected_changes:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Detected Changes
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - content_hash
+      - created_at
+      title: WatchSnapshot
+      description: A point-in-time snapshot of a watched page.
+    WatchStatusResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        url:
+          type: string
+          title: Url
+        domain:
+          type: string
+          title: Domain
+        enabled:
+          type: boolean
+          title: Enabled
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+        selectors:
+          items:
+            type: string
+          type: array
+          title: Selectors
+        snapshot_count:
+          type: integer
+          title: Snapshot Count
+        change_count:
+          type: integer
+          title: Change Count
+        last_check:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Check
+        last_change:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Change
+        latest_hash:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Latest Hash
+        history:
+          items:
+            $ref: '#/components/schemas/WatchSnapshot'
+          type: array
+          title: History
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      - url
+      - domain
+      - enabled
+      - selectors
+      - snapshot_count
+      - change_count
+      title: WatchStatusResponse
+      description: GET /v1/watch/{url} response.

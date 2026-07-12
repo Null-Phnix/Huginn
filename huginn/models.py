@@ -157,7 +157,10 @@ class ScrapeOptions(BaseModel):
     actions: Optional[List[Action]] = None
     max_retries: int = Field(2, ge=0, le=5)
     scroll: bool = Field(False, description="Auto-scroll page to load dynamic content")
-    render_mode: str = Field("auto", description="Rendering mode: auto, full (browser), light (httpx)")
+    render_mode: str = Field(
+        "auto",
+        description="Rendering mode: auto, full (configured browser), starsearch (forced/fail-closed), light (httpx)",
+    )
     cookies: Optional[Dict[str, str]] = None
     location: Optional[Location] = None
     skip_tls_verification: bool = Field(True, alias="skipTlsVerification")
@@ -191,7 +194,10 @@ class ScrapeRequest(BaseModel):
     stealth_mode: bool = Field(True)
     max_retries: int = Field(2, ge=0, le=5, description="Max retry attempts on transient errors")
     scroll: bool = Field(False, description="Auto-scroll page to load dynamic content before extraction")
-    render_mode: str = Field("auto", description="Rendering mode: auto, full (browser), light (httpx)")
+    render_mode: str = Field(
+        "auto",
+        description="Rendering mode: auto, full (configured browser), starsearch (forced/fail-closed), light (httpx)",
+    )
     # Firecrawl parity: skip TLS certificate verification. Default True
     # to match Huginn's historical hardcoded `ignore_https_errors=True`
     # (self-signed certs and broken CA chains have always worked in

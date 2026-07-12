@@ -93,7 +93,7 @@ curl --fail http://127.0.0.1:7432/health/ready
 curl -X POST http://127.0.0.1:7432/v1/scrape \
   -H "Authorization: Bearer $(<~/.config/huginn/api-key)" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://example.com", "formats": ["markdown"]}'
+  -d '{"url": "https://example.com", "formats": ["markdown"], "render_mode": "starsearch"}'
 
 # Start a durable crawl job
 curl -X POST http://127.0.0.1:7432/v1/crawl \
@@ -107,6 +107,10 @@ curl -X POST http://127.0.0.1:7432/v1/search \
   -H "Content-Type: application/json" \
   -d '{"query": "Prometheus monitoring", "limit": 5}'
 ```
+
+`render_mode` accepts `auto`, `full`, `starsearch`, and `light`. Use
+`starsearch` when the request must use the shared daemon and fail closed; use
+`light` only for an explicit direct HTTP scrape.
 
 ---
 

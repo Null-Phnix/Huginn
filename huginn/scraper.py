@@ -30,6 +30,10 @@ class UnsupportedStarSearchOptionError(ValueError):
     """A request asked production StarSearch mode for an unimplemented control."""
 
 
+class UnsupportedRenderModeError(ValueError):
+    """A request named a render mode that Huginn does not support."""
+
+
 # ─── Mobile device emulation (Firecrawl parity) ────────────────────────────────
 # iPhone 13 device descriptor for mobile=True. Matches the official
 # playwright.devices["iPhone 13"] descriptor so behavior is identical whether
@@ -135,8 +139,9 @@ def _is_valid_http_url(url: str) -> bool:
 class RenderMode(str, Enum):
     """Rendering mode for page content extraction."""
     AUTO = "auto"    # Detect automatically
-    FULL = "full"    # Always use full browser (Playwright)
+    FULL = "full"    # Always use the configured full-browser path
     LIGHT = "light"  # Always use lightweight (httpx + markdownify)
+    STARSEARCH = "starsearch"  # Force StarSearch and fail closed
 
 
 # ── JS framework detection patterns ──────────────────────────────────────────
@@ -472,7 +477,13 @@ class Scraper:
     ) -> ScrapeData:
         """Internal implementation — wrapped by circuit breaker."""
 
-        mode = RenderMode(render_mode)
+        try:
+            mode = RenderMode(render_mode)
+        except ValueError as exc:
+            allowed = ", ".join(item.value for item in RenderMode)
+            raise UnsupportedRenderModeError(
+                f"Unsupported render_mode {render_mode!r}; expected one of: {allowed}"
+            ) from exc
 
         # StarSearch is the primary renderer whenever it is configured.  The
         # old flow performed a plain httpx fetch first, so most "StarSearch"
@@ -496,7 +507,10 @@ class Scraper:
         allow_playwright_fallback = bool(
             getattr(self.browser, "allow_playwright_fallback", True)
         )
-        starsearch_enforced = starsearch_backend and not allow_playwright_fallback
+        explicit_starsearch = mode == RenderMode.STARSEARCH
+        starsearch_enforced = explicit_starsearch or (
+            starsearch_backend and not allow_playwright_fallback
+        )
         if mode != RenderMode.LIGHT and starsearch_unsupported and starsearch_enforced:
             raise UnsupportedStarSearchOptionError(
                 "StarSearch does not yet support: " + ", ".join(unsupported_options)
