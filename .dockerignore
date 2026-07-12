@@ -1,7 +1,7 @@
 **
 !Dockerfile
-!requirements.txt
 !pyproject.toml
+!uv.lock
 !README.md
 !LICENSE
 !huginn/

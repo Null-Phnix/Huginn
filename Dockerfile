@@ -13,9 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 libatspi2.0-0 fonts-liberation \
     && rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
-# Copy requirements and install Python deps
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Resolve exactly the committed Python graph. The lock is generated with
+# `uv lock`; production builds refuse to mutate it.
+RUN pip install --no-cache-dir uv==0.10.4
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1
+COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN uv sync --locked --no-dev --no-install-project
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Install Playwright and Chromium browser
 RUN python -m playwright install chromium --with-deps
@@ -23,8 +29,6 @@ RUN python -m playwright install chromium --with-deps
 # Copy application code
 COPY huginn/ /app/huginn/
 COPY prompts/ /app/prompts/
-COPY pyproject.toml .
-COPY README.md LICENSE ./
 
 # Create data directory
 RUN mkdir -p /data && chmod 755 /data
@@ -36,6 +40,6 @@ ENV HUGINN_PORT=7432
 ENV HUGINN_USER_AGENT="Huginn/Bot (+https://huginn.dev/bot)"
 
 # Install an immutable package into the image (creates the `huginn` CLI).
-RUN pip install --no-cache-dir --no-deps .
+RUN uv sync --locked --no-dev --no-editable
 
-CMD ["huginn", "serve", "--host", "0.0.0.0", "--port", "7432"]
+CMD ["huginn", "serve", "--host", "127.0.0.1", "--port", "7432"]

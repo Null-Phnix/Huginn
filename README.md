@@ -247,14 +247,15 @@ huginn config                   # Show current config
 ```bash
 git clone https://github.com/Null-Phnix/Huginn.git
 cd Huginn
-pip install -e ".[all]"
+uv sync --locked --extra dev
 
 # Development-only Playwright compatibility backend
-playwright install chromium
+uv run playwright install chromium
 ```
 
 The production suite uses the repository Docker Compose service plus the
-authenticated StarSearch daemon. Follow the complete install order in
+authenticated StarSearch daemon. Its image build consumes `uv.lock` with
+`--locked`, so dependency drift fails the build. Follow the complete install order in
 `Blackreach/docs/WEB_TOOL_SUITE.md`; installing this package alone does not
 create a proxy network or a browser pool.
 
