@@ -1,0 +1,13 @@
+# False positives: secrets in test fixtures.
+fc0062da732199c8c850f2fc8f6c83155342d413:tests/test_captcha_detect.py:generic-api-key:107
+fc0062da732199c8c850f2fc8f6c83155342d413:tests/test_captcha_detect.py:generic-api-key:109
+fc0062da732199c8c850f2fc8f6c83155342d413:tests/test_captcha_detect.py:generic-api-key:349
+fc0062da732199c8c850f2fc8f6c83155342d413:tests/test_captcha_detect.py:generic-api-key:36
+fc0062da732199c8c850f2fc8f6c83155342d413:tests/test_captcha_detect.py:generic-api-key:361
+fc0062da732199c8c850f2fc8f6c83155342d413:tests/test_captcha_detect.py:generic-api-key:92
+ff9073c31d09c60b1d2fb95c468bea2c7245298a:tests/test_captcha_detect.py:generic-api-key:107
+ff9073c31d09c60b1d2fb95c468bea2c7245298a:tests/test_captcha_detect.py:generic-api-key:109
+ff9073c31d09c60b1d2fb95c468bea2c7245298a:tests/test_captcha_detect.py:generic-api-key:349
+ff9073c31d09c60b1d2fb95c468bea2c7245298a:tests/test_captcha_detect.py:generic-api-key:36
+ff9073c31d09c60b1d2fb95c468bea2c7245298a:tests/test_captcha_detect.py:generic-api-key:361
+ff9073c31d09c60b1d2fb95c468bea2c7245298a:tests/test_captcha_detect.py:generic-api-key:92
