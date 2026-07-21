@@ -13,7 +13,7 @@ from huginn.searcher import (
 
 
 class TestSearchEngineConfig:
-    """Both production engines are explicit StarSearch-rendered destinations."""
+    """All three production engines are explicit StarSearch-rendered destinations."""
 
     def test_all_engines_have_url_and_parser(self):
         for name, config in starsearch_scrape.STARSEARCH_SEARCH_ENGINES.items():
@@ -21,7 +21,7 @@ class TestSearchEngineConfig:
             assert callable(config["parser"]), f"{name} missing parser"
 
     def test_engine_names(self):
-        assert set(starsearch_scrape.STARSEARCH_SEARCH_ENGINES) == {"bing", "brave"}
+        assert set(starsearch_scrape.STARSEARCH_SEARCH_ENGINES) == {"bing", "brave", "duckduckgo"}
 
     def test_engine_urls_contain_query_placeholder(self):
         for name, config in starsearch_scrape.STARSEARCH_SEARCH_ENGINES.items():
@@ -35,6 +35,11 @@ class TestSearchEngineConfig:
     def test_brave_url_format(self):
         url = starsearch_scrape.STARSEARCH_SEARCH_ENGINES["brave"]["url"].format(query="test+search")
         assert "search.brave.com" in url
+        assert "test+search" in url
+
+    def test_duckduckgo_url_format(self):
+        url = starsearch_scrape.STARSEARCH_SEARCH_ENGINES["duckduckgo"]["url"].format(query="test+search")
+        assert "html.duckduckgo.com" in url
         assert "test+search" in url
 
 
@@ -86,12 +91,120 @@ class TestRenderedSerpParsing:
             }
         ]
 
+    def test_ddg_parser_unwraps_redirect_and_extracts_results(self):
+        # Trimmed, grounded fixture captured from a live render of
+        # https://html.duckduckgo.com/html/?q=quantum+entanglement
+        html = """
+        <div id="links" class="results">
+          <div class="result results_links results_links_deep web-result ">
+            <div class="links_main links_deep result__body">
+              <h2 class="result__title">
+                <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FQuantum_entanglement&amp;rut=75af6e0df54f5015d600e2575cfe153e1e47c983777d2a6fa0041bb47906a833">Quantum entanglement - Wikipedia</a>
+              </h2>
+              <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FQuantum_entanglement&amp;rut=75af6e0df54f5015d600e2575cfe153e1e47c983777d2a6fa0041bb47906a833">Quantum entanglement is the phenomenon in which the quantum state of each particle in a group cannot be described independently of the state of the others.</a>
+            </div>
+          </div>
+          <div class="result results_links results_links_deep web-result ">
+            <div class="links_main links_deep result__body">
+              <h2 class="result__title">
+                <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fscience.nasa.gov%2Fwhat%2Dis%2Dthe%2Dspooky%2Dscience%2Dof%2Dquantum%2Dentanglement%2F&amp;rut=5fbdc5a0b051cf5cd8062b3fea79ad85d1a4172db450af845fce9b8207f6366b">What is Quantum Entanglement? NASA Science</a>
+              </h2>
+              <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fscience.nasa.gov%2Fwhat%2Dis%2Dthe%2Dspooky%2Dscience%2Dof%2Dquantum%2Dentanglement%2F&amp;rut=5fbdc5a0b051cf5cd8062b3fea79ad85d1a4172db450af845fce9b8207f6366b">Learn how particles of the same origin are always connected, even if they are far apart, through the phenomenon of quantum entanglement.</a>
+            </div>
+          </div>
+        </div>
+        """
+        assert starsearch_scrape._parse_ddg_serp(html, 5) == [
+            {
+                "title": "Quantum entanglement - Wikipedia",
+                "link": "https://en.wikipedia.org/wiki/Quantum_entanglement",
+                "snippet": (
+                    "Quantum entanglement is the phenomenon in which the quantum "
+                    "state of each particle in a group cannot be described "
+                    "independently of the state of the others."
+                ),
+            },
+            {
+                "title": "What is Quantum Entanglement? NASA Science",
+                "link": "https://science.nasa.gov/what-is-the-spooky-science-of-quantum-entanglement/",
+                "snippet": (
+                    "Learn how particles of the same origin are always connected, "
+                    "even if they are far apart, through the phenomenon of quantum "
+                    "entanglement."
+                ),
+            },
+        ]
+
+    def test_ddg_parser_skips_undecodable_links_and_dedupes(self):
+        html = """
+        <div id="links" class="results">
+          <div class="result results_links results_links_deep web-result ">
+            <div class="links_main links_deep result__body">
+              <h2 class="result__title">
+                <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs&amp;rut=abc">Example docs</a>
+              </h2>
+              <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs&amp;rut=abc">Useful docs.</a>
+            </div>
+          </div>
+          <div class="result results_links results_links_deep web-result ">
+            <div class="links_main links_deep result__body">
+              <h2 class="result__title">
+                <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs&amp;rut=xyz">Duplicate docs</a>
+              </h2>
+            </div>
+          </div>
+          <div class="result results_links results_links_deep web-result ">
+            <div class="links_main links_deep result__body">
+              <h2 class="result__title">
+                <a rel="nofollow" class="result__a" href="javascript:alert(1)">Unsafe</a>
+              </h2>
+            </div>
+          </div>
+          <div class="result results_links results_links_deep web-result ">
+            <div class="links_main links_deep result__body">
+              <h2 class="result__title">
+                <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?rut=no-target">No uddg param</a>
+              </h2>
+            </div>
+          </div>
+        </div>
+        """
+        assert starsearch_scrape._parse_ddg_serp(html, 5) == [
+            {"title": "Example docs", "link": "https://example.com/docs", "snippet": "Useful docs."}
+        ]
+
+
+class TestDecodeDdgUrl:
+    def test_wrapped_href_decodes_to_real_target(self):
+        href = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs&rut=abc123"
+        assert starsearch_scrape._decode_ddg_url(href) == "https://example.com/docs"
+
+    def test_bare_http_href_passes_through(self):
+        assert starsearch_scrape._decode_ddg_url("https://example.com/docs") == "https://example.com/docs"
+
+    def test_junk_href_returns_empty_string(self):
+        assert starsearch_scrape._decode_ddg_url("javascript:alert(1)") == ""
+        assert starsearch_scrape._decode_ddg_url("//duckduckgo.com/l/?rut=no-target") == ""
+
+    def test_target_percent_octets_and_plus_are_not_double_decoded(self):
+        # DDG double-encodes percent-octets in the target (%20 -> %2520). The
+        # decoder must unquote exactly once, preserving the target's own
+        # encoding, and must not apply form '+' -> space translation.
+        href = (
+            "//duckduckgo.com/l/?uddg="
+            "https%3A%2F%2Fexample.com%2Fpath%2520with%2520space%3Fq%3Da+b&rut=x"
+        )
+        assert (
+            starsearch_scrape._decode_ddg_url(href)
+            == "https://example.com/path%20with%20space?q=a+b"
+        )
+
 
 class TestSearchEngineHealth:
     def test_score_reorders_after_failure(self):
         health = SearchEngineHealthRegistry(failure_threshold=2, cooldown_seconds=30)
         ordered, opened = health.select()
-        assert ordered == ["bing", "brave"]
+        assert ordered == ["bing", "brave", "duckduckgo"]
         assert opened == []
 
         health.record_failure("bing", 2000, "timeout")
@@ -104,7 +217,7 @@ class TestSearchEngineHealth:
         health.record_failure("bing", 100, "timeout")
         health.record_failure("bing", 100, "timeout")
         ordered, opened = health.select()
-        assert ordered == ["brave"]
+        assert ordered == ["brave", "duckduckgo"]
         assert opened == ["bing"]
         assert health.snapshot()["bing"].status == "open"
 
@@ -216,7 +329,7 @@ async def test_search_proxy_failure_never_retries_direct(monkeypatch):
     )
 
     assert await searcher.search("prometheus", scrape_results=False) == []
-    assert [name for name, _ in calls] == ["bing", "brave"]
+    assert [name for name, _ in calls] == ["bing", "brave", "duckduckgo"]
     assert all(proxy == endpoint.as_browser_proxy() for _, proxy in calls)
     assert provider.status()["endpoints"][0]["healthy"] is False
 

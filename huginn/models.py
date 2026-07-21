@@ -478,7 +478,7 @@ class SearchOptions(BaseModel):
     tbs: Optional[str] = None  # time range
     country: Optional[str] = None
     language: Optional[str] = None
-    engine: Literal["auto", "bing", "brave"] = Field(
+    engine: Literal["auto", "bing", "brave", "duckduckgo"] = Field(
         "auto",
         description=(
             "StarSearch-rendered engine. 'auto' selects by live health score; "
@@ -520,7 +520,7 @@ class SearchEngineError(BaseModel):
 class SearchEngineAttempt(BaseModel):
     """One engine decision or execution in the search fallback chain."""
 
-    engine: Literal["bing", "brave"]
+    engine: Literal["bing", "brave", "duckduckgo"]
     status: Literal["success", "empty", "error", "circuit_open"]
     latency_ms: int = Field(0, ge=0)
     result_count: int = Field(0, ge=0)
@@ -543,7 +543,7 @@ class SearchEngineHealth(BaseModel):
 class SearchMetadata(BaseModel):
     """Selection and health evidence for a StarSearch-rendered search."""
 
-    selected_engine: Optional[Literal["bing", "brave"]] = None
+    selected_engine: Optional[Literal["bing", "brave", "duckduckgo"]] = None
     render_mode: Literal["starsearch"] = "starsearch"
     fallback_used: bool = False
     attempts: List[SearchEngineAttempt] = Field(default_factory=list)

@@ -532,11 +532,40 @@ def _decode_bing_url(href: str) -> str:
     return href
 
 
+def _decode_ddg_url(href: str) -> str:
+    """DuckDuckGo wraps results in /l/?uddg=<url-encoded-target> redirects.
+
+    Much simpler than Bing's base64 ``/ck/a`` wrapper: the real destination is
+    a plain (percent-encoded) query param. Returns "" if it can't be resolved
+    to an http(s) URL so callers never emit an unusable/unsafe link.
+    """
+    parsed = urllib.parse.urlparse(href)
+    if "duckduckgo.com" in parsed.netloc and parsed.path == "/l/":
+        # Extract the raw (still percent-encoded) uddg value and unquote it
+        # exactly once. parse_qs must NOT be used here: it already unquotes its
+        # result (so an extra unquote double-decodes and corrupts a target that
+        # contains percent-octets, e.g. ...%2520 -> %20 -> space) and it applies
+        # form '+' -> space translation, which is wrong for a generic URL.
+        uddg_raw = ""
+        for pair in parsed.query.split("&"):
+            if pair.startswith("uddg="):
+                uddg_raw = pair[len("uddg="):]
+                break
+        target = urllib.parse.unquote(uddg_raw)
+        if urllib.parse.urlparse(target).scheme in {"http", "https"}:
+            return target
+        return ""
+    if parsed.scheme in {"http", "https"}:
+        return href
+    return ""
+
+
 def _normalize_result_url(
     href: str,
     *,
     base_url: str,
     decode_bing: bool = False,
+    decode_ddg: bool = False,
 ) -> str:
     """Return a safe absolute HTTP(S) destination from a SERP link.
 
@@ -548,6 +577,10 @@ def _normalize_result_url(
     candidate = urllib.parse.urljoin(base_url, (href or "").strip())
     if decode_bing:
         candidate = _decode_bing_url(candidate)
+    if decode_ddg:
+        candidate = _decode_ddg_url(candidate)
+        if not candidate:
+            return ""
     parsed = urllib.parse.urlparse(candidate)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return ""
@@ -627,6 +660,41 @@ def _parse_brave_serp(html: str, limit: int) -> List[Dict[str, str]]:
     return out
 
 
+def _parse_ddg_serp(html: str, limit: int) -> List[Dict[str, str]]:
+    """Parse DuckDuckGo's html-endpoint SERP into [{title, link, snippet}].
+
+    DuckDuckGo's ``/html/`` endpoint wraps every organic result in a
+    ``/l/?uddg=`` redirect (unlike Bing's base64 ``/ck/a`` wrapper or Brave's
+    direct destination links); ``_normalize_result_url`` unwraps it via
+    ``decode_ddg=True``. Ad/zci blocks don't carry both the ``results_links``
+    and ``web-result`` classes, so the selector naturally skips them.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for result in soup.select(".result.results_links.web-result"):
+        a = result.select_one("a.result__a")
+        if not a or not a.get("href"):
+            continue
+        link = _normalize_result_url(
+            a["href"],
+            base_url="https://html.duckduckgo.com/html/",
+            decode_ddg=True,
+        )
+        if not link or link in seen:
+            continue
+        seen.add(link)
+        snippet_el = result.select_one("a.result__snippet") or result.select_one(".result__snippet")
+        out.append({
+            "title": a.get_text(" ", strip=True),
+            "link": link,
+            "snippet": snippet_el.get_text(" ", strip=True) if snippet_el else "",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 STARSEARCH_SEARCH_ENGINES = {
     "bing": {
         "url": "https://www.bing.com/search?q={query}",
@@ -635,6 +703,10 @@ STARSEARCH_SEARCH_ENGINES = {
     "brave": {
         "url": "https://search.brave.com/search?q={query}&source=web",
         "parser": _parse_brave_serp,
+    },
+    "duckduckgo": {
+        "url": "https://html.duckduckgo.com/html/?q={query}",
+        "parser": _parse_ddg_serp,
     },
 }
 

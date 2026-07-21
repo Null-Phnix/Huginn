@@ -206,8 +206,9 @@ class TestSearchModels:
 
         assert SearchOptions().engine == "auto"
         assert SearchOptions(engine="brave").engine == "brave"
+        assert SearchOptions(engine="duckduckgo").engine == "duckduckgo"
         with pytest.raises(ValueError):
-            SearchOptions(engine="duckduckgo")
+            SearchOptions(engine="mojeek")
 
     def test_search_response(self):
         resp = SearchResponse(

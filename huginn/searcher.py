@@ -1,9 +1,10 @@
 """Huginn Searcher — resilient keyless search through StarSearch.
 
-Production search renders independent Bing and Brave Search pages in the
-shared StarSearch browser runtime. A process-local health registry scores
-latency and success, opens bounded circuits after repeated failures, and makes
-every engine selection/failure visible in the API response.
+Production search renders independent Bing, Brave, and DuckDuckGo search
+pages in the shared StarSearch browser runtime. A process-local health
+registry scores latency and success, opens bounded circuits after repeated
+failures, and makes every engine selection/failure visible in the API
+response.
 """
 
 import asyncio
@@ -27,7 +28,7 @@ from .utils import build_egress_metadata, proxy_failure_likely, scrape_failure
 
 logger = logging.getLogger(__name__)
 
-STARSEARCH_ENGINE_NAMES = ("bing", "brave")
+STARSEARCH_ENGINE_NAMES = ("bing", "brave", "duckduckgo")
 
 
 @dataclass
@@ -57,10 +58,13 @@ class SearchEngineHealthRegistry:
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
         # A small Bing prior preserves the historical primary until measured
-        # health provides a reason to choose Brave first.
+        # health provides a reason to choose Brave (or DuckDuckGo) first.
+        # DuckDuckGo mirrors Brave's prior exactly: it is not privileged over
+        # the two proven engines, only added as a third independent option.
         self._states = {
             "bing": _EngineState(success_ema=0.90, latency_ema_ms=1800.0),
             "brave": _EngineState(success_ema=0.88, latency_ema_ms=1900.0),
+            "duckduckgo": _EngineState(success_ema=0.88, latency_ema_ms=1900.0),
         }
         self._lock = threading.Lock()
 
@@ -139,7 +143,7 @@ class SearchEngineHealthRegistry:
 SEARCH_ENGINE_HEALTH = SearchEngineHealthRegistry()
 
 class Searcher:
-    """Health-scored Bing/Brave web search rendered only by StarSearch."""
+    """Health-scored Bing/Brave/DuckDuckGo web search rendered only by StarSearch."""
 
     def __init__(
         self,
@@ -212,7 +216,7 @@ class Searcher:
             tbs: Reserved search filter for schema compatibility
             country: Reserved localization hint for schema compatibility
             language: Reserved language hint for schema compatibility
-            engine: ``auto``, ``bing``, or ``brave``
+            engine: ``auto``, ``bing``, ``brave``, or ``duckduckgo``
             scrape_results: Whether to scrape result URLs (disable for fast search-only)
         """
         if scrape_formats is None:

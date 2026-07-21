@@ -213,7 +213,12 @@ class HuginnClient:
 
     async def seek(self, query: str, search_options: SearchOptions | None = None,
                    scrape_options: ScrapeOptions | None = None, fallback_chain: bool = True) -> SearchResponse:
-        """Search the web and scrape results. Falls back Bing->DDG->Brave when fallback_chain=True."""
+        """Search the web and scrape results.
+
+        The engine is health-scored (latency + success) and selected by score;
+        with fallback_chain=True it tries bing/brave/duckduckgo in that score
+        order until one yields results.
+        """
         payload: dict[str, Any] = {"query": query, "fallbackChain": fallback_chain}
         if search_options: payload["searchOptions"] = search_options.model_dump(exclude_none=True)
         if scrape_options: payload["scrapeOptions"] = scrape_options.model_dump(exclude_none=True)
