@@ -24,7 +24,9 @@ except ImportError:
 import httpx
 
 from .browser import BrowserManager
-from .models import CrawlGraph
+from .models import CrawlGraph, OutputFormat
+from .scraper import Scraper
+from .utils import scrape_failure
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,13 @@ class Mapper:
     """Fast URL mapper: discovers all URLs on a site without full content extraction."""
 
     def __init__(self, browser: BrowserManager):
+        # `browser` is kept for backward compatibility with existing call sites
+        # (routers/map.py, researcher.py, cli.py all construct Mapper(browser)).
+        # Link discovery itself no longer touches Playwright directly — it goes
+        # through a Scraper, exactly like Crawler does, so StarSearch's
+        # production enforcement / retry / circuit-breaker logic applies here too.
         self.browser = browser
+        self.scraper = Scraper(browser)
 
     async def chart_site(self, *args, **kwargs):
         """Alias for map_site — used by /v1/chart endpoint."""
@@ -194,41 +202,63 @@ class Mapper:
         include_subdomains: bool,
         base_domain: str,
     ) -> tuple[set[str], str | None, int | None]:
-        """Load page in browser and extract all links + metadata."""
-        context = None
+        """Render the page via StarSearch (through Scraper.scrape) and extract
+        all links + metadata.
+
+        Mirrors huginn/crawler.py's link-discovery pattern: request
+        ``formats=[OutputFormat.LINKS]`` from the Scraper (which picks
+        StarSearch/Playwright per the configured backend and enforces
+        production's StarSearch-only mode) and read links off
+        ``page_data.links``. ``only_main_content=False`` so link discovery
+        scans the whole page, matching the old DOM-wide
+        ``document.querySelectorAll('a[href]')`` behavior instead of being
+        limited to <main>/<article> content.
+
+        include_subdomains/base_domain are accepted for signature
+        compatibility with existing callers (map_site, map_site_graph), which
+        already do their own subdomain/domain filtering on the returned set —
+        this function does not filter by domain itself, preserving prior
+        behavior.
+        """
         try:
-            context = await self.browser.new_context()
-            page = await self.browser.new_page(context)
-
-            success = await self.browser.navigate(page, url)
-            if not success:
-                return (set(), None, None)
-
-            title = await page.title()
-            status_code = self.browser.last_status_code or 200
-
-            raw_links = await page.evaluate("""() => {
-                const links = new Set();
-                document.querySelectorAll('a[href]').forEach(a => {
-                    const href = a.href;
-                    if (href && !href.startsWith('javascript:') && !href.startsWith('#') && !href.startsWith('mailto:')) {
-                        links.add(href);
-                    }
-                });
-                return Array.from(links);
-            }""")
-
-            return (set(raw_links), title, status_code)
-
+            page_data = await self.scraper.scrape(
+                url=url,
+                formats=[OutputFormat.LINKS],
+                only_main_content=False,
+            )
         except Exception as e:
-            logger.error(f"Page link extraction failed for {url}: {e}")
+            logger.warning(f"Page link extraction failed for {url}: {e}")
             return (set(), None, None)
-        finally:
-            if context:
-                try:
-                    await context.close()
-                except Exception:
-                    pass
+
+        failure = scrape_failure(page_data)
+        if failure:
+            _, message = failure
+            logger.warning(f"Page link extraction failed for {url}: {message}")
+            return (set(), None, None)
+
+        metadata = page_data.metadata or {}
+        title = metadata.get("title")
+        try:
+            status_code = int(metadata.get("status_code", 200))
+        except (TypeError, ValueError):
+            status_code = 200
+
+        links: set[str] = set()
+        for raw_link in page_data.links or []:
+            if not raw_link:
+                continue
+            href = raw_link.strip()
+            if not href or href.startswith("javascript:") or href.startswith("#") or href.startswith("mailto:"):
+                continue
+            try:
+                absolute = urljoin(url, href)
+            except Exception:
+                continue
+            if urlparse(absolute).scheme not in ("http", "https"):
+                continue
+            links.add(absolute)
+
+        return (links, title, status_code)
 
     async def map_site_graph(
         self,
