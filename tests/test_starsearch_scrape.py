@@ -293,3 +293,31 @@ def test_html_conversion_applies_include_and_exclude_selectors():
     assert "Noise" not in data.markdown
     assert "Unwanted" not in data.markdown
     assert "class=\"keep\"" in data.html
+
+
+def test_links_include_nav_when_not_main_content_only():
+    html = """
+    <html><head><title>Nav Links</title></head><body>
+      <nav><a href="https://site.test/menu">Menu</a></nav>
+      <header><a href="https://site.test/home">Home</a></header>
+      <main><a href="https://site.test/article">Article</a></main>
+      <footer><a href="https://site.test/about">About</a></footer>
+    </body></html>
+    """
+    # only_main_content=False (site mapping / crawl discovery): every link,
+    # including the nav/header/footer that content extraction strips.
+    full = starsearch_scrape._html_to_scrapedata(
+        html, "https://site.test", [OutputFormat.LINKS], False,
+    )
+    assert set(full.links) == {
+        "https://site.test/menu",
+        "https://site.test/home",
+        "https://site.test/article",
+        "https://site.test/about",
+    }
+    # only_main_content=True (default content extraction): nav/header/footer
+    # stripped, so only the main-content link remains — prior behavior unchanged.
+    main_only = starsearch_scrape._html_to_scrapedata(
+        html, "https://site.test", [OutputFormat.LINKS], True,
+    )
+    assert main_only.links == ["https://site.test/article"]

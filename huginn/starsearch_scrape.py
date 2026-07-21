@@ -419,6 +419,11 @@ def _html_to_scrapedata(
         metadata["egress"] = egress
     result = ScrapeData(metadata=metadata)
 
+    # Capture links from the FULL document before the nav/header/footer strip
+    # below, so LINKS discovery can see the whole page (site mapping needs the
+    # nav/menu links). Content formats still use the stripped content_el.
+    all_page_links = [a.get("href") for a in soup.find_all("a", href=True)]
+
     main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
     content_el = main if (main and only_main_content) else (soup.body or soup)
     if include_tags:
@@ -448,7 +453,13 @@ def _html_to_scrapedata(
         elif fmt == OutputFormat.RAW_HTML:
             result.raw_html = html
         elif fmt == OutputFormat.LINKS:
-            result.links = [a.get("href") for a in content_el.find_all("a", href=True)]
+            # only_main_content=False (site mapping) wants every link, including
+            # the nav/header/footer stripped from content_el above; the default
+            # main-content path keeps links scoped to content_el, unchanged.
+            if only_main_content or include_tags:
+                result.links = [a.get("href") for a in content_el.find_all("a", href=True)]
+            else:
+                result.links = list(all_page_links)
         elif fmt == OutputFormat.SCREENSHOT:
             result.screenshot = screenshot
     return result
