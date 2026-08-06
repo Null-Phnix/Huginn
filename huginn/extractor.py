@@ -138,6 +138,7 @@ class Extractor:
             combined_text,
             merge_strategy=merge_strategy,
             examples=examples,
+            pydantic_model=pydantic_model,
         )
 
         response: Dict[str, Any] = {
@@ -276,6 +277,7 @@ class Extractor:
         raw_text: str,
         merge_strategy: str = "concat",
         examples: Optional[List[Dict[str, Any]]] = None,
+        pydantic_model: Optional[Type[BaseModel]] = None,
     ) -> ExtractionResult:
         """Call LLM for extraction with guaranteed JSON + progressive repair."""
 

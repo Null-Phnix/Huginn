@@ -39,6 +39,11 @@ logger = logging.getLogger(__name__)
 #   _CHROMA_STATE = False     → import failed (don't try again)
 _CHROMA_STATE: bool | None = None
 
+# The module itself, bound on successful import. Callers below reference
+# `chromadb.PersistentClient`, so the import has to land here and not only in
+# the importing function's local scope.
+chromadb = None
+
 
 def _try_import_chromadb() -> bool:
     """Lazy import: attempt to import chromadb on first call.
@@ -46,10 +51,11 @@ def _try_import_chromadb() -> bool:
     Returns True if chromadb is now importable, False otherwise.
     Subsequent calls return the cached result without re-importing.
     """
-    global _CHROMA_STATE
+    global _CHROMA_STATE, chromadb
     if _CHROMA_STATE is None:
         try:
-            import chromadb  # noqa: F401
+            import chromadb as _chromadb
+            chromadb = _chromadb
             _CHROMA_STATE = True
         except ImportError:
             logger.warning("chromadb not installed. Research memory disabled. pip install chromadb")

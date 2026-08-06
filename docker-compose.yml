@@ -35,6 +35,17 @@ services:
       HUGINN_PROXY_ROTATION: "${HUGINN_PROXY_ROTATION:-round_robin}"
       HUGINN_PROXY_FAILURE_THRESHOLD: "${HUGINN_PROXY_FAILURE_THRESHOLD:-3}"
       HUGINN_PROXY_COOLDOWN_SECONDS: "${HUGINN_PROXY_COOLDOWN_SECONDS:-60}"
+      # Extraction needs an LLM. Default provider is openai with no key set, so
+      # every /v1/extract job failed all three attempts before reading a line of
+      # the page. xAI is already paid for and Huginn supports it natively.
+      HUGINN_LLM_PROVIDER: "${HUGINN_LLM_PROVIDER:-xai}"
+      # Override the built-in grok-3-mini default; this key has newer models.
+      HUGINN_LLM_MODEL: "${HUGINN_LLM_MODEL:-grok-4.20-0309-non-reasoning}"
+    # The provider key is read from the process environment (llm.py), not from a
+    # secret file like the others, so it comes in here rather than as a mount.
+    # Kept outside the repo so it is never committed and never baked into the image.
+    env_file:
+      - "${HUGINN_LLM_ENV_FILE:-/home/phnix/.config/huginn/llm.env}"
     volumes:
       - huginn-data:/data
       - "${STARSEARCH_TCP_TOKEN_FILE:-/home/phnix/.config/starsearch/tcp-token}:/run/secrets/starsearch_tcp_token:ro"

@@ -34,6 +34,15 @@ jobs:
       - name: Install Playwright browser
         run: uv run playwright install chromium
 
+      - name: Lint for undefined names
+        # F821 catches a name referenced but never bound in scope. Three such
+        # bugs shipped at once — extractor.py read a parameter its own signature
+        # never declared, cli.py called Scraper with the import stuck in another
+        # function, memory.py imported chromadb into local scope only. Each one
+        # crashed at runtime on a path the tests never exercised. Ruff already
+        # had the rule selected; nothing ran it.
+        run: uv run ruff check huginn/ --select F821
+
       - name: Run unit tests
         # Use bare `pytest` (no path arg) so it picks up both tests/ and
         # huginn/tests/ via pyproject.toml's testpaths config. Hardcoding

@@ -694,6 +694,7 @@ async def _do_screenshot(url: str, out: str, full_page: bool = True):
                       console=console) as p:
             p.add_task("screenshot")
             browser = await _get_browser()
+            from .scraper import Scraper
             scraper = Scraper(browser)
             data = await scraper.scrape(url=url, formats=[OutputFormat.SCREENSHOT])
 
