@@ -413,6 +413,9 @@ class DistillRequest(BaseModel):
     prompt: Optional[str] = None
     schema_: Optional[Dict[str, Any]] = Field(None, description="JSON schema for structured extraction")
     system_prompt: Optional[str] = Field(None, description="Custom system prompt for LLM")
+    examples: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Example extraction results to guide the LLM (max 3)"
+    )
     format: str = Field("markdown", description="Output format: text, markdown, or json")
     # Huginn extensions
     mental_model: bool = Field(True, description="Use DOM mental model for better extraction")

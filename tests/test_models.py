@@ -181,6 +181,40 @@ class TestExtractModels:
         assert req.urls == ["https://example.com"]
         assert req.mental_model is True
         assert req.max_retries == 3
+        assert req.examples is None
+
+    def test_distill_request_has_every_field_tasks_reads(self):
+        """tasks.py read req.examples for a field the model never had, so every
+        extract job died with AttributeError at runtime. Checking one field back
+        would only catch that one; parse what the worker actually reads instead."""
+        import ast
+        import inspect
+        from pathlib import Path
+
+        import huginn.tasks as tasks_mod
+
+        tree = ast.parse(Path(inspect.getfile(tasks_mod)).read_text())
+        wanted = set()
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # only the functions typed to receive a DistillRequest
+            params = {
+                a.arg
+                for a in fn.args.args
+                if isinstance(a.annotation, ast.Name) and a.annotation.id == "DistillRequest"
+            }
+            if not params:
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
+                        and node.value.id in params:
+                    wanted.add(node.attr)
+
+        assert wanted, "found no DistillRequest-typed handlers to check"
+        known = set(DistillRequest.model_fields) | set(dir(DistillRequest))
+        missing = sorted(wanted - known)
+        assert not missing, f"tasks.py reads fields DistillRequest does not define: {missing}"
 
     def test_extract_status_response(self):
         resp = DistillStatusResponse(
