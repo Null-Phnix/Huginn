@@ -551,7 +551,9 @@ def _normalize_result_url(
     parsed = urllib.parse.urlparse(candidate)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return ""
-    if decode_bing and parsed.hostname.lower().endswith("bing.com") and parsed.path == "/ck/a":
+    hostname = parsed.hostname.lower()
+    is_bing_host = hostname == "bing.com" or hostname.endswith(".bing.com")
+    if decode_bing and is_bing_host and parsed.path == "/ck/a":
         # A malformed/unknown wrapper is not the requested destination. Do not
         # expose it as if it were a usable search result.
         return ""

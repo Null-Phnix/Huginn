@@ -51,6 +51,13 @@ class TestSearcherInit:
 
 
 class TestRenderedSerpParsing:
+    def test_bing_wrapper_detection_requires_domain_boundary(self):
+        assert starsearch_scrape._normalize_result_url(
+            "https://evilbing.com/ck/a?u=unknown-wrapper",
+            base_url="https://www.bing.com/search",
+            decode_bing=True,
+        ) == "https://evilbing.com/ck/a?u=unknown-wrapper"
+
     def test_bing_parser_decodes_wrapper_and_drops_unsafe_links(self):
         html = """
         <ol>

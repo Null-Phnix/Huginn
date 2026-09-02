@@ -19,8 +19,8 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Type
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -30,6 +30,14 @@ from .models import OutputFormat, ScrapeData
 from .scraper import Scraper
 
 logger = logging.getLogger(__name__)
+
+
+def _is_ollama_cloud_url(value: str) -> bool:
+    """Return true only for the official Ollama Cloud hostname."""
+    try:
+        return urlparse(value).hostname == "ollama.com"
+    except ValueError:
+        return False
 
 
 class ExtractionResult:
@@ -138,6 +146,7 @@ class Extractor:
             combined_text,
             merge_strategy=merge_strategy,
             examples=examples,
+            pydantic_model=pydantic_model,
         )
 
         response: Dict[str, Any] = {
@@ -238,7 +247,7 @@ class Extractor:
 
         # Examples: show the LLM what correct output looks like
         if examples and schema:
-            parts.append(f"\n📋 EXAMPLES (output must match this JSON schema format):\n")
+            parts.append("\n📋 EXAMPLES (output must match this JSON schema format):\n")
             for i, ex in enumerate(examples[:3]):  # Cap at 3 examples to avoid bloat
                 parts.append(f"\nExample {i + 1}:\n```json\n{json.dumps(ex, indent=2)}\n```\n")
 
@@ -276,6 +285,7 @@ class Extractor:
         raw_text: str,
         merge_strategy: str = "concat",
         examples: Optional[List[Dict[str, Any]]] = None,
+        pydantic_model: Optional[Type[BaseModel]] = None,
     ) -> ExtractionResult:
         """Call LLM for extraction with guaranteed JSON + progressive repair."""
 
@@ -451,7 +461,7 @@ class Extractor:
             }
 
             if self.llm_provider == "ollama":
-                is_cloud = "ollama.com" in config["base_url"]
+                is_cloud = _is_ollama_cloud_url(config["base_url"])
                 if not is_cloud:
                     headers.pop("Authorization", None)
                 client_timeout = httpx.Timeout(60, connect=10)
