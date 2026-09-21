@@ -35,6 +35,7 @@ dependencies = [
     "playwright>=1.40.0",
     "playwright-stealth>=1.0.0",
     "beautifulsoup4>=4.12.0",
+    "soupsieve>=2.9",
     "markdownify>=0.11.0",
     "httpx>=0.25.0",
     "aiohttp>=3.14.3",
