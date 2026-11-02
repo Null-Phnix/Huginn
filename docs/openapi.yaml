@@ -2977,6 +2977,15 @@ components:
           - type: 'null'
           title: System Prompt
           description: Custom system prompt for LLM
+        examples:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+          - type: 'null'
+          title: Examples
+          description: Example extraction results to guide the LLM (max 3)
         format:
           type: string
           title: Format
@@ -4036,6 +4045,7 @@ components:
           enum:
           - bing
           - brave
+          - duckduckgo
           title: Engine
         status:
           type: string
@@ -4159,6 +4169,7 @@ components:
             enum:
             - bing
             - brave
+            - duckduckgo
           - type: 'null'
           title: Selected Engine
         render_mode:
@@ -4210,6 +4221,7 @@ components:
           - auto
           - bing
           - brave
+          - duckduckgo
           title: Engine
           description: StarSearch-rendered engine. 'auto' selects by live health score;
             an explicit engine fails closed without silently changing destinations.

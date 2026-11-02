@@ -549,13 +549,16 @@ class Scraper:
                 )):
                     logger.info(f"Scraped {url} via StarSearch (anti-detect)")
                     return await self._postprocess_result(
-                        url, ss, remove_base64_images, change_tracking
+                        url, ss, remove_base64_images, change_tracking, backend="starsearch"
                     )
                 raise RuntimeError("StarSearch returned no usable content")
             except Exception as e:
                 if starsearch_enforced:
                     raise
-                logger.warning(f"StarSearch scrape failed for {url}: {e}, falling back to Playwright")
+                if str(e) == "StarSearch TCP is not configured":
+                    logger.warning("StarSearch is not configured (set HUGINN_STARSEARCH_TCP); using Playwright")
+                else:
+                    logger.warning(f"StarSearch scrape failed for {url}: {e}, falling back to Playwright")
 
         if mode != RenderMode.LIGHT and starsearch_enforced:
             raise RuntimeError("StarSearch production path could not serve the request")
@@ -588,7 +591,7 @@ class Scraper:
                     # Check if content is thin — might need JS after all
                     if result.markdown and len(result.markdown) > 200:
                         return await self._postprocess_result(
-                            url, result, remove_base64_images, change_tracking
+                            url, result, remove_base64_images, change_tracking, backend="light"
                         )
                     elif not result.markdown:
                         # Empty result — fall through to full browser
@@ -654,7 +657,12 @@ class Scraper:
                     await result
                 success = await self.browser.navigate(page, url)
                 if not success:
-                    return ScrapeData(metadata={"url": url, "status_code": 500, "error": "Navigation failed"})
+                    # Keep a real HTTP error status (404, 403, ...) when the server answered;
+                    # 500 "Navigation failed" only means no response at all.
+                    status = getattr(self.browser, "last_status_code", 0)
+                    if isinstance(status, int) and status >= 400:
+                        return ScrapeData(metadata={"url": url, "status_code": status, "error": f"HTTP {status}", "backend": "playwright"})
+                    return ScrapeData(metadata={"url": url, "status_code": 500, "error": "Navigation failed", "backend": "playwright"})
 
                 # Check if response is a PDF -- use PDF extractor instead
                 try:
@@ -741,7 +749,7 @@ class Scraper:
                     result.markdown = result.markdown[:500_000]
 
                 return await self._postprocess_result(
-                    url, result, remove_base64_images, change_tracking
+                    url, result, remove_base64_images, change_tracking, backend="playwright"
                 )
 
             except asyncio.TimeoutError as e:
@@ -828,8 +836,10 @@ class Scraper:
         result: ScrapeData,
         remove_base64_images: bool,
         change_tracking: bool,
+        backend: str,
     ) -> ScrapeData:
         """Apply output transforms consistently across every renderer."""
+        result.metadata = {**(result.metadata or {}), "backend": backend}
         if remove_base64_images and result.markdown:
             result.markdown = _BASE64_IMAGE_REGEX.sub("", result.markdown)
         if change_tracking and result.markdown:

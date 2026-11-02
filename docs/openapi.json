@@ -4808,6 +4808,22 @@
             "title": "System Prompt",
             "description": "Custom system prompt for LLM"
           },
+          "examples": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examples",
+            "description": "Example extraction results to guide the LLM (max 3)"
+          },
           "format": {
             "type": "string",
             "title": "Format",
@@ -6497,7 +6513,8 @@
             "type": "string",
             "enum": [
               "bing",
-              "brave"
+              "brave",
+              "duckduckgo"
             ],
             "title": "Engine"
           },
@@ -6665,7 +6682,8 @@
                 "type": "string",
                 "enum": [
                   "bing",
-                  "brave"
+                  "brave",
+                  "duckduckgo"
                 ]
               },
               {
@@ -6749,7 +6767,8 @@
             "enum": [
               "auto",
               "bing",
-              "brave"
+              "brave",
+              "duckduckgo"
             ],
             "title": "Engine",
             "description": "StarSearch-rendered engine. 'auto' selects by live health score; an explicit engine fails closed without silently changing destinations.",

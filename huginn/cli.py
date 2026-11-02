@@ -36,6 +36,7 @@ from rich.table import Table
 from huginn import __version__, _branding
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 def _banner():
@@ -75,6 +76,9 @@ def _write_output(data, path: str, fmt: str):
     if path and path != "-":
         Path(path).write_text(text, encoding="utf-8")
         console.print(f"[green]Wrote {Path(path).resolve()}[/green]")
+    elif not sys.stdout.isatty():
+        # Piped or captured: plain text, no Rich wrapping or markup.
+        sys.stdout.write(text)
     else:
         if fmt in ("json", "yaml"):
             console.print(Syntax(text, fmt, theme="monokai"))
@@ -200,14 +204,15 @@ async def _do_scrape(url: str, fmt: str, out: str, outfmt: str = "json"):
         formats = list(fmt_map.values())
     else:
         parts = [p.strip().lower() for p in fmt.split(",")]
-        formats = [fmt_map[p] for p in parts if p in fmt_map]
-        if not formats:
-            console.print(f"[red]Unknown format(s): {fmt}[/red]"); return
+        unknown = [p for p in parts if p not in fmt_map]
+        if unknown or not parts:
+            raise click.BadParameter(f"unknown format(s): {', '.join(unknown) or fmt}", param_hint="'-f'")
+        formats = [fmt_map[p] for p in parts]
 
     browser = None
     try:
         with Progress(SpinnerColumn(), TextColumn("[bold cyan]Scraping..."),
-                      console=console) as p:
+                      console=err_console, transient=True) as p:
             p.add_task("scrape")
             browser = await _get_browser()
             scraper = Scraper(browser)
@@ -227,8 +232,14 @@ async def _do_scrape(url: str, fmt: str, out: str, outfmt: str = "json"):
                 data.screenshot = None  # Remove from JSON output since it's on disk
 
         _write_output(data.model_dump(exclude_none=True), out, outfmt)
+        error = (data.metadata or {}).get("error")
+        if error:
+            err_console.print(f"[red]Error: {error}[/red]")
+            return 1
+        return 0
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        err_console.print(f"[red]Error: {e}[/red]")
+        return 1
     finally:
         if browser:
             await _stop_browser(browser)
@@ -646,9 +657,9 @@ def cli(ctx):
 
 @cli.command(name="scrape")
 @click.argument("url")
-@click.option("-f", "--format", "fmt",
-              type=click.Choice(["markdown", "html", "links", "screenshot", "raw_html", "metadata", "all"]),
-              default="markdown", help="Output format(s). Comma-separated or 'all' for every format.")
+@click.option("-f", "--format", "fmt", default="markdown",
+              help="Output format(s): markdown, html, links, screenshot, raw_html, metadata. "
+                   "Comma-separated or 'all' for every format.")
 @click.option("-o", "--output", default="-", help="Output file (default: stdout; auto-named .png for screenshots)")
 @click.option("-F", "--out-format", "outfmt", type=click.Choice(["json", "yaml", "csv", "markdown", "raw"]),
               default="json", help="Serialization format")
@@ -662,8 +673,10 @@ def scrape_cmd(url, fmt, output, outfmt):
       huginn scrape https://example.com -f screenshot -o shot.png
       huginn scrape https://example.com -f markdown,screenshot,links
       huginn scrape https://example.com -f all -o result.json
+
+    Exits 1 if the scrape failed; the JSON with the error is still written.
     """
-    _run_async(_do_scrape(url, fmt, output, outfmt))
+    sys.exit(_run_async(_do_scrape(url, fmt, output, outfmt)) or 0)
 
 
 # ─── screenshot (convenience) ────────────────────────────────────────────────
