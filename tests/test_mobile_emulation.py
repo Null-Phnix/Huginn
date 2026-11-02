@@ -145,7 +145,7 @@ class TestScraperMobileWiring:
         scraper = Scraper(mock_browser)
         scraper._get_http_client = MagicMock()
 
-        result = await scraper.scrape(
+        await scraper.scrape(
             url="https://example.com",
             mobile=True,
             render_mode="full",
@@ -180,7 +180,7 @@ class TestScraperMobileWiring:
         scraper = Scraper(mock_browser)
         scraper._get_http_client = MagicMock()
 
-        result = await scraper.scrape(
+        await scraper.scrape(
             url="https://example.com",
             mobile=False,
             render_mode="full",

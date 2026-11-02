@@ -22,7 +22,7 @@ class ProxyConfigurationError(ValueError):
     pass
 
 
-class ProxyUnavailable(RuntimeError):
+class ProxyUnavailable(RuntimeError):  # noqa: N818 - public name, used by routers
     pass
 
 

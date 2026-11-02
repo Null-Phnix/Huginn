@@ -54,6 +54,13 @@ from .models import ActionType, ErrorCode, Schedule  # noqa: F401
 from .research import ResearchAgent, ResearchReport, ResearchSource  # noqa: F401
 from .scheduler import Scheduler  # noqa: F401
 from .scraper import RenderMode, detect_render_mode  # noqa: F401
+from .templates import (  # noqa: F401
+    ExtractTemplate,
+    get_template,
+    list_templates,
+    register_template,
+)
+from .webhook import fire_webhook_for_job, send_webhook, send_webhook_with_retry  # noqa: F401
 
 _sdk_python_path = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
@@ -72,13 +79,6 @@ try:
     )
 except ImportError:
     pass
-from .templates import (  # noqa: F401
-    ExtractTemplate,
-    get_template,
-    list_templates,
-    register_template,
-)
-from .webhook import fire_webhook_for_job, send_webhook, send_webhook_with_retry  # noqa: F401
 
 __all__ = [
     "BrowserManager",

@@ -658,7 +658,6 @@ class Scraper:
 
                 # Check if response is a PDF -- use PDF extractor instead
                 try:
-                    resp = page.url  # Current URL after navigation
                     content_type = ""
                     try:
                         resp_obj = await page.evaluate("() => document.contentType || ''")

@@ -10,6 +10,13 @@ import re
 from typing import List, Optional, Set
 from urllib.parse import urljoin, urlparse
 
+import httpx
+
+from .browser import BrowserManager
+from .models import CrawlGraph, OutputFormat
+from .scraper import Scraper
+from .utils import scrape_failure
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -20,15 +27,6 @@ except ImportError:
     from xml.etree import ElementTree
     xml.sax.make_parser = lambda *a, **kw: xml.sax.make_parser.__wrapped__(*a, **kw) if hasattr(xml.sax.make_parser, '__wrapped__') else xml.sax.make_parser()
     logger.warning("defusedxml not installed — XML parsing vulnerable to bombs. pip install defusedxml")
-
-import httpx
-
-from .browser import BrowserManager
-from .models import CrawlGraph, OutputFormat
-from .scraper import Scraper
-from .utils import scrape_failure
-
-logger = logging.getLogger(__name__)
 
 
 class Mapper:

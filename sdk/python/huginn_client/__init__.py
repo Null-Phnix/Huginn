@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 import os
-from typing import Any, AsyncIterator, TypeVar
+from typing import Any, AsyncIterator
 import httpx
 from pydantic import BaseModel
 from huginn.models import (

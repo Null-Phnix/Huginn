@@ -413,7 +413,7 @@ class ResearchAgent:
         """Extract first meaningful paragraph as summary."""
         if not markdown:
             return ""
-        lines = [l.strip() for l in markdown.split("\n") if l.strip()]
+        lines = [ln.strip() for ln in markdown.split("\n") if ln.strip()]
         for line in lines:
             if len(line) > 50:
                 return line[:max_length]

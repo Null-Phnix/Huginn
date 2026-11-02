@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
     router = APIRouter()
 
-    from ..models import ErrorCode as EC
+    from ..models import ErrorCode as EC  # noqa: N817
     from ..watcher import get_watch_store
 
     @router.post("/v1/watch", response_model=WatchResponse, tags=["Watch"])
@@ -66,7 +66,7 @@ def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
         await cb.record_success(domain)
 
         # Register watching
-        entry = await store.watch(
+        await store.watch(
             url=req.url,
             selectors=req.selectors,
             webhook_url=req.webhook_url,

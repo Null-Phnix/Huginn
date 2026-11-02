@@ -121,7 +121,6 @@ class ClaudeAgent:
         # Build resume prompt
         prompt = self._build_resume_prompt(reason)
 
-        timestamp = datetime.now().strftime("%H%M%S")
         resume_file = self.log_dir / f"{self.config.name}_resume_{self.config.resume_count}.log"
 
         cmd = [

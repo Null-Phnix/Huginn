@@ -109,7 +109,8 @@ def _to_markdown(data):
 def _load_urls(source: str) -> list:
     """Load URLs from file or stdin."""
     raw = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
-    return [l.strip() for l in raw.strip().splitlines() if l.strip() and not l.strip().startswith("#")]
+    return [line.strip() for line in raw.strip().splitlines()
+            if line.strip() and not line.strip().startswith("#")]
 
 
 def _run_async(coro):

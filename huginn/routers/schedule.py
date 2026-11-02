@@ -111,14 +111,14 @@ def create_schedule_router(config: HuginnConfig, verify_api_key) -> APIRouter:
     async def pause_schedule(schedule_id: str, auth=Depends(verify_api_key)):
         """Pause a schedule."""
         state = get_state()
-        result = await state.scheduler.pause_schedule(schedule_id)
+        await state.scheduler.pause_schedule(schedule_id)
         return {"success": True}
 
     @router.post("/v1/schedule/{schedule_id}/resume", tags=["Schedule"])
     async def resume_schedule(schedule_id: str, auth=Depends(verify_api_key)):
         """Resume a schedule."""
         state = get_state()
-        result = await state.scheduler.resume_schedule(schedule_id)
+        await state.scheduler.resume_schedule(schedule_id)
         return {"success": True}
 
     return router

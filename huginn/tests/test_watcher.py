@@ -206,7 +206,7 @@ class TestPageWatcher:
         watcher = self._make_watcher(fake_browser, store)
         await store.watch("http://example.com")
 
-        task = await watcher.start_monitoring("http://example.com", interval_seconds=0.1)
+        await watcher.start_monitoring("http://example.com", interval_seconds=0.1)
         assert "http://example.com" in watcher._monitor_tasks
         await asyncio.sleep(0.15)  # Let it run once
         await watcher.stop_monitoring("http://example.com")

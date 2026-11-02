@@ -241,7 +241,7 @@ def _apply_env(config: HuginnConfig):
     edit. The mapping itself is computed at call time so the prefix change
     takes effect without restarting the process.
     """
-    _P = _branding.env_prefix  # local alias to keep the table readable
+    _P = _branding.env_prefix  # noqa: N806 - local alias to keep the table readable
     api_key_file = os.environ.get(f"{_P}_API_KEY_FILE")
     if api_key_file:
         config.server.api_key = _read_api_key_file(api_key_file, _P)

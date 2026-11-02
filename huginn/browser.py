@@ -258,7 +258,7 @@ class StarSearchBackend:
         links: List[str] = (resp.get("result") or {}).get("value") or []
         if base_url:
             domain = urlparse(base_url).netloc
-            links = [l for l in links if urlparse(l).netloc == domain]
+            links = [link for link in links if urlparse(link).netloc == domain]
         return links
 
     async def take_screenshot(self, full_page: bool = True) -> str:
@@ -851,7 +851,7 @@ class BrowserManager:
             # Filter to same domain if base_url provided
             parsed = urlparse(base_url)
             domain = parsed.netloc
-            raw_links = [l for l in raw_links if urlparse(l).netloc == domain]
+            raw_links = [link for link in raw_links if urlparse(link).netloc == domain]
 
         return raw_links
 

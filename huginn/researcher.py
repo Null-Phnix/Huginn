@@ -495,10 +495,12 @@ class DeepResearcher:
 
         # Scrape top URLs in parallel (limit concurrency)
         sem = asyncio.Semaphore(3)
-        scrape_tasks = [
-            self._scrape_and_extract(question, url, beliefs)
-            for url in search_urls[:5]  # Top 5 per question
-        ]
+
+        async def _bounded(url: str):
+            async with sem:
+                return await self._scrape_and_extract(question, url, beliefs)
+
+        scrape_tasks = [_bounded(url) for url in search_urls[:5]]  # Top 5 per question
 
         results = await asyncio.gather(*scrape_tasks, return_exceptions=True)
 
