@@ -4,8 +4,6 @@ Tests for Huginn Mapper — Sitemap parsing, URL discovery.
 
 from xml.etree.ElementTree import Element, SubElement, tostring
 
-import pytest
-
 from huginn.mapper import Mapper
 
 

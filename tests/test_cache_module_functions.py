@@ -11,13 +11,12 @@ Note: cache is purely in-memory (AsyncTTLCache), so tests are
 deterministic and don't need a temp dir.
 """
 
-import asyncio
 import pytest
 
 from huginn.cache import (
-    get_response_cache,
     cache_scrape_result,
     get_cached_scrape_result,
+    get_response_cache,
     invalidate_cache,
 )
 from huginn.models import ScrapeData

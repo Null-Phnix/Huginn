@@ -1,7 +1,7 @@
 """Tests for the ReplayLog SQLite-backed scrape audit trail."""
 
 import json
-import pytest
+
 import pytest_asyncio
 
 from huginn.replay_log import ReplayLog
@@ -193,7 +193,6 @@ class TestCleanupExpired:
     """Tests for cleanup_expired()."""
 
     async def test_cleanup_removes_old_entries(self, replay_log):
-        import time
         from datetime import datetime, timedelta, timezone
 
         # Log an entry

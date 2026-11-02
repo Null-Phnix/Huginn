@@ -14,14 +14,14 @@ from urllib.parse import urlparse
 
 import httpx
 import markdownify
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 
-from .browser import BrowserManager, WaitStrategy, parse_wait_for
+from .browser import BrowserManager, parse_wait_for
 from .circuit_breaker import CircuitBreaker, CircuitOpenError, extract_domain, get_circuit_breaker
 from .domain_rate_limiter import DomainRateLimiter, get_domain_rate_limiter
 from .models import OutputFormat, ScrapeData
+from .pdf import extract_pdf_text
 from .selector_memory import SelectorMemory, get_selector_memory
-from .pdf import extract_pdf_text, is_pdf_content
 
 logger = logging.getLogger(__name__)
 
@@ -443,7 +443,7 @@ class Scraper:
                     "circuit_open": True,
                 }
             )
-        except Exception as e:
+        except Exception:
             # Record the failure so circuit breaker tracks it
             await cb.record_failure(domain)
             # Adaptive throttling: record failure so the rate multiplier

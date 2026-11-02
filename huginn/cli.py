@@ -18,25 +18,22 @@ Usage:
 import asyncio
 import csv
 import json
-import os
 import platform
 import sys
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any, List, Optional
 
 import click
 import yaml
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
-from rich.prompt import Prompt
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.prompt import Prompt
 from rich.syntax import Syntax
-from rich import box
+from rich.table import Table
 
-from huginn import _branding, __version__
+from huginn import __version__, _branding
 
 console = Console()
 
@@ -57,7 +54,7 @@ def _print_banner():
 
 def _write_output(data, path: str, fmt: str):
     """Write data to file or stdout in requested format."""
-    import csv, json, yaml
+    import json
     text = ""
     if fmt == "json":
         text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
@@ -187,8 +184,8 @@ async def _i_scrape():
 
 
 async def _do_scrape(url: str, fmt: str, out: str, outfmt: str = "json"):
+    from .models import OutputFormat
     from .scraper import Scraper
-    from .models import OutputFormat, ScrapeData
     fmt_map = {
         "markdown": OutputFormat.MARKDOWN,
         "html": OutputFormat.HTML,
@@ -343,8 +340,8 @@ async def _i_search():
 
 
 async def _do_search(q, limit, out):
-    from .searcher import Searcher
     from .models import OutputFormat
+    from .searcher import Searcher
     browser = None
     try:
         with Progress(SpinnerColumn(), TextColumn("[bold cyan]Searching..."),
@@ -457,8 +454,8 @@ async def _i_research():
 
 
 async def _do_research(q, depth, max_src, out: str, output_format: str = "json"):
-    from .researcher import DeepResearcher
     from .memory import ResearchMemory
+    from .researcher import DeepResearcher
     browser = None
     try:
         browser = await _get_browser()
@@ -504,8 +501,8 @@ async def _do_batch(source: str, operation: str, tpl_name, out: str, output_form
                 p.update(task, description=f"{operation}: {url[:60]}")
                 try:
                     if operation == "scrape":
-                        from .scraper import Scraper
                         from .models import OutputFormat
+                        from .scraper import Scraper
                         scraper = Scraper(browser)
                         data = await scraper.scrape(url=url, formats=[OutputFormat.MARKDOWN])
                         all_results.append({"url": url, "status": "ok",
@@ -605,8 +602,8 @@ async def _watch_remove(url):
 
 
 async def _jobs_list(out, outfmt):
-    from .job_store import JobStore
     from .config import load_config
+    from .job_store import JobStore
     cfg = load_config()
     store = JobStore(cfg.db_path)
     await store.init()
@@ -869,9 +866,10 @@ def serve_cmd(host, port, config, no_stealth, no_headless, api_key, log_level):
         load_dotenv()
     except ImportError:
         pass
-    from .config import load_config
-    from .api import create_app
     import uvicorn
+
+    from .api import create_app
+    from .config import load_config
 
     cfg = load_config(config)
     if host:
@@ -1285,6 +1283,7 @@ async def _i_serve():
     host = Prompt.ask("Host", default="0.0.0.0", console=console)
     console.print(f"[green]Starting server on {host}:{port}[/green]")
     import uvicorn
+
     from .api import create_app
     from .config import load_config
     cfg = load_config()

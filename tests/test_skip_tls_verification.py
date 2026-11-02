@@ -12,8 +12,9 @@ default-on (matches Firecrawl's actual default, preserves the historical
 Huginn behavior for any existing user).
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from huginn.models import ScrapeRequest
 

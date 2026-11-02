@@ -12,12 +12,12 @@ These tests do NOT hit real browsers or networks — everything is mocked.
 
 import asyncio
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from huginn.config import HuginnConfig
 from huginn.state import AppState, get_state, reset_state
-
 
 # ─── AppState Singleton ──────────────────────────────────────────────
 
@@ -80,16 +80,16 @@ class TestSSEEvent:
 
 class TestMapExceptionToErrorCode:
     def test_timeout_exception(self):
-        from huginn.utils import _map_exception_to_error_code
         from huginn.models import ErrorCode
+        from huginn.utils import _map_exception_to_error_code
         # On Python 3.14+, asyncio.TimeoutError is an alias for TimeoutError
         e = TimeoutError()
         code = _map_exception_to_error_code(e)
         assert code == ErrorCode.TIMEOUT
 
     def test_value_error_maps_to_invalid_url(self):
-        from huginn.utils import _map_exception_to_error_code
         from huginn.models import ErrorCode
+        from huginn.utils import _map_exception_to_error_code
         e = ValueError("bad url")
         code = _map_exception_to_error_code(e)
         assert code == ErrorCode.INVALID_URL
@@ -106,7 +106,6 @@ class TestMapExceptionToErrorCode:
 
     def test_unknown_exception_falls_back(self):
         from huginn.utils import _map_exception_to_error_code
-        from huginn.models import ErrorCode
         e = RuntimeError("something weird")
         code = _map_exception_to_error_code(e)
         # Should fall back to NAVIGATION_FAILED or a default
@@ -144,13 +143,13 @@ class TestMakeVerifyAPIKey:
         config.server.api_key = None
         verify = make_verify_api_key(config)
         # Simulate call without authorization header
-        import inspect
         assert asyncio.iscoroutinefunction(verify)
 
     @pytest.mark.asyncio
     async def test_api_key_required_when_configured(self):
-        from huginn.utils import make_verify_api_key
         from fastapi import HTTPException
+
+        from huginn.utils import make_verify_api_key
         config = HuginnConfig()
         config.server.api_key = "secret-key"
         verify = make_verify_api_key(config)
@@ -170,8 +169,9 @@ class TestMakeVerifyAPIKey:
 
     @pytest.mark.asyncio
     async def test_api_key_invalid(self):
-        from huginn.utils import make_verify_api_key
         from fastapi import HTTPException
+
+        from huginn.utils import make_verify_api_key
         config = HuginnConfig()
         config.server.api_key = "secret-key"
         verify = make_verify_api_key(config)
@@ -237,12 +237,12 @@ class TestRouterFactories:
     async def test_research_endpoint_uses_root_data_dir(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
+        import huginn.memory
+        import huginn.researcher
         from huginn.config import HuginnConfig
         from huginn.models import ResearchRequest
         from huginn.routers import create_research_router
         from huginn.state import get_state, reset_state
-        import huginn.memory
-        import huginn.researcher
 
         captured = {}
 
@@ -402,6 +402,7 @@ class TestRouterHelperExposure:
 class TestAppCreation:
     def test_create_app_returns_fastapi(self):
         from fastapi import FastAPI
+
         from huginn.api import create_app
         app = create_app(HuginnConfig())
         assert isinstance(app, FastAPI)
@@ -439,8 +440,8 @@ class TestAppCreation:
 
 class TestSchedulerHandlers:
     def test_register_scheduler_handlers(self):
-        from huginn.tasks import register_scheduler_handlers
         from huginn.scheduler import _HANDLERS
+        from huginn.tasks import register_scheduler_handlers
         # Clear and re-register
         _HANDLERS.clear()
         register_scheduler_handlers()
@@ -454,9 +455,9 @@ class TestSchedulerHandlers:
 class TestSSEStreamCrawl:
     @pytest.mark.asyncio
     async def test_stream_crawl_yields_events(self):
-        from huginn.tasks import stream_crawl
         from huginn.models import CrawlRequest
         from huginn.state import get_state
+        from huginn.tasks import stream_crawl
 
         # Mock browser and crawler
         mock_browser = MagicMock()
@@ -494,9 +495,9 @@ class TestSSEStreamCrawl:
 class TestSSEStreamDistill:
     @pytest.mark.asyncio
     async def test_stream_distill_yields_events(self):
-        from huginn.tasks import stream_distill
         from huginn.models import DistillRequest
         from huginn.state import get_state
+        from huginn.tasks import stream_distill
 
         mock_browser = MagicMock()
         state = get_state()
@@ -526,9 +527,9 @@ class TestSSEStreamDistill:
 class TestRunCrawl:
     @pytest.mark.asyncio
     async def test_run_crawl_updates_job_store(self):
-        from huginn.tasks import run_crawl
         from huginn.models import CrawlRequest
         from huginn.state import get_state
+        from huginn.tasks import run_crawl
 
         mock_job_store = AsyncMock()
         mock_browser = MagicMock()
@@ -566,9 +567,9 @@ class TestRunCrawl:
 class TestRunFlock:
     @pytest.mark.asyncio
     async def test_run_flock_completes(self):
-        from huginn.tasks import run_flock
         from huginn.models import FlockRequest
         from huginn.state import get_state
+        from huginn.tasks import run_flock
 
         mock_job_store = AsyncMock()
         mock_browser = MagicMock()

@@ -16,20 +16,17 @@ Usage:
     python daemon.py --config sprint_config.yaml
 """
 
-import os
-import sys
-import json
-import time
-import subprocess
 import argparse
-import threading
-import signal
-from pathlib import Path
-from datetime import datetime, timedelta
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+import json
 import re
-
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 # ============================================================================
 # Configuration

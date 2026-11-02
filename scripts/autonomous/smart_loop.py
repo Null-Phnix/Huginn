@@ -12,14 +12,11 @@ The perfect dev loop:
 No fixed phases - Claude adapts based on actual project needs.
 """
 
-import os
-import sys
-import time
-import subprocess
 import json
+import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
-from datetime import datetime, timedelta
-import signal
 
 # Configuration
 WORK_DIR = Path(__file__).resolve().parents[2]
@@ -208,7 +205,7 @@ def get_work_prompt(decision: dict, cycle: int) -> str:
 
     files_section = ""
     if files:
-        files_section = f"\n\n## KEY FILES TO FOCUS ON\n" + "\n".join(f"- {f}" for f in files)
+        files_section = "\n\n## KEY FILES TO FOCUS ON\n" + "\n".join(f"- {f}" for f in files)
 
     focus_guidance = {
         "security": """

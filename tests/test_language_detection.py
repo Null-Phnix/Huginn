@@ -11,11 +11,12 @@ Two detection strategies:
 The metadata dict always includes a "language" key (default: "en").
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from huginn.scraper import Scraper
+import pytest
+
 from huginn.models import OutputFormat
+from huginn.scraper import Scraper
 
 
 class TestLanguageDetection:

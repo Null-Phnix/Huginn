@@ -11,14 +11,12 @@ Usage:
     python auto_transition.py --after-hours 2    # Transition after 2 more hours
 """
 
+import argparse
+import json
 import subprocess
 import time
-import json
-import os
-import sys
-from pathlib import Path
 from datetime import datetime, timedelta
-import argparse
+from pathlib import Path
 
 # Paths
 PROJECT_DIR = Path(__file__).resolve().parents[2]

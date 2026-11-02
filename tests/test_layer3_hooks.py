@@ -7,7 +7,6 @@ Verifies that:
 3. Selector memory surfaces hints when include_tags is empty
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

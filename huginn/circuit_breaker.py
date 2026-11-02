@@ -90,7 +90,7 @@ class CircuitBreaker:
             result = await fn(*args, **kwargs)
             await self._record_success(domain)
             return result
-        except Exception as exc:
+        except Exception:
             await self._record_failure(domain)
             raise
 

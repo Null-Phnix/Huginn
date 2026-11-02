@@ -5,15 +5,11 @@ Uses httpx AsyncClient with FastAPI's TestClient for in-process testing.
 No real browser needed — browser operations are mocked.
 """
 
-import asyncio
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from huginn.config import HuginnConfig
-from huginn.models import ScrapeData, OutputFormat
 
 
 class TestHealthEndpoint:
@@ -132,7 +128,7 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_request_model(self):
-        from huginn.models import SearchRequest, SearchOptions
+        from huginn.models import SearchOptions, SearchRequest
         req = SearchRequest(
             query="test query",
             search_options=SearchOptions(limit=10),
@@ -149,6 +145,7 @@ class TestJobEndpoints:
     @pytest.mark.asyncio
     async def test_job_info_model(self):
         from datetime import datetime
+
         from huginn.models import JobInfo, JobStatus
         info = JobInfo(
             id="test-123",

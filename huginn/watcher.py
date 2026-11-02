@@ -20,18 +20,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
-
-import httpx
 
 from .browser import BrowserManager
-from .circuit_breaker import get_circuit_breaker, extract_domain
+from .circuit_breaker import extract_domain, get_circuit_breaker
 from .scraper import Scraper
-
 
 # ─── Data Models ───────────────────────────────────────────────────────────────
 

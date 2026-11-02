@@ -17,9 +17,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from blackreach.agent import Agent, AgentConfig, AgentCallbacks
+from blackreach.agent import Agent, AgentCallbacks, AgentConfig
 from blackreach.llm import LLMConfig
-
 
 # Provider configurations — edit models to your preference
 PROVIDER_CONFIGS = {

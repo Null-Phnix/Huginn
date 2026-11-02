@@ -17,6 +17,7 @@ to ensure consistent behavior across both the change-tracking endpoint
 """
 
 import pytest
+
 from huginn.change_tracker import ChangeTracker
 from huginn.watcher import compute_content_hash
 

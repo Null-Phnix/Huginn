@@ -5,14 +5,14 @@ No Redis, no Supabase. Just SQLite + asyncio.
 Stores job state, results, and metadata.
 """
 
-import aiosqlite
 import json
 import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-import uuid
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, List, Optional
+
+import aiosqlite
 
 logger = logging.getLogger(__name__)
 

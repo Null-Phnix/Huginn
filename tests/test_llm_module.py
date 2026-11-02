@@ -6,16 +6,15 @@ from both huginn.llm (new canonical location) and huginn.api (back-compat
 re-export) so existing callers don't break.
 """
 
-import pytest
 import inspect
-import httpx
 
-from huginn import llm
+import httpx
+import pytest
+
 from huginn.llm import (
-    LLM_PROVIDER_CONFIG,
     _LLM_PROVIDER_CONFIG,  # back-compat alias
+    LLM_PROVIDER_CONFIG,
     summarize_text,
-    _summarize_text,  # back-compat alias
 )
 
 

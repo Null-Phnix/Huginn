@@ -19,14 +19,6 @@ browser engine, DOM walker, and mental model system.
 __version__ = "1.3.0"
 __author__ = "Phnix"
 
-from .browser import BrowserManager, StarSearchBackend, WaitStrategy, parse_wait_for, ScrollConfig  # noqa: F401
-from .cache import AsyncTTLCache, get_response_cache, cache_scrape_result, get_cached_scrape_result  # noqa: F401
-from .circuit_breaker import CircuitBreaker, CircuitOpenError, extract_domain, get_circuit_breaker  # noqa: F401
-from .memory import ResearchMemory  # noqa: F401
-from .models import ActionType, Schedule, ErrorCode  # noqa: F401
-from .research import ResearchAgent, ResearchReport, ResearchSource  # noqa: F401
-from .scraper import RenderMode, detect_render_mode  # noqa: F401
-from .scheduler import Scheduler  # noqa: F401
 # Public SDK (sdk/python/huginn_client/) is the canonical source for
 # HuginnClient, HuginnSync, and the error hierarchy. Huginn's own code
 # re-uses it instead of carrying a separate internal SDK.
@@ -37,6 +29,32 @@ from .scheduler import Scheduler  # noqa: F401
 # installed and this path is a no-op.
 import os as _os
 import sys as _sys
+
+from .browser import (  # noqa: F401
+    BrowserManager,
+    ScrollConfig,
+    StarSearchBackend,
+    WaitStrategy,
+    parse_wait_for,
+)
+from .cache import (  # noqa: F401
+    AsyncTTLCache,
+    cache_scrape_result,
+    get_cached_scrape_result,
+    get_response_cache,
+)
+from .circuit_breaker import (  # noqa: F401
+    CircuitBreaker,
+    CircuitOpenError,
+    extract_domain,
+    get_circuit_breaker,
+)
+from .memory import ResearchMemory  # noqa: F401
+from .models import ActionType, ErrorCode, Schedule  # noqa: F401
+from .research import ResearchAgent, ResearchReport, ResearchSource  # noqa: F401
+from .scheduler import Scheduler  # noqa: F401
+from .scraper import RenderMode, detect_render_mode  # noqa: F401
+
 _sdk_python_path = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
     "sdk", "python",
@@ -46,16 +64,21 @@ if _os.path.isdir(_sdk_python_path) and _sdk_python_path not in _sys.path:
 
 try:
     from huginn_client import (  # noqa: F401
+        CircuitOpenError,
         HuginnClient,
         HuginnError,
         HuginnSync,
-        CircuitOpenError,
         RateLimitError,
     )
 except ImportError:
     pass
-from .templates import ExtractTemplate, get_template, list_templates, register_template  # noqa: F401
-from .webhook import send_webhook, send_webhook_with_retry, fire_webhook_for_job  # noqa: F401
+from .templates import (  # noqa: F401
+    ExtractTemplate,
+    get_template,
+    list_templates,
+    register_template,
+)
+from .webhook import fire_webhook_for_job, send_webhook, send_webhook_with_retry  # noqa: F401
 
 __all__ = [
     "BrowserManager",

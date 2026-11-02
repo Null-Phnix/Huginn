@@ -8,11 +8,10 @@ When summary=True, the API generates a plain-text summary of the scraped page
 using the configured LLM. When summary=False (default), response.summary is None.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
 
-from huginn.models import ScrapeRequest, ScrapeResponse, OutputFormat
+import pytest
+
+from huginn.models import ScrapeRequest, ScrapeResponse
 
 
 class TestSummaryRequest:
@@ -43,7 +42,7 @@ class TestSummaryResponse:
 
     def test_scrape_response_has_summary_field(self):
         """ScrapeResponse has a summary: Optional[str] field."""
-        from huginn.models import ScrapeResponse, ScrapeData
+        from huginn.models import ScrapeData
         resp = ScrapeResponse(
             success=True,
             data=ScrapeData(markdown="# Test\n\nContent"),
@@ -53,7 +52,7 @@ class TestSummaryResponse:
 
     def test_scrape_response_summary_can_be_none(self):
         """When summary is not generated, response.summary is None."""
-        from huginn.models import ScrapeResponse, ScrapeData
+        from huginn.models import ScrapeData
         resp = ScrapeResponse(success=True, data=ScrapeData(markdown="# Test"))
         assert resp.summary is None
 
@@ -65,7 +64,7 @@ class TestSummaryIntegration:
     async def test_summary_generated_when_flag_is_true(self):
         """With summary=True, ScrapeData content is passed to the LLM and summary is returned."""
         # Verify the request model accepts summary=True
-        from huginn.models import ScrapeRequest, ScrapeResponse, ScrapeData
+        from huginn.models import ScrapeData, ScrapeRequest
 
         req = ScrapeRequest(url="https://example.com", summary=True)
         assert req.summary is True
@@ -89,7 +88,7 @@ class TestSummaryIntegration:
         """The /scrape endpoint returns response.summary when req.summary is True."""
         # This tests the full API flow by checking that ScrapeResponse
         # with summary field can be constructed from a scrape result
-        from huginn.models import ScrapeResponse, ScrapeData
+        from huginn.models import ScrapeData
 
         # Simulate what the API should do: scrape → generate summary → return
         scrape_result = ScrapeData(

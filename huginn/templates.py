@@ -20,8 +20,8 @@ Usage:
     result = await extractor.extract(urls=["https://example.com/item"], template=template)
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from typing import Any, Dict, List
 
 
 @dataclass

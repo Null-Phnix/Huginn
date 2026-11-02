@@ -12,13 +12,13 @@ The change tracker stores content + hash per URL so future scrapes can
 compare against the last-seen state.
 """
 
-import pytest
 import hashlib
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from pydantic import TypeAdapter
 
 from huginn.change_tracker import ChangeTracker
-
 
 # ─── ChangeTracker unit tests ────────────────────────────────────────────────
 
@@ -215,7 +215,6 @@ class TestScraperChangeTrackingIntegration:
     async def test_change_tracking_false_does_not_populate_field(self):
         """When change_tracking=False (default), ScrapeData.change_tracking stays None."""
         from huginn.scraper import Scraper
-        from huginn.change_tracker import ChangeTracker
 
         mock_browser = AsyncMock()
         mock_browser.ignore_https_errors = True
@@ -245,8 +244,8 @@ class TestScraperChangeTrackingIntegration:
     @pytest.mark.asyncio
     async def test_change_tracking_true_populates_field(self):
         """When change_tracking=True, ScrapeData.change_tracking is populated."""
-        from huginn.scraper import Scraper
         from huginn.change_tracker import ChangeTracker
+        from huginn.scraper import Scraper
 
         mock_browser = AsyncMock()
         mock_browser.ignore_https_errors = True

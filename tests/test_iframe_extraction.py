@@ -12,11 +12,12 @@ The default includeTags behavior of Scraper._filter_tags already supports
   3. Nested iframes are also handled (querySelectorAll matches all)
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from huginn.scraper import Scraper
+import pytest
+
 from huginn.models import ScrapeData
+from huginn.scraper import Scraper
 
 
 class TestIframeExtraction:

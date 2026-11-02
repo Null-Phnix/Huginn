@@ -12,14 +12,13 @@ Each check is best-effort and returns a CheckResult with status OK/WARN/FAIL/SKI
 None of these should crash the doctor command.
 """
 
-import asyncio
-import hmac
 import hashlib
+import hmac
 import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import List
 
 import httpx
 

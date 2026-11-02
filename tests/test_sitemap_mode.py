@@ -9,13 +9,12 @@ Feature: POST /v1/map accepts a sitemap field with three modes:
 The Mapper.map_site() function reads `sitemap` and routes accordingly.
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
-from pydantic import TypeAdapter
 
-from huginn.models import MapRequest
+import pytest
+
 from huginn.mapper import Mapper
-
+from huginn.models import MapRequest
 
 # ─── MapRequest.sitemap field ─────────────────────────────────────────────────
 

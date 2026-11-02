@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Regenerate OpenAPI spec and docs."""
-import json, os, sys
+import json
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi.openapi.utils import get_openapi
+
 from huginn.api import create_app
 
 app = create_app()

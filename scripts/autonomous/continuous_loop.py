@@ -11,14 +11,11 @@ This script runs indefinitely, cycling through:
 Stops only when user sends a message (creates STOP file) or explicit kill.
 """
 
-import os
-import sys
-import time
-import subprocess
 import json
+import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
-from datetime import datetime, timedelta
-import signal
 
 # Configuration
 WORK_DIR = Path(__file__).resolve().parents[2]

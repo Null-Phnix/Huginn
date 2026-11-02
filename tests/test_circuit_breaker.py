@@ -3,6 +3,7 @@ Tests for the circuit breaker module.
 """
 
 import asyncio
+
 import pytest
 
 from huginn.circuit_breaker import (
@@ -10,7 +11,6 @@ from huginn.circuit_breaker import (
     CircuitOpenError,
     CircuitState,
     extract_domain,
-    get_circuit_breaker,
 )
 
 

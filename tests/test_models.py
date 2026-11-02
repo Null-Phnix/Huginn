@@ -3,26 +3,21 @@ Tests for Huginn Models — Pydantic schemas validation.
 """
 
 import pytest
-from pydantic import ValidationError
 
 from huginn.models import (
     Action,
     ActionType,
-    ErrorCode,
     CrawlRequest,
     CrawlStartResponse,
     CrawlStatusResponse,
-    DistillRequest,
     DistillOptions,
-    DistillStartResponse,
+    DistillRequest,
     DistillStatusResponse,
-    JobInfo,
+    ErrorCode,
     JobStatus,
-    Location,
     MapRequest,
     MapResponse,
     OutputFormat,
-    ProxyMode,
     ScrapeData,
     ScrapeRequest,
     ScrapeResponse,
@@ -236,7 +231,6 @@ class TestSearchModels:
         assert req.search_options is None
 
     def test_search_engine_selection_is_typed(self):
-        from huginn.models import SearchOptions
 
         assert SearchOptions().engine == "auto"
         assert SearchOptions(engine="brave").engine == "brave"

@@ -31,7 +31,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re
 import time
@@ -43,7 +42,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .browser import BrowserManager
-from .circuit_breaker import get_circuit_breaker, extract_domain
+from .circuit_breaker import extract_domain, get_circuit_breaker
 from .extractor import Extractor
 from .mapper import Mapper
 from .models import OutputFormat

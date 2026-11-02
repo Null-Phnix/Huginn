@@ -1,18 +1,18 @@
 """Unit tests for huginn/watcher.py change detection and monitoring."""
 import asyncio
 from datetime import datetime, timezone
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from huginn.models import ScrapeData
 from huginn.watcher import (
     PageWatcher,
     WatchStore,
     compute_content_hash,
     compute_diff,
     normalize_for_diff,
-    split_sentences,
 )
-from huginn.models import ScrapeData
 
 
 @pytest.fixture

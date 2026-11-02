@@ -1,7 +1,8 @@
 """Jobs endpoints — job lifecycle management (list, delete)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..config import HuginnConfig
 from ..state import get_state, limiter

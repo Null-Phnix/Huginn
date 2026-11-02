@@ -2,10 +2,7 @@
 Tests for Huginn Job Store.
 """
 
-import asyncio
 import json
-import os
-import tempfile
 from datetime import datetime, timedelta
 
 import pytest

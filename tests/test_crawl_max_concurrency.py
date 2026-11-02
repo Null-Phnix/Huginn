@@ -51,14 +51,16 @@ class TestCrawlerConcurrencyPerJob:
 
     def test_crawler_concurrency_constructor(self):
         """Crawler() accepts a concurrency parameter (already exists)."""
-        from huginn.crawler import Crawler
         import inspect
+
+        from huginn.crawler import Crawler
         sig = inspect.signature(Crawler.__init__)
         assert "concurrency" in sig.parameters
 
     def test_crawler_concurrency_stored_on_instance(self):
         """Crawler.concurrency is stored as instance attribute."""
-        from huginn.crawler import Crawler
         from unittest.mock import MagicMock
+
+        from huginn.crawler import Crawler
         c = Crawler(browser=MagicMock(), concurrency=42)
         assert c.concurrency == 42

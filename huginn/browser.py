@@ -12,16 +12,13 @@ import glob
 import json
 import logging
 import re
-import time
 from enum import Enum
-from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
-
-from playwright.async_api import async_playwright, Browser, Page, BrowserContext
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from pydantic import BaseModel, Field
 
 from .config import BrowserConfig
 

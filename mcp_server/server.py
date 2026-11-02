@@ -113,7 +113,7 @@ async def _poll_job(
 
         await asyncio.sleep(poll_interval)
 
-    raise asyncio.TimeoutError(f"Job at {path} did not complete within {timeout}s")
+    raise TimeoutError(f"Job at {path} did not complete within {timeout}s")
 
 
 # ─── FastMCP Server ───────────────────────────────────────────────────────────

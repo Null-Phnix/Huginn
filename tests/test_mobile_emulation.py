@@ -9,9 +9,10 @@ mobile=False (default) → no device descriptor, desktop rendering.
 mobile=True → pass playwright.devices["iPhone 13"] to new_context().
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 import inspect
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from huginn.browser import BrowserManager
 from huginn.models import ScrapeRequest

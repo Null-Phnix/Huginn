@@ -2,31 +2,19 @@
 New feature tests — Huginn v1.1
 Tests: schedule, webhook, PDF extraction, API routes, model fields
 """
-import asyncio
-import json
-import time
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
 
+from huginn.job_store import JobStore
 from huginn.models import (
     CrawlRequest,
     DistillRequest,
-    FlockRequest,
-    FlockResultItem,
-    FlockResponse,
-    OutputFormat,
-    ScrapeRequest,
-    ScrapeResponse,
     ScheduleRequest,
     ScheduleResponse,
-    ScheduleStatus,
     ScrapeData,
 )
-from huginn.job_store import JobStore
-
 
 # ─── Schedule Model Tests ───────────────────────────────────────────
 
@@ -72,7 +60,7 @@ class TestScheduler:
         """JobStore schedules CRUD."""
         js = JobStore(db_path=":memory:")
         await js.init()
-        
+
         # Create
         sid = await js.create_schedule(
             schedule_id="test-1",
@@ -82,21 +70,21 @@ class TestScheduler:
             cron="0 9 * * *",
         )
         assert sid == "test-1"
-        
+
         # List
         schedules = await js.list_schedules()
         assert len(schedules) == 1
         assert schedules[0]["name"] == "test-sched"
-        
+
         # Get
         sched = await js.get_schedule("test-1")
         assert sched["name"] == "test-sched"
-        
+
         # Update
         await js.update_schedule("test-1", enabled=False)
         sched = await js.get_schedule("test-1")
         assert not sched["enabled"]
-        
+
         # Delete
         await js.delete_schedule("test-1")
         schedules = await js.list_schedules()
@@ -249,7 +237,7 @@ class TestCrawlerIntelligence:
         ]
         for p in patterns:
             re.compile(p)
-        
+
         assert re.search(r"/page/(\d+)", "https://example.com/page/2")
         assert re.search(r"/p/(\d+)", "https://example.com/p/3")
         assert re.search(r"-page-(\d+)", "https://example.com/articles-page-7")

@@ -11,12 +11,11 @@ removeBase64Images: bool — post-process the extracted markdown to strip
   tokens and avoids huge markdown payloads.
 """
 
-import pytest
-import re
 from unittest.mock import AsyncMock, MagicMock
 
-from huginn.models import ScrapeRequest
+import pytest
 
+from huginn.models import ScrapeRequest
 
 # ─── blockAds ─────────────────────────────────────────────────────────────────
 

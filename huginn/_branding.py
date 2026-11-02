@@ -33,7 +33,6 @@ from typing import Optional
 
 from . import __version__
 
-
 # ─── identity ───────────────────────────────────────────────────────────────
 
 name: str = "Huginn"

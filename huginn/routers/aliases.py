@@ -6,20 +6,14 @@ the corresponding Huginn-native endpoints (/v1/probe, /v1/sweep, etc.).
 
 import json
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
 
 from ..config import HuginnConfig
 from ..models import (
     CrawlRequest,
-    CrawlStartResponse,
     DistillRequest,
-    DistillStatusResponse,
     FlockRequest,
-    FlockResponse,
-    JobStatus,
     MapRequest,
     MapResponse,
     ScrapeRequest,
@@ -112,6 +106,7 @@ def create_aliases_router(config: HuginnConfig, verify_api_key) -> APIRouter:
     async def batch_scrape_alias(request: Request, req: FlockRequest, auth=Depends(verify_api_key)):
         """Start an asynchronous Firecrawl-style batch scrape job."""
         import asyncio
+
         from ..tasks import run_flock
 
         state = get_state()

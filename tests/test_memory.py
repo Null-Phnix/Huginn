@@ -1,6 +1,5 @@
 """Tests for Huginn ResearchMemory module."""
 
-import pytest
 
 from huginn.memory import ResearchMemory
 

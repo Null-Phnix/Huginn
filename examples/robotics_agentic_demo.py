@@ -12,7 +12,8 @@ This is the demo you can show Stash.
 
 import json
 from pathlib import Path
-from blackreach import Agent, AgentConfig
+
+from blackreach import Agent
 from blackreach.mental_model import mental_model
 
 
@@ -21,18 +22,18 @@ def run_robotics_demo():
     print("BLACKREACH - ROBOTICS & AGENTIC OS DEMO")
     print("Mental Model + Hierarchical Planning + Self-Reflection + StarSearch")
     print("═" * 70)
-    
-    # Use correct Agent class 
+
+    # Use correct Agent class
     from blackreach.agent import AgentConfig
     from blackreach.llm import LLMConfig
-    
+
     agent_config = AgentConfig(
         max_steps=45,
         headless=True,
         download_dir=Path("./robotics_demo_downloads"),
         start_url="https://www.bing.com"  # Most reliable starting point for browser agent
     )
-    
+
     import os
     if not os.getenv("XAI_API_KEY"):
         # Load from Hermes config (high-agency fallback)
@@ -67,9 +68,9 @@ def run_robotics_demo():
         max_tokens=2048,
         max_retries=5
     )
-    
+
     agent = Agent(agent_config=agent_config, llm_config=llm_config)
-    
+
     # Prime the mental model with robotics context (this is what makes it special)
     mental_model.update_belief(
         "Long-horizon robotic tasks require explicit world models, not just reactive policies",
@@ -79,7 +80,7 @@ def run_robotics_demo():
         "StarSearch provides more stable observations than traditional Playwright, reducing perceptual aliasing",
         0.75, "integration_knowledge"
     )
-    
+
     mental_model.add_subgoal(
         description="Build accurate belief state about current state-of-the-art in LLM-robotics integration",
         success_criteria="Synthesize at least 4 distinct approaches with confidence scores",
@@ -90,7 +91,7 @@ def run_robotics_demo():
         success_criteria="Extract 3 concrete examples or principles",
         dependencies=["Build accurate belief state..."]
     )
-    
+
     goal = (
         "Research the current frontier of LLM-powered robotic control. Focus especially on world models, "
         "hierarchical planning, self-reflection, and any 'agentic operating systems' or embodied reasoning work. "
@@ -99,11 +100,11 @@ def run_robotics_demo():
         "(with belief updating, confidence scores, and hierarchical subgoals) maps to these robotic challenges. "
         "At the end, output a clear 'FINAL REPORT:' section with proper markdown formatting."
     )
-    
+
     print("\nStarting demo with primed mental model...")
     print(f"Active subgoals: {len([g for g in mental_model.subgoals if g.status in ('pending', 'in_progress')])}")
     print()
-    
+
     try:
         result = agent.run(goal)
     except Exception as e:
@@ -111,14 +112,14 @@ def run_robotics_demo():
         import traceback
         traceback.print_exc()
         result = {"final_answer": f"Demo crashed: {str(e)}", "reason": str(e)}
-    
+
     print("\n" + "═" * 70)
     print("DEMO COMPLETE - FINAL MENTAL STATE")
     print("═" * 70)
-    
+
     world = mental_model.get_world_state()
     print(json.dumps(world, indent=2))
-    
+
     report_path = Path("robotics_synthesis_report.md")
     final_content = result.get('final_answer') or result.get('reason') or "The agent completed research but did not extract a clean final report. See mental model below for beliefs formed during the run."
 
@@ -129,7 +130,7 @@ def run_robotics_demo():
         f"## Internal Mental Model Summary\n"
         f"{json.dumps(world, indent=2)}\n"
     )
-    
+
     print(f"\nReport saved to: {report_path}")
     print("\nThis demo showcases exactly why Blackreach is relevant to robotics:")
     print("• Persistent hierarchical mental model")

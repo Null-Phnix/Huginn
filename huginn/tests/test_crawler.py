@@ -1,10 +1,11 @@
 """Unit tests for huginn/crawler.py async worker pool and real-time streaming."""
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from huginn.crawler import Crawler
-from huginn.models import ScrapeData, OutputFormat
+from huginn.models import ScrapeData
 
 
 class FakeScraper:
