@@ -192,11 +192,23 @@ async def run_distill(job_id: str, req: DistillRequest):
             examples=req.examples,
         )
 
-        await _job_store.update_job(
-            job_id,
-            status="completed",
-            job_result=result,
-        )
+        # A hard failure (nothing scraped, or every LLM call raised) must not
+        # be reported as "completed": pollers would see success with no data
+        # and no reason. Low-confidence results that did produce data stay
+        # completed with success=False and their validation errors.
+        if result.get("error") and not result.get("success"):
+            await _job_store.update_job(
+                job_id,
+                status="failed",
+                job_result=result,
+                error=str(result["error"]),
+            )
+        else:
+            await _job_store.update_job(
+                job_id,
+                status="completed",
+                job_result=result,
+            )
 
     except asyncio.CancelledError:
         await _job_store.update_job(job_id, status="cancelled", error="Job cancelled")
