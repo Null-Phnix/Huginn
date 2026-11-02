@@ -5,21 +5,10 @@ The /v1/map endpoint engine. Uses DOM walker's link extraction and
 optional sitemap parsing for rapid site mapping.
 """
 
-import asyncio
 import logging
 import re
 from typing import List, Optional, Set
-from urllib.parse import urlparse, urljoin
-logger = logging.getLogger(__name__)
-
-try:
-    from defusedxml import ElementTree as ElementTree
-except ImportError:
-    # Fallback: disable entity expansion as a basic defense
-    from xml.etree import ElementTree
-    import xml.sax
-    xml.sax.make_parser = lambda *a, **kw: xml.sax.make_parser.__wrapped__(*a, **kw) if hasattr(xml.sax.make_parser, '__wrapped__') else xml.sax.make_parser()
-    logger.warning("defusedxml not installed — XML parsing vulnerable to bombs. pip install defusedxml")
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -29,6 +18,15 @@ from .scraper import Scraper
 from .utils import scrape_failure
 
 logger = logging.getLogger(__name__)
+
+try:
+    from defusedxml import ElementTree as ElementTree
+except ImportError:
+    # Fallback: disable entity expansion as a basic defense
+    import xml.sax
+    from xml.etree import ElementTree
+    xml.sax.make_parser = lambda *a, **kw: xml.sax.make_parser.__wrapped__(*a, **kw) if hasattr(xml.sax.make_parser, '__wrapped__') else xml.sax.make_parser()
+    logger.warning("defusedxml not installed — XML parsing vulnerable to bombs. pip install defusedxml")
 
 
 class Mapper:
@@ -277,7 +275,7 @@ class Mapper:
         Returns a CrawlGraph with nodes and edges. Faster than full crawling
         because only links are extracted, not content.
         """
-        from .models import CrawlGraph, PageNode, PageEdge
+        from .models import CrawlGraph, PageEdge, PageNode
 
         parsed = urlparse(start_url)
         base_domain = parsed.netloc
@@ -339,7 +337,6 @@ class Mapper:
                     if depth < max_depth:
                         queue.append((link, depth + 1))
 
-        from .models import CrawlGraph
         return CrawlGraph(
             start_url=start_url,
             nodes=list(nodes.values()),

@@ -7,16 +7,13 @@ URL deduplication, depth limits, and path filtering.
 
 import asyncio
 import hashlib
-import heapq
 import inspect
 import logging
 import re
 import signal
 import time
-from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Set
-from urllib.parse import urlparse, urljoin
-from pathlib import PurePosixPath
+from urllib.parse import urlparse
 
 import httpx
 

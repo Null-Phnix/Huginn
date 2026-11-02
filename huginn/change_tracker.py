@@ -12,7 +12,6 @@ a Redis or sqlite backend without changing the public API.
 
 import asyncio
 import difflib
-import hashlib
 import time
 from typing import Any, Dict, Optional
 

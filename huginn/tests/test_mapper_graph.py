@@ -1,8 +1,10 @@
 """Unit tests for huginn/mapper.py graph mapping (Task 7)."""
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from huginn.models import PageNode, PageEdge, CrawlGraph
+
+import pytest
+
 from huginn.mapper import Mapper
+from huginn.models import CrawlGraph, PageEdge, PageNode
 
 
 class FakeBrowser:

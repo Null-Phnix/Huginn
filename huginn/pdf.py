@@ -7,9 +7,7 @@ Firecrawl has had this feature request open since Oct 2024 with no progress.
 We shipped it in one session.
 """
 
-import io
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

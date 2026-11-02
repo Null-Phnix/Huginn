@@ -12,16 +12,13 @@ import glob
 import json
 import logging
 import re
-import time
 from enum import Enum
-from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
-
-from playwright.async_api import async_playwright, Browser, Page, BrowserContext
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from pydantic import BaseModel, Field
 
 from .config import BrowserConfig
 
@@ -261,7 +258,7 @@ class StarSearchBackend:
         links: List[str] = (resp.get("result") or {}).get("value") or []
         if base_url:
             domain = urlparse(base_url).netloc
-            links = [l for l in links if urlparse(l).netloc == domain]
+            links = [link for link in links if urlparse(link).netloc == domain]
         return links
 
     async def take_screenshot(self, full_page: bool = True) -> str:
@@ -854,7 +851,7 @@ class BrowserManager:
             # Filter to same domain if base_url provided
             parsed = urlparse(base_url)
             domain = parsed.netloc
-            raw_links = [l for l in raw_links if urlparse(l).netloc == domain]
+            raw_links = [link for link in raw_links if urlparse(link).netloc == domain]
 
         return raw_links
 

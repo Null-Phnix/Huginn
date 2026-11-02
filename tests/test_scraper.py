@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from huginn.models import ScrapeData, OutputFormat
+from huginn.models import ScrapeData
 from huginn.scraper import RenderMode, detect_render_mode
 
 
@@ -162,6 +162,7 @@ class TestScrapeRequestMaxRetries:
 
     def test_max_retries_validation(self):
         import pydantic
+
         from huginn.models import ScrapeRequest
         with pytest.raises(pydantic.ValidationError):
             ScrapeRequest(url="https://example.com", max_retries=10)
@@ -329,7 +330,6 @@ class TestScraperResilienceConstructor:
 class TestStarSearchFailClosed:
     @pytest.mark.asyncio
     async def test_explicit_starsearch_mode_uses_daemon(self):
-        from huginn.models import ScrapeData
         from huginn.scraper import Scraper
 
         browser = MagicMock()

@@ -41,9 +41,13 @@ include = ["huginn_client*"]
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint.per-file-ignores]
+# One-line `if x: payload[k] = x` builders are this file's house style.
+"huginn_client/__init__.py" = ["E701", "E702"]
+
 [tool.ruff.format]
 quote-style = "double"
-indent-style = "spaces"
+indent-style = "space"
 
 [tool.mypy]
 python_version = "3.10"

@@ -19,10 +19,8 @@ automatically. The current static limiter is purely preventative —
 this adds a reactive layer.
 """
 
-import asyncio
+
 import pytest
-import time
-from collections import deque
 
 from huginn.domain_rate_limiter import (
     DomainLimitConfig,

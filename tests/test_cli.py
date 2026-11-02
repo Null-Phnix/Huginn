@@ -1,8 +1,8 @@
 """Tests for Huginn CLI."""
 
 from click.testing import CliRunner
-from huginn.cli import cli
 
+from huginn.cli import cli
 
 runner = CliRunner()
 
@@ -116,9 +116,7 @@ class TestInteractiveDispatch:
         async def fake_map():
             calls["map"] = True
         monkeypatch.setattr("huginn.cli._i_map", fake_map)
-        from huginn.cli import _interactive_mode as _im
         # need to patch _run_async to run just once then break
-        orig_run_async = __import__("huginn.cli", fromlist=["_run_async"])._run_async
         call_count = [0]
         def fake_run_async(coro):
             call_count[0] += 1
@@ -135,11 +133,9 @@ class TestInteractiveDispatch:
         import rich.console
         monkeypatch.setattr("huginn.cli.console", rich.console.Console(stderr=True, quiet=True))
         # Monkeypatch while True to only iterate once
-        import huginn.cli as cli_mod
-        orig_interactive = cli_mod._interactive_mode
 
         def oneshot_mode():
-            from huginn.cli import console, _menu, _print_banner, _run_async
+            from huginn.cli import _menu, _print_banner
             _print_banner()
             _menu()
             choice = input("").strip()

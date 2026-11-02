@@ -13,17 +13,15 @@ These tests cover the algorithm correctness — no real network calls.
 """
 
 import asyncio
+
 import pytest
-import time
 
 from huginn.domain_rate_limiter import (
     DomainLimitConfig,
-    DomainBucket,
     DomainRateLimiter,
     RateLimitContext,
     get_domain_rate_limiter,
 )
-
 
 # ─── DomainLimitConfig ──────────────────────────────────────────────────────
 

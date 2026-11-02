@@ -123,7 +123,6 @@ class MetricsMiddleware:
             return
 
         method = scope.get("method", "GET")
-        path = scope.get("path", "")
         endpoint_key = _get_endpoint_key(scope)
 
         start = time.perf_counter()

@@ -5,15 +5,13 @@ Tests actual scraping against a real site (example.com).
 Requires Playwright chromium to be installed.
 """
 
-import asyncio
-import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from huginn.config import HuginnConfig
 from huginn.browser import BrowserManager
-from huginn.scraper import Scraper
+from huginn.config import HuginnConfig
 from huginn.models import OutputFormat
+from huginn.scraper import Scraper
 
 
 @pytest.fixture

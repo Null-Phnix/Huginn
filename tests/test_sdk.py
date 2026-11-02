@@ -17,7 +17,6 @@ if os.path.isdir(_sdk_path) and _sdk_path not in sys.path:
 
 import httpx
 import pytest
-
 from huginn_client import (
     CircuitOpenError,
     HuginnClient,

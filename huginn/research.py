@@ -26,7 +26,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from .browser import BrowserManager
-from .circuit_breaker import get_circuit_breaker, extract_domain
+from .circuit_breaker import extract_domain, get_circuit_breaker
 from .extractor import Extractor
 from .mapper import Mapper
 from .models import OutputFormat
@@ -413,7 +413,7 @@ class ResearchAgent:
         """Extract first meaningful paragraph as summary."""
         if not markdown:
             return ""
-        lines = [l.strip() for l in markdown.split("\n") if l.strip()]
+        lines = [ln.strip() for ln in markdown.split("\n") if ln.strip()]
         for line in lines:
             if len(line) > 50:
                 return line[:max_length]
@@ -438,7 +438,7 @@ class ResearchAgent:
             "'contradictions' key containing an array of conflict objects, each with "
             "'claim_a', 'claim_b', 'source_a', 'source_b' fields. "
             "If no contradictions, return {'contradictions': []}.\n\n"
-            f"Sources:\n" + "\n".join(claims[:10])
+            "Sources:\n" + "\n".join(claims[:10])
         )
 
         try:

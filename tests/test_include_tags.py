@@ -10,12 +10,12 @@ These tests verify the CSS-selector-based filtering works for all standard
 HTML tag types that Firecrawl documents and a few common extra ones.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from huginn.scraper import Scraper
-from huginn.models import ScrapeRequest, OutputFormat, ScrapeData
+import pytest
 
+from huginn.models import ScrapeData, ScrapeRequest
+from huginn.scraper import Scraper
 
 # ─── Tag types to verify ────────────────────────────────────────────────────
 # Firecrawl documents support for: script, style, img, a, svg, iframe, div,

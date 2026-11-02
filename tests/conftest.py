@@ -1,9 +1,8 @@
 """Test fixtures and shared utilities for Huginn tests."""
 
-import asyncio
 import os
 import tempfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

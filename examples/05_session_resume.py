@@ -18,14 +18,13 @@ Run:
     python examples/05_session_resume.py --resume 42
 """
 
+import argparse
 import os
 import sys
-import signal
-import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from blackreach.agent import Agent, AgentConfig, AgentCallbacks
+from blackreach.agent import Agent, AgentCallbacks, AgentConfig
 from blackreach.llm import LLMConfig
 
 

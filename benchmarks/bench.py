@@ -11,12 +11,11 @@ Output: benchmarks/results/latest.json + stdout table
 
 import asyncio
 import json
-import os
 import sys
 import time
 import tracemalloc
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, List
 

@@ -25,7 +25,7 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from blackreach.agent import Agent, AgentConfig, AgentCallbacks
+from blackreach.agent import Agent, AgentCallbacks, AgentConfig
 from blackreach.llm import LLMConfig
 
 
@@ -111,13 +111,13 @@ class ProgressTracker:
 
     def print_summary(self):
         """Print a summary of what happened during the run."""
-        print(f"\n--- Progress Summary ---")
+        print("\n--- Progress Summary ---")
         print(f"  Steps taken: {self.steps_taken}")
         elapsed = time.time() - (self.start_time or time.time())
         print(f"  Total time:  {elapsed:.1f}s")
 
         if self.action_counts:
-            print(f"  Actions taken:")
+            print("  Actions taken:")
             for action, count in sorted(self.action_counts.items(), key=lambda x: -x[1]):
                 print(f"    {action}: {count}x")
 
@@ -154,7 +154,7 @@ def main():
     )
 
     print(f"Goal: {goal}")
-    print(f"Tracking all agent events with ProgressTracker...\n")
+    print("Tracking all agent events with ProgressTracker...\n")
     print("-" * 60)
 
     agent = Agent(llm_config=llm_config, agent_config=agent_config, callbacks=callbacks)

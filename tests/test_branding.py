@@ -7,10 +7,8 @@ title, UA default, env var prefix) should read from. If a rebrand
 ever needs to happen, this file pins the expected surface.
 """
 
-import pytest
 
-from huginn import _branding
-from huginn import __version__
+from huginn import __version__, _branding
 
 
 class TestBrandingIdentity:
@@ -91,7 +89,7 @@ class TestBrandingBanner:
         # If you set ascii_banner = None, importing and reading should work
         # (we don't actually mutate the module — that would break other tests)
         # Just verify the type annotation allows Optional[str].
-        from typing import get_type_hints, Optional
+        from typing import Optional, get_type_hints
         hints = get_type_hints(_branding)
         # The annotation is Optional[str] which on Python 3.10+ renders as
         # `str | None`, on 3.9 as `Optional[str]`, on 3.12 still str | None.

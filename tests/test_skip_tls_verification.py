@@ -12,8 +12,9 @@ default-on (matches Firecrawl's actual default, preserves the historical
 Huginn behavior for any existing user).
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from huginn.models import ScrapeRequest
 
@@ -36,7 +37,7 @@ class TestScrapeRequestTlsField:
         req = ScrapeRequest(url="https://example.com", skip_tls_verification=True)
         assert req.skip_tls_verification is True
 
-    def test_alias_skipTlsVerification_accepted(self):
+    def test_alias_skipTlsVerification_accepted(self):  # noqa: N802 - names the camelCase alias
         """Firecrawl uses camelCase `skipTlsVerification` in their JSON
         wire format. We accept both snake_case and camelCase so a
         Firecrawl-porting user can paste their request verbatim."""

@@ -1,11 +1,10 @@
 """Health, readiness, and metrics endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi import Request
 
 from .. import __version__
 from ..metrics import get_per_endpoint_stats
-from ..state import get_state, limiter
+from ..state import get_state
 
 
 def create_health_router(verify_api_key) -> APIRouter:
@@ -47,7 +46,7 @@ def create_health_router(verify_api_key) -> APIRouter:
     async def health_detailed(auth=Depends(verify_api_key)):
         """Detailed health check with circuit breaker and cache statistics."""
         from ..cache import get_response_cache
-        from ..circuit_breaker import get_circuit_breaker, extract_domain
+        from ..circuit_breaker import get_circuit_breaker
         from ..starsearch_scrape import daemon_status
 
         state = get_state()

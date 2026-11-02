@@ -2,7 +2,6 @@
 Tests for Huginn Crawler — URL normalization, path filtering, BFS logic.
 """
 
-import pytest
 
 from huginn.crawler import Crawler, CrawlResult
 

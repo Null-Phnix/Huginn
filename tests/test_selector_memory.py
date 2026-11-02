@@ -12,11 +12,8 @@ Memory is per-URL, in-memory, bounded. Stays out of the way of
 cache invalidation — selectors are heuristics, not authoritative.
 """
 
-import pytest
-from collections import Counter
 
 from huginn.selector_memory import SelectorMemory
-
 
 # ─── Recording ───────────────────────────────────────────────────────────────
 

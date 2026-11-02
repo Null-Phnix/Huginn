@@ -18,7 +18,6 @@ from typing import Optional
 
 import httpx
 
-
 # ─── Provider config ─────────────────────────────────────────────────────────
 
 LLM_PROVIDER_CONFIG: dict[str, dict[str, str]] = {

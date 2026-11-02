@@ -2,10 +2,7 @@
 Tests for Huginn Job Store.
 """
 
-import asyncio
 import json
-import os
-import tempfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -109,6 +106,7 @@ class TestJobStore:
 
         pending_jobs = await job_store.list_jobs(status="pending")
         assert len(pending_jobs) == 2
+        assert {j["id"] for j in pending_jobs} == {id2, id3}
 
     @pytest.mark.asyncio
     async def test_delete_job(self, job_store):

@@ -11,14 +11,12 @@ Usage:
     python auto_transition.py --after-hours 2    # Transition after 2 more hours
 """
 
+import argparse
+import json
 import subprocess
 import time
-import json
-import os
-import sys
-from pathlib import Path
 from datetime import datetime, timedelta
-import argparse
+from pathlib import Path
 
 # Paths
 PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -98,7 +96,7 @@ def get_current_cycle() -> int:
         with open(STATUS_FILE) as f:
             data = json.load(f)
             return data.get("cycle", 0)
-    except:
+    except Exception:
         return 0
 
 
@@ -108,7 +106,7 @@ def get_loop_phase() -> str:
         with open(STATUS_FILE) as f:
             data = json.load(f)
             return data.get("phase", "unknown")
-    except:
+    except Exception:
         return "unknown"
 
 
@@ -413,7 +411,7 @@ def main():
     results = run_all_user_tests()
 
     # Generate report
-    report = generate_findings_report(results)
+    generate_findings_report(results)
 
     # Summary
     passed = sum(1 for r in results if r["success"])

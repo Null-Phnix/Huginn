@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..config import HuginnConfig
-from ..models import WatchRequest, WatchResponse, WatchStatusResponse, WatchSnapshot
+from ..models import WatchRequest, WatchResponse, WatchSnapshot, WatchStatusResponse
 from ..state import get_state
 from ..utils import _map_exception_to_error_code
 
@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
     router = APIRouter()
 
-    from ..watcher import PageWatcher, get_watch_store, compute_content_hash
-    from ..models import ErrorCode as EC
+    from ..models import ErrorCode as EC  # noqa: N817
+    from ..watcher import get_watch_store
 
     @router.post("/v1/watch", response_model=WatchResponse, tags=["Watch"])
     async def watch_page(req: WatchRequest, auth=Depends(verify_api_key)):
@@ -66,7 +66,7 @@ def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
         await cb.record_success(domain)
 
         # Register watching
-        entry = await store.watch(
+        await store.watch(
             url=req.url,
             selectors=req.selectors,
             webhook_url=req.webhook_url,
@@ -90,7 +90,6 @@ def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
     @router.get("/v1/watch/{url:path}", response_model=WatchStatusResponse, tags=["Watch"])
     async def get_watch_status(url: str, auth=Depends(verify_api_key)):
         """Get the current status and history of a watched page."""
-        from ..watcher import extract_domain
 
         store = get_watch_store()
         entry = await store.get(url)

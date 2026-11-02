@@ -9,9 +9,10 @@ mobile=False (default) → no device descriptor, desktop rendering.
 mobile=True → pass playwright.devices["iPhone 13"] to new_context().
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 import inspect
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from huginn.browser import BrowserManager
 from huginn.models import ScrapeRequest
@@ -144,7 +145,7 @@ class TestScraperMobileWiring:
         scraper = Scraper(mock_browser)
         scraper._get_http_client = MagicMock()
 
-        result = await scraper.scrape(
+        await scraper.scrape(
             url="https://example.com",
             mobile=True,
             render_mode="full",
@@ -179,7 +180,7 @@ class TestScraperMobileWiring:
         scraper = Scraper(mock_browser)
         scraper._get_http_client = MagicMock()
 
-        result = await scraper.scrape(
+        await scraper.scrape(
             url="https://example.com",
             mobile=False,
             render_mode="full",

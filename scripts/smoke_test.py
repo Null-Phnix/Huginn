@@ -23,9 +23,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from huginn import __version__
 from huginn.browser import BrowserManager
-from huginn.scraper import Scraper, RenderMode
 from huginn.models import OutputFormat
-
+from huginn.scraper import Scraper
 
 # ── Mock sites served from localhost ───────────────────────────────────────
 

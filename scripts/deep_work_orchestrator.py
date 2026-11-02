@@ -12,11 +12,8 @@ Usage:
 
 import argparse
 import json
-import os
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
-
 
 WORK_DIR = Path(__file__).resolve().parents[1]
 LOG_DIR = WORK_DIR / "deep_work_logs"

@@ -31,7 +31,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re
 import time
@@ -43,7 +42,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .browser import BrowserManager
-from .circuit_breaker import get_circuit_breaker, extract_domain
+from .circuit_breaker import extract_domain, get_circuit_breaker
 from .extractor import Extractor
 from .mapper import Mapper
 from .models import OutputFormat
@@ -496,10 +495,12 @@ class DeepResearcher:
 
         # Scrape top URLs in parallel (limit concurrency)
         sem = asyncio.Semaphore(3)
-        scrape_tasks = [
-            self._scrape_and_extract(question, url, beliefs)
-            for url in search_urls[:5]  # Top 5 per question
-        ]
+
+        async def _bounded(url: str):
+            async with sem:
+                return await self._scrape_and_extract(question, url, beliefs)
+
+        scrape_tasks = [_bounded(url) for url in search_urls[:5]]  # Top 5 per question
 
         results = await asyncio.gather(*scrape_tasks, return_exceptions=True)
 

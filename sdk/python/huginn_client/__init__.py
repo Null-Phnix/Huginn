@@ -1,7 +1,8 @@
 """Huginn Python SDK - async client for autonomous web scraping."""
 from __future__ import annotations
-import json, os
-from typing import Any, AsyncIterator, TypeVar
+import json
+import os
+from typing import Any, AsyncIterator
 import httpx
 from pydantic import BaseModel
 from huginn.models import (

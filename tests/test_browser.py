@@ -3,12 +3,11 @@ Tests for Huginn Browser Manager — Unit tests for pure logic.
 Browser-dependent tests are in integration tests.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from huginn.browser import BrowserManager, STEALTH_INIT_JS
+from huginn.browser import STEALTH_INIT_JS, BrowserManager
 
 
 class TestBrowserManager:
@@ -138,8 +137,9 @@ class TestScrollConfig:
         assert config.scroll_to_bottom is False
 
     def test_scroll_config_max_scrolls_clamped(self):
-        from huginn.browser import ScrollConfig
         import pytest
+
+        from huginn.browser import ScrollConfig
         # max_scrolls must be >= 1 — Pydantic enforces this
         with pytest.raises(Exception):
             ScrollConfig(max_scrolls=0)

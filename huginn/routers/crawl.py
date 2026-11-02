@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.responses import StreamingResponse
@@ -14,7 +13,6 @@ from ..models import (
     CrawlStartResponse,
     CrawlStatusResponse,
     JobStatus,
-    OutputFormat,
     ScrapeData,
 )
 from ..state import get_state, limiter
@@ -29,7 +27,7 @@ async def _do_start_sweep(req: CrawlRequest, config: HuginnConfig):
         raise HTTPException(status_code=503, detail="Browser not initialized")
 
     if req.stream:
-        from ..tasks import stream_crawl, jsonl_stream_crawl
+        from ..tasks import jsonl_stream_crawl, stream_crawl
         if req.format == "jsonl":
             return StreamingResponse(
                 jsonl_stream_crawl(req),
@@ -85,7 +83,7 @@ async def _do_get_sweep_status(job_id: str) -> CrawlStatusResponse:
     expires_at = None
     if job.get("expires_at"):
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
             expires_at = datetime.fromisoformat(job["expires_at"])
         except (ValueError, TypeError):
             pass

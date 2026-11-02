@@ -26,8 +26,8 @@ import json
 import os
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 try:
     import httpx
@@ -354,7 +354,7 @@ def main():
     # schedule
     p_sched = sub.add_parser("schedule", help="Manage scheduled jobs")
     sp = p_sched.add_subparsers(dest="schedule_cmd")
-    sp_list = sp.add_parser("list", help="List schedules")
+    sp.add_parser("list", help="List schedules")
     sp_del = sp.add_parser("delete", help="Delete a schedule")
     sp_del.add_argument("schedule_id", help="Schedule ID")
     sp_create = sp.add_parser("create", help="Create a schedule")
