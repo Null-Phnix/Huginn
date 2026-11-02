@@ -43,11 +43,20 @@ def _is_ollama_cloud_url(value: str) -> bool:
 class ExtractionResult:
     """Result of a structured extraction attempt."""
 
-    def __init__(self, data: Dict[str, Any], confidence: float, attempts: int, validation_errors: Optional[List[str]] = None):
+    def __init__(
+        self,
+        data: Dict[str, Any],
+        confidence: float,
+        attempts: int,
+        validation_errors: Optional[List[str]] = None,
+        error: Optional[str] = None,
+    ):
         self.data = data
         self.confidence = confidence
         self.attempts = attempts
         self.validation_errors = validation_errors or []
+        # Set only when no attempt produced any output (every LLM call raised).
+        self.error = error
 
 
 class Extractor:
@@ -97,10 +106,12 @@ class Extractor:
 
         Returns:
             Dict with "data", "confidence", "attempts", "sources", "success",
-            and optionally "validation_errors", "raw_response".
+            and optionally "validation_errors", "raw_response", and "error"
+            (set when nothing was scraped or every LLM call raised).
         """
         all_texts: List[str] = []
         page_metadata: List[Dict] = []
+        scrape_errors: Dict[str, str] = {}
 
         # Scrape all URLs concurrently
         tasks = [self.scraper.scrape(url=url, formats=[OutputFormat.MARKDOWN]) for url in urls]
@@ -109,6 +120,7 @@ class Extractor:
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.error("Failed to scrape %s: %s", urls[i], result)
+                scrape_errors[urls[i]] = str(result) or type(result).__name__
                 continue
             if isinstance(result, ScrapeData) and result.markdown:
                 all_texts.append(result.markdown)
@@ -122,7 +134,10 @@ class Extractor:
             return {
                 "error": "No content could be extracted from any URL",
                 "success": False,
-                "sources": [{"url": u, "error": "failed"} for u in urls],
+                "sources": [
+                    {"url": u, "error": scrape_errors.get(u, "page returned no content")}
+                    for u in urls
+                ],
             }
 
         # Concatenate with page markers
@@ -158,6 +173,8 @@ class Extractor:
         }
         if result.validation_errors:
             response["validation_errors"] = result.validation_errors
+        if result.error:
+            response["error"] = result.error
         if include_raw and hasattr(result, "_raw_response"):
             response["raw_response"] = getattr(result, "_raw_response")
 
@@ -294,6 +311,8 @@ class Extractor:
         best_confidence = 0.0
         best_errors: List[str] = []
         last_raw_response = ""
+        last_error: Optional[str] = None
+        any_answer = False
 
         sys_msg = system_prompt or (
             "You are a precise data extraction engine. You extract structured data "
@@ -326,6 +345,7 @@ class Extractor:
                     full_prompt, schema, sys_msg, force_json=True
                 )
                 last_raw_response = raw_response
+                any_answer = True
 
                 # Validate
                 if pydantic_model is not None:
@@ -366,15 +386,22 @@ class Extractor:
 
             except Exception as e:
                 logger.warning("Extraction attempt %d failed: %s", attempt, e)
+                last_error = str(e)
                 if self.mental_model:
                     beliefs[f"attempt_{attempt}_error"] = str(e)[:200]
 
-        # Return best result even if below threshold
+        # Return best result even if below threshold. If no attempt got an
+        # answer at all, carry the last exception so callers can report *why*
+        # instead of a bare "failed" that only the server log explains.
+        error = None
+        if not any_answer:
+            error = f"All {self.max_retries} extraction attempts failed. Last error: {last_error}"
         result = ExtractionResult(
             best_data if best_data else {"error": "All extraction attempts failed"},
             best_confidence,
             self.max_retries,
             best_errors,
+            error=error,
         )
         result._raw_response = last_raw_response  # type: ignore
         return result
