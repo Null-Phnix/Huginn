@@ -5,7 +5,6 @@ and fires the appropriate job handlers with retry/webhook support.
 """
 
 import asyncio
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -242,7 +241,8 @@ class Scheduler:
     ) -> None:
         """Fire a webhook for a scheduled job."""
         try:
-            import httpx
+            from .webhook import send_webhook
+
             payload = {
                 "event": "schedule.fired",
                 "schedule_id": schedule["id"],
@@ -254,12 +254,12 @@ class Scheduler:
             if error:
                 payload["error"] = error
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
-                logger.info(f"Schedule webhook fired to {url}")
+            if await send_webhook(url, payload, timeout=10.0):
+                logger.info("Schedule webhook fired")
+            else:
+                logger.warning("Schedule webhook delivery failed")
         except Exception as e:
-            logger.warning(f"Schedule webhook failed to {url}: {e}")
+            logger.warning("Schedule webhook failed: %s", type(e).__name__)
 
     async def _loop(self, interval: int = 30) -> None:
         """Main scheduler loop."""

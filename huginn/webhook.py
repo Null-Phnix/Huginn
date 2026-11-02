@@ -5,7 +5,7 @@ No polling. Huginn calls YOUR endpoint when sweep/distill/flock finishes.
 Usage:
     # Add webhook to any job request
     result = await client.sweep(url="https://example.com", webhook_url="https://myapp.com/hook")
-    
+
     # Your endpoint receives:
     # {
     #   "event": "job.completed",      # or "job.failed"
@@ -24,16 +24,94 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timezone
+import socket
 from typing import Any, Optional
+from urllib.parse import urlparse
 
-import httpx
+import aiohttp
+from aiohttp.abc import AbstractResolver, ResolveResult
+
+from .security import ResolvedPublicTarget, resolve_public_url_target
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEBHOOK_TIMEOUT = 10.0  # seconds
 DEFAULT_MAX_RETRIES = 3
 RETRY_DELAYS = [1, 3, 10]  # seconds between retries
+
+
+class _PinnedResolver(AbstractResolver):
+    """Resolve one approved hostname only to its prevalidated addresses."""
+
+    def __init__(self, target: ResolvedPublicTarget):
+        self._target = target
+
+    async def resolve(
+        self,
+        host: str,
+        port: int = 0,
+        family: socket.AddressFamily = socket.AF_INET,
+    ) -> list[ResolveResult]:
+        normalized = host.rstrip(".").encode("idna").decode("ascii").lower()
+        if normalized != self._target.hostname or port != self._target.port:
+            raise OSError("Refusing to resolve an unvalidated webhook target")
+
+        results = [
+            ResolveResult(
+                hostname=host,
+                host=address,
+                port=port,
+                family=address_family,
+                proto=socket.IPPROTO_TCP,
+                flags=socket.AI_NUMERICHOST,
+            )
+            for address_family, address in self._target.addresses
+            if family in {socket.AF_UNSPEC, address_family}
+        ]
+        if not results:
+            raise OSError("Validated webhook target has no address for this socket family")
+        return results
+
+    async def close(self) -> None:
+        return None
+
+
+def _target_label(url: str) -> str:
+    """Return a log-safe target label without credentials, query, or fragment."""
+    try:
+        return urlparse(url).hostname or "invalid target"
+    except ValueError:
+        return "invalid target"
+
+
+async def _deliver_webhook(
+    *,
+    url: str,
+    body: bytes,
+    headers: dict[str, str],
+    timeout: float,
+) -> None:
+    """Deliver through one DNS-pinned public target without redirects."""
+    target = await resolve_public_url_target(url)
+    connector = aiohttp.TCPConnector(
+        resolver=_PinnedResolver(target),
+        family=socket.AF_UNSPEC,
+        use_dns_cache=True,
+        ttl_dns_cache=None,
+    )
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    async with aiohttp.ClientSession(
+        connector=connector,
+        timeout=client_timeout,
+        trust_env=False,
+    ) as client:
+        async with client.post(
+            url,
+            data=body,
+            headers=headers,
+            allow_redirects=False,
+        ) as response:
+            response.raise_for_status()
 
 
 def _compute_signature(body: bytes, secret: str) -> str:
@@ -83,13 +161,16 @@ async def send_webhook(
         headers["X-Huginn-Webhook-Secret"] = secret
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, content=body_bytes, headers=headers)
-            resp.raise_for_status()
-            logger.info(f"Webhook delivered to {url}")
-            return True
+        await _deliver_webhook(
+            url=url,
+            body=body_bytes,
+            headers=headers,
+            timeout=timeout,
+        )
+        logger.info("Webhook delivered to %s", _target_label(url))
+        return True
     except Exception as e:
-        logger.warning(f"Webhook failed to {url}: {e}")
+        logger.warning("Webhook failed to %s: %s", _target_label(url), type(e).__name__)
         return False
 
 
@@ -106,9 +187,19 @@ async def send_webhook_with_retry(
             return True
         if attempt < max_retries:
             delay = RETRY_DELAYS[attempt] if attempt < len(RETRY_DELAYS) else RETRY_DELAYS[-1]
-            logger.info(f"Retrying webhook to {url} in {delay}s (attempt {attempt + 2}/{max_retries + 1})")
+            logger.info(
+                "Retrying webhook to %s in %ss (attempt %s/%s)",
+                _target_label(url),
+                delay,
+                attempt + 2,
+                max_retries + 1,
+            )
             await asyncio.sleep(delay)
-    logger.error(f"Webhook failed after {max_retries + 1} attempts: {url}")
+    logger.error(
+        "Webhook failed after %s attempts: %s",
+        max_retries + 1,
+        _target_label(url),
+    )
     return False
 
 

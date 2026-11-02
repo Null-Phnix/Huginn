@@ -2,10 +2,24 @@
 Tests for Huginn Extractor — LLM prompt building, JSON parsing, schema validation.
 """
 
-import json
+from unittest.mock import AsyncMock
+
 import pytest
 
-from huginn.extractor import Extractor, ExtractionResult
+from huginn.extractor import ExtractionResult, Extractor, _is_ollama_cloud_url
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://ollama.com/api", True),
+        ("https://ollama.com.attacker.example/api", False),
+        ("https://attacker.example/?next=ollama.com", False),
+        ("http://127.0.0.1:11434", False),
+    ],
+)
+def test_ollama_cloud_detection_uses_exact_hostname(url, expected):
+    assert _is_ollama_cloud_url(url) is expected
 
 
 class TestPromptBuilding:
@@ -416,6 +430,28 @@ class TestPydanticValidation:
         result = self.extractor._validate_with_pydantic("not a dict", Product)
         assert result["confidence"] < 1.0
         assert "validation_errors" in result
+
+    @pytest.mark.asyncio
+    async def test_pydantic_model_reaches_retry_pipeline(self):
+        from pydantic import BaseModel
+
+        class Product(BaseModel):
+            name: str
+            price: float
+
+        self.extractor._call_llm = AsyncMock(
+            return_value=({"name": "Widget", "price": 19.99}, '{"name":"Widget"}')
+        )
+        result = await self.extractor._extract_with_llm(
+            "extract a product",
+            schema=None,
+            system_prompt=None,
+            raw_text="Widget costs 19.99",
+            pydantic_model=Product,
+        )
+
+        assert result.confidence == 1.0
+        assert result.data == {"name": "Widget", "price": 19.99}
 
 
 class TestExamplesInPrompt:
