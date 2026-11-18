@@ -398,7 +398,19 @@ def _command_payload(session_id: str, req: BrowserSessionCommandRequest) -> dict
         payload["script"] = _require(req.script, "script", req.command)
     elif req.command == BrowserCommand.SET_COOKIES:
         payload["cookies"] = _require(req.cookies, "cookies", req.command)
-    elif req.command == BrowserCommand.GET_CONTENT and req.selector:
+    elif req.command == BrowserCommand.GET_CONTENT and req.selector is not None:
+        if not req.selector.strip():
+            # An empty selector used to be skipped as falsy, so the caller
+            # silently got the whole page back instead of an error.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_selector",
+                    "message": "get_content selector is empty; omit it to get the whole page",
+                    "layer": "huginn",
+                    "retryable": False,
+                },
+            )
         # Only the matching elements' outer HTML, instead of the whole page
         # (which ran to millions of characters on shop pages, Scriptorium
         # blackreach#2). Needs a StarSearch daemon that supports it; older
@@ -763,7 +775,7 @@ def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIR
             if lease and _proves_proxy_egress(req):
                 lease.report_success()
             result = response.get("result")
-            if req.command == BrowserCommand.GET_CONTENT and req.selector:
+            if req.command == BrowserCommand.GET_CONTENT and req.selector is not None:
                 result = _select_content(result, req.selector)
             return {
                 "success": True,

@@ -83,6 +83,7 @@ class CircuitBreaker:
         Raises CircuitOpenError when the circuit is open, or when it is
         half-open and its probe slots are already taken.
         """
+        probe_epoch: Optional[int] = None
         async with self._lock:
             info = self._domains.get(domain)
             if info is not None:
@@ -93,20 +94,22 @@ class CircuitBreaker:
                     if info.half_open_calls >= self.half_open_max_calls:
                         raise CircuitOpenError(f"Circuit half-open, probe already in flight for {domain}")
                     info.half_open_calls += 1
+                    # Only this probe may decide the half-open window.
+                    probe_epoch = info.probe_epoch
 
         # Allow the call
         try:
             result = await fn(*args, **kwargs)
         except Exception as exc:
             if host_ok_errors and isinstance(exc, host_ok_errors):
-                await self._record_success(domain)
+                await self._record_success(domain, probe_epoch)
             else:
-                await self._record_failure(domain)
+                await self._record_failure(domain, probe_epoch)
             raise
         if failure_if is not None and failure_if(result):
-            await self._record_failure(domain)
+            await self._record_failure(domain, probe_epoch)
         else:
-            await self._record_success(domain)
+            await self._record_success(domain, probe_epoch)
         return result
 
     def is_open(self, domain: str) -> bool:
@@ -152,11 +155,15 @@ class CircuitBreaker:
         return self._advance(domain, info, time.monotonic())
 
     async def record_failure(self, domain: str):
-        """Record a failure for domain (public API)."""
+        """Record a failure for domain (public API).
+
+        Counts toward opening a CLOSED circuit. It never decides a half-open
+        circuit: only the probe that ``call()`` let through does that.
+        """
         await self._record_failure(domain)
 
     async def record_success(self, domain: str):
-        """Record a success for domain (public API)."""
+        """Record a success for domain (public API). Like :meth:`record_failure`, it never decides a half-open circuit."""
         await self._record_success(domain)
 
     async def get_stats(self) -> dict[str, dict]:
@@ -204,6 +211,7 @@ class CircuitBreaker:
             info.state = CircuitState.HALF_OPEN
             info.state_since = now
             info.half_open_calls = 0
+            info.probe_epoch += 1
             logger.info(f"Circuit breaker HALF_OPEN for {domain}")
         elif (
             info.state == CircuitState.HALF_OPEN
@@ -212,23 +220,26 @@ class CircuitBreaker:
         ):
             info.state_since = now
             info.half_open_calls = 0
+            # The abandoned probe's eventual result is stale from here on.
+            info.probe_epoch += 1
             logger.info(f"Circuit breaker HALF_OPEN probe timed out for {domain}, allowing a new probe")
         return info.state
 
-    async def _record_success(self, domain: str):
+    async def _record_success(self, domain: str, probe_epoch: Optional[int] = None):
         async with self._lock:
             info = self._domains.setdefault(domain, _CircuitInfo())
             info.total_successes += 1
             info.last_success_time = time.monotonic()
             info.consecutive_failures = 0
 
-            # HALF_OPEN success -> CLOSED
-            if info.state == CircuitState.HALF_OPEN:
+            # The current probe succeeding -> CLOSED. Outcomes from calls that
+            # started before this half-open window don't decide it.
+            if info.state == CircuitState.HALF_OPEN and probe_epoch == info.probe_epoch:
                 info.state = CircuitState.CLOSED
                 info.state_since = time.monotonic()
                 logger.info(f"Circuit breaker CLOSED (recovered) for {domain}")
 
-    async def _record_failure(self, domain: str):
+    async def _record_failure(self, domain: str, probe_epoch: Optional[int] = None):
         async with self._lock:
             info = self._domains.setdefault(domain, _CircuitInfo())
             info.total_failures += 1
@@ -236,7 +247,12 @@ class CircuitBreaker:
             info.consecutive_failures += 1
 
             if info.state == CircuitState.HALF_OPEN:
-                # Any failure in HALF_OPEN reopens immediately
+                if probe_epoch != info.probe_epoch:
+                    # A straggler that started before this half-open window
+                    # (or an abandoned probe reporting late). Reopening here
+                    # would push recovery out again without ever probing.
+                    return
+                # The current probe failed: reopen immediately
                 info.state = CircuitState.OPEN
                 info.state_since = time.monotonic()
                 logger.warning(f"Circuit breaker re-OPEN for {domain} (half-open probe failed)")
@@ -267,6 +283,7 @@ class _CircuitInfo:
         "last_failure_time",
         "last_success_time",
         "half_open_calls",
+        "probe_epoch",
         "_failure_timestamps",
     )
 
@@ -279,6 +296,9 @@ class _CircuitInfo:
         self.last_failure_time: float = 0.0
         self.last_success_time: float = 0.0
         self.half_open_calls = 0
+        # Bumped each time a half-open window starts; a call only gets to
+        # close or reopen the circuit if it took a probe slot in this window.
+        self.probe_epoch = 0
         self._failure_timestamps: list[float] = []
 
     def recent_failure_rate(self) -> float:

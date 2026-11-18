@@ -269,6 +269,18 @@ class TestSessionGetContentSelector:
         assert "selector" not in sent[-1]
         assert resp.json()["result"]["html"] == self.PAGE
 
+    @pytest.mark.parametrize("selector", ["", "   "])
+    async def test_empty_selector_is_a_422_not_the_whole_page(self, session, selector):
+        """Anubis review: "" was falsy, skipped, and returned the whole page."""
+        sent, replies = session
+        replies.append({"ok": True, "result": {"html": self.PAGE, "text": "..."}})
+
+        resp = await self._get_content({"command": "get_content", "selector": selector})
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invalid_selector"
+        assert not any(p.get("cmd") == "get_content" for p in sent)
+
     async def test_invalid_selector_is_a_422(self, session):
         _, replies = session
         replies.append({"ok": True, "result": {"html": self.PAGE, "text": "..."}})
