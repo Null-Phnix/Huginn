@@ -44,7 +44,7 @@ def _make_mock_browser(status_code=200):
     return mock_browser
 
 
-async def _call_through(domain, fn, *args, **kwargs):
+async def _call_through(domain, fn, *args, failure_if=None, host_ok_errors=(), **kwargs):
     """Side-effect that actually awaits the wrapped async fn."""
     return await fn(*args, **kwargs)
 

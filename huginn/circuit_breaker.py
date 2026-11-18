@@ -68,46 +68,88 @@ class CircuitBreaker:
 
     # ── public API ─────────────────────────────────────────────────────────────
 
-    async def call(self, domain: str, fn, *args, **kwargs):
+    async def call(self, domain: str, fn, *args, failure_if=None, host_ok_errors=(), **kwargs):
         """
         Execute ``fn(*args, **kwargs)`` through the circuit breaker for *domain*.
 
-        Returns the result of fn() on success.
-        Raises CircuitOpenError when the circuit is open.
+        Returns the result of fn() on success. An exception counts as a
+        failure. When *failure_if* is given, a returned result for which
+        ``failure_if(result)`` is true also counts as a failure (scrapers
+        return structured error results instead of raising). Exceptions that
+        are instances of *host_ok_errors* mean the host answered but the
+        page was unusable (empty page, unsupported option); they count as a
+        success for the host and are re-raised.
+
+        Raises CircuitOpenError when the circuit is open, or when it is
+        half-open and its probe slots are already taken.
         """
-        state = await self._get_state(domain)
-
-        if state == CircuitState.OPEN:
-            raise CircuitOpenError(f"Circuit open for {domain}, site may be down")
-
-        if state == CircuitState.HALF_OPEN:
-            info = await self._get_info(domain)
-            if info.half_open_calls >= self.half_open_max_calls:
-                raise CircuitOpenError(f"Circuit half-open quota exhausted for {domain}")
+        async with self._lock:
+            info = self._domains.get(domain)
+            if info is not None:
+                state = self._advance(domain, info, time.monotonic())
+                if state == CircuitState.OPEN:
+                    raise CircuitOpenError(f"Circuit open for {domain}, site may be down")
+                if state == CircuitState.HALF_OPEN:
+                    if info.half_open_calls >= self.half_open_max_calls:
+                        raise CircuitOpenError(f"Circuit half-open, probe already in flight for {domain}")
+                    info.half_open_calls += 1
 
         # Allow the call
         try:
             result = await fn(*args, **kwargs)
-            await self._record_success(domain)
-            return result
-        except Exception:
-            await self._record_failure(domain)
+        except Exception as exc:
+            if host_ok_errors and isinstance(exc, host_ok_errors):
+                await self._record_success(domain)
+            else:
+                await self._record_failure(domain)
             raise
+        if failure_if is not None and failure_if(result):
+            await self._record_failure(domain)
+        else:
+            await self._record_success(domain)
+        return result
 
     def is_open(self, domain: str) -> bool:
-        """Return True if the circuit is currently open for domain."""
-        # Fast path without lock
+        """Return True if requests to *domain* should be rejected right now.
+
+        This is the gate every request path checks before scraping, so it
+        must apply the time-based OPEN -> HALF_OPEN transition itself.
+        Before it did, only ``call()`` ever moved a circuit out of OPEN, and
+        gated requests never reached ``call()``: one bad burst blocked a
+        host until the process restarted.
+
+        A half-open circuit whose probe slots are all taken also counts as
+        open, so concurrent callers wait for the probe instead of piling on.
+        """
         info = self._domains.get(domain)
         if info is None:
             return False
-        return info.state == CircuitState.OPEN
+        # No await between read and write, so this is safe on the event
+        # loop without taking the asyncio lock.
+        state = self._advance(domain, info, time.monotonic())
+        if state == CircuitState.OPEN:
+            return True
+        if state == CircuitState.HALF_OPEN:
+            return info.half_open_calls >= self.half_open_max_calls
+        return False
+
+    async def can_call(self, domain: str) -> bool:
+        """Async inverse of :meth:`is_open` (used by ResearchAgent)."""
+        return not self.is_open(domain)
+
+    def retry_after(self, domain: str) -> float:
+        """Seconds until an open circuit for *domain* lets a probe through (0 if not open)."""
+        info = self._domains.get(domain)
+        if info is None or info.state != CircuitState.OPEN:
+            return 0.0
+        return max(0.0, self.recovery_timeout - (time.monotonic() - info.state_since))
 
     def get_state(self, domain: str) -> CircuitState:
         """Return the current circuit state for domain."""
         info = self._domains.get(domain)
         if info is None:
             return CircuitState.CLOSED
-        return info.state
+        return self._advance(domain, info, time.monotonic())
 
     async def record_failure(self, domain: str):
         """Record a failure for domain (public API)."""
@@ -120,6 +162,9 @@ class CircuitBreaker:
     async def get_stats(self) -> dict[str, dict]:
         """Return circuit breaker stats for all tracked domains."""
         async with self._lock:
+            now = time.monotonic()
+            for domain, info in self._domains.items():
+                self._advance(domain, info, now)
             return {
                 domain: {
                     "state": info.state.value,
@@ -129,6 +174,7 @@ class CircuitBreaker:
                     "last_failure_time": info.last_failure_time,
                     "last_success_time": info.last_success_time,
                     "failure_rate_5m": info.recent_failure_rate(),
+                    "retry_after_seconds": round(self.retry_after(domain), 1),
                 }
                 for domain, info in self._domains.items()
             }
@@ -146,40 +192,28 @@ class CircuitBreaker:
 
     # ── internal ─────────────────────────────────────────────────────────────
 
-    async def _get_state(self, domain: str) -> CircuitState:
-        """Return current state, auto-transitioning if needed."""
-        async with self._lock:
-            info = self._domains.get(domain)
-            if info is None:
-                return CircuitState.CLOSED
+    def _advance(self, domain: str, info: _CircuitInfo, now: float) -> CircuitState:
+        """Apply time-based transitions to *info* and return its state.
 
-            now = time.monotonic()
-
-            # OPEN -> HALF_OPEN transition after recovery_timeout
-            if info.state == CircuitState.OPEN:
-                if now - info.state_since >= self.recovery_timeout:
-                    info.state = CircuitState.HALF_OPEN
-                    info.state_since = now
-                    info.half_open_calls = 0
-                    logger.info(f"Circuit breaker HALF_OPEN for {domain}")
-                    return CircuitState.HALF_OPEN
-                return CircuitState.OPEN
-
-            # HALF_OPEN -> CLOSED if half_open_max_calls exceeded
-            if info.state == CircuitState.HALF_OPEN:
-                if info.half_open_calls >= self.half_open_max_calls:
-                    # Ran out of half-open calls without success
-                    info.state = CircuitState.OPEN
-                    info.state_since = now
-                    logger.warning(f"Circuit breaker re-OPEN for {domain} (half-open timeout)")
-                    return CircuitState.OPEN
-                return CircuitState.HALF_OPEN
-
-            return CircuitState.CLOSED
-
-    async def _get_info(self, domain: str) -> _CircuitInfo:
-        async with self._lock:
-            return self._domains.setdefault(domain, _CircuitInfo())
+        - OPEN for at least ``recovery_timeout`` -> HALF_OPEN (probe slots reset).
+        - HALF_OPEN whose probes never reported back (cancelled task, crashed
+          caller) for another ``recovery_timeout`` -> probe slots reset, so the
+          circuit can't wedge half-open either.
+        """
+        if info.state == CircuitState.OPEN and now - info.state_since >= self.recovery_timeout:
+            info.state = CircuitState.HALF_OPEN
+            info.state_since = now
+            info.half_open_calls = 0
+            logger.info(f"Circuit breaker HALF_OPEN for {domain}")
+        elif (
+            info.state == CircuitState.HALF_OPEN
+            and info.half_open_calls >= self.half_open_max_calls
+            and now - info.state_since >= self.recovery_timeout
+        ):
+            info.state_since = now
+            info.half_open_calls = 0
+            logger.info(f"Circuit breaker HALF_OPEN probe timed out for {domain}, allowing a new probe")
+        return info.state
 
     async def _record_success(self, domain: str):
         async with self._lock:
@@ -206,7 +240,13 @@ class CircuitBreaker:
                 info.state = CircuitState.OPEN
                 info.state_since = time.monotonic()
                 logger.warning(f"Circuit breaker re-OPEN for {domain} (half-open probe failed)")
-            elif info.consecutive_failures >= self.failure_threshold:
+            elif (
+                info.state == CircuitState.CLOSED
+                and info.consecutive_failures >= self.failure_threshold
+            ):
+                # Only a CLOSED circuit opens here. Late failures from calls
+                # that started before the circuit opened must not push an
+                # OPEN circuit's recovery window further out.
                 info.state = CircuitState.OPEN
                 info.state_since = time.monotonic()
                 logger.warning(
@@ -280,8 +320,8 @@ def get_circuit_breaker(name: str = "default", **kwargs) -> CircuitBreaker:
 
 
 def extract_domain(url: str) -> str:
-    """Return the domain (netloc) from a URL, or 'unknown'."""
+    """Return the lowercased domain (netloc) from a URL, or 'unknown'."""
     try:
-        return urlparse(url).netloc or "unknown"
+        return urlparse(url).netloc.lower() or "unknown"
     except Exception:
         return "unknown"

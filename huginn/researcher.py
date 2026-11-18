@@ -620,13 +620,11 @@ class DeepResearcher:
             )
         except Exception as e:
             logger.debug(f"Failed to scrape {url}: {e}")
-            await self._cb.record_failure(domain)
             return None
 
         if not scraped or not scraped.markdown:
             return None
 
-        await self._cb.record_success(domain)
 
         content = scraped.markdown
         title = scraped.metadata.get("title", url) if scraped.metadata else url

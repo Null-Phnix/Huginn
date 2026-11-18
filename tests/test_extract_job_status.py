@@ -108,6 +108,7 @@ class TestExtractJobStatus:
         status = await _run(state, DistillRequest(urls=["https://shop.example/w"], prompt="title"))
 
         assert status.status == JobStatus.FAILED
+        assert status.success is False
         assert MISSING_KEY in status.error
 
     async def test_nothing_scraped_marks_job_failed(self, job_state):
@@ -148,4 +149,28 @@ class TestExtractJobStatus:
         status = await _run(state, DistillRequest(urls=["https://shop.example/w"], prompt="title"))
 
         assert status.status == JobStatus.COMPLETED
+        assert status.success is True
         assert status.error is None
+
+
+class TestExtractStatusOverHttp:
+    """Both status routes (/v1/distill/{id} and the /v1/extract/{id} alias) agree."""
+
+    @pytest.mark.parametrize("route", ["/v1/distill", "/v1/extract"])
+    async def test_failed_job_reports_success_false(self, job_state, route):
+        from httpx import ASGITransport, AsyncClient
+
+        from huginn.api import create_app
+        from huginn.config import HuginnConfig
+
+        state, _ = job_state
+        job_id = await state.job_store.create_job("extract", {"urls": ["https://shop.example/w"]})
+        await state.job_store.update_job(job_id, status="failed", error="All 3 extraction attempts failed")
+
+        app = create_app(HuginnConfig())
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            body = (await client.get(f"{route}/{job_id}")).json()
+
+        assert body["success"] is False
+        assert body["status"] == "failed"
+        assert body["error"] == "All 3 extraction attempts failed"

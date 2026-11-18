@@ -53,7 +53,6 @@ def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
             # Take initial snapshot
             snapshot = await state.watcher.check(req.url)
         except Exception as e:
-            await cb.record_failure(domain)
             return WatchResponse(
                 success=False,
                 url=req.url,
@@ -63,7 +62,6 @@ def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
                 error_code=_map_exception_to_error_code(e),
             )
 
-        await cb.record_success(domain)
 
         # Register watching
         await store.watch(
@@ -125,11 +123,9 @@ def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
         Manually trigger a check for a watched URL.
         Returns the new snapshot and any detected changes.
         """
-        from ..circuit_breaker import get_circuit_breaker
         from ..watcher import extract_domain
 
         state = get_state()
-        cb = get_circuit_breaker()
         domain = extract_domain(url)
         store = get_watch_store()
 
@@ -140,7 +136,6 @@ def create_watch_router(config: HuginnConfig, verify_api_key) -> APIRouter:
         try:
             snapshot = await state.watcher.check_and_notify(url)
         except Exception as e:
-            await cb.record_failure(domain)
             return WatchResponse(
                 success=False,
                 url=url,

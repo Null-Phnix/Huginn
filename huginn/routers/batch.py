@@ -94,7 +94,6 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
                     status, message = failure
                     if proxy_failure_likely(status, message):
                         proxy_lease.report_failure(message)
-                    await cb.record_failure(domain)
                     return FlockResultItem(
                         url=url,
                         success=False,
@@ -111,12 +110,10 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
                         data,
                         extra=cache_context,
                     )
-                await cb.record_success(domain)
                 return FlockResultItem(url=url, success=True, data=data)
             except asyncio.TimeoutError:
                 if proxy_lease:
                     proxy_lease.report_failure(f"timed out after {req.timeout}ms")
-                await cb.record_failure(domain)
                 return FlockResultItem(
                     url=url, success=False,
                     error=f"Request timed out after {req.timeout}ms",
@@ -130,7 +127,6 @@ async def _do_flock_scrape(req: FlockRequest, config: HuginnConfig) -> FlockResp
             except Exception as e:
                 if proxy_lease and proxy_failure_likely(message=str(e)):
                     proxy_lease.report_failure(str(e))
-                await cb.record_failure(domain)
                 return FlockResultItem(
                     url=url, success=False,
                     error=str(e),

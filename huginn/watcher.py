@@ -311,7 +311,6 @@ class PageWatcher:
             size_bytes=len(text.encode("utf-8")),
         )
 
-        await self._cb.record_success(domain)
         return snapshot
 
     async def check_and_notify(self, url: str, force: bool = False) -> PageSnapshot:

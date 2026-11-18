@@ -26,6 +26,51 @@ from .config import read_secret_file
 from .models import OutputFormat, ScrapeData
 from .proxy import ProxyEndpoint
 
+_NOISE_CLASS_WORDS = frozenset({
+    "ad", "ads", "advert", "advertisement", "adsbygoogle", "sponsored",
+    "sidebar", "nav", "navbar", "navigation",
+    "cookie", "cookies", "popup", "modal",
+})
+
+
+def is_noise_class(css_class: Optional[str]) -> bool:
+    """True when a CSS class names page chrome (ads, nav, cookie banners, modals).
+
+    Matches whole words of the class name (split on ``-`` and ``_``), not
+    substrings. The old substring check treated "ad" inside "header",
+    "lead", "shadow", "padding", "download" or "product-grid-loaded" as an
+    ad and deleted real content, sometimes the whole main column.
+    """
+    if not css_class:
+        return False
+    for word in re.split(r"[-_\s]+", css_class.lower()):
+        if word in _NOISE_CLASS_WORDS or word.endswith(("sidenav", "subnav", "topnav")):
+            return True
+    return False
+
+
+# Wait before re-reading a page that came back with no HTML.
+EMPTY_CONTENT_RETRY_DELAY_S = 1.0
+
+
+class StarSearchEmptyPageError(RuntimeError):
+    """StarSearch navigated fine but the page had no HTML.
+
+    Carries where the browser ended up, so a delisted product that redirects
+    to a category page doesn't surface as a bare "no usable content".
+    """
+
+    def __init__(self, url: str, final_url: Optional[str], status: Optional[int]):
+        self.url = url
+        self.final_url = final_url or url
+        self.status = status
+        where = f"loaded {self.final_url}"
+        if self.final_url != url:
+            where += f" (redirected from {url})"
+        if status is not None:
+            where += f", HTTP {status}"
+        super().__init__(f"StarSearch {where}, but the page had no HTML content")
+
 
 def _handshake(client_version: str) -> dict:
     payload = {"starsearch": "1.0", "client_version": client_version}
@@ -203,11 +248,17 @@ async def _fetch_page(
     proxy: Optional[Dict[str, str]] = None,
     locale: str = "en-US",
     allow_private_network: bool = False,
+    navigation: Optional[dict[str, Any]] = None,
 ) -> tuple[str, Optional[str], dict[str, Any]]:
     """Execute a complete scrape session over StarSearch's JSON-lines protocol.
 
     Every command response is checked.  The former bridge ignored navigation
     errors and then returned an empty/old document as a successful scrape.
+
+    When *navigation* is a dict it is filled with what the daemon reported
+    about where the page ended up: ``final_url`` (after redirects) and
+    ``status`` (HTTP status of the main document). Daemons older than the
+    one that reports these leave them as None.
     """
     host, _, port = addr.partition(":")
     # limit= raises asyncio's 64 KB readline cap so large SERPs/pages don't throw
@@ -341,7 +392,10 @@ async def _fetch_page(
             ]
             await command("set_cookies", cookies=cookie_params)
 
-        await command("navigate", url=url, timeout_s=max(1, int(timeout)))
+        nav = await command("navigate", url=url, timeout_s=max(1, int(timeout)))
+        nav_result = nav.get("result") or {}
+        final_url = nav_result.get("url") or None
+        status = nav_result.get("status")
 
         if wait_for is not None:
             if isinstance(wait_for, (int, float)):
@@ -368,9 +422,25 @@ async def _fetch_page(
                 await command("scroll", direction="down", amount=900)
                 await asyncio.sleep(0.35)
 
-        gc = await command("get_content")
-        content = gc.get("result") or {}
-        html = content if isinstance(content, str) else (content.get("html") or "")
+        async def read_content() -> str:
+            nonlocal final_url
+            gc = await command("get_content")
+            content = gc.get("result") or {}
+            if isinstance(content, str):
+                return content
+            final_url = content.get("url") or final_url
+            return content.get("html") or ""
+
+        html = await read_content()
+        if not html:
+            # A redirect (server or client side) can leave the page between
+            # documents for a moment. Give it one short second chance before
+            # calling the page empty (Scriptorium blackreach#2).
+            await asyncio.sleep(EMPTY_CONTENT_RETRY_DELAY_S)
+            html = await read_content()
+        if navigation is not None:
+            navigation["final_url"] = final_url
+            navigation["status"] = status if isinstance(status, int) else None
         if screenshot and not captured:
             shot = await command("screenshot")
             captured = (shot.get("result") or {}).get("data")
@@ -398,8 +468,15 @@ def _html_to_scrapedata(
     exclude_tags: Optional[List[str]] = None,
     screenshot: Optional[str] = None,
     egress: Optional[dict[str, Any]] = None,
+    final_url: Optional[str] = None,
+    status_code: Optional[int] = None,
 ) -> ScrapeData:
-    """Mirror Scraper.lightweight_scrape's HTML -> ScrapeData conversion."""
+    """Mirror Scraper.lightweight_scrape's HTML -> ScrapeData conversion.
+
+    ``metadata.url`` is where the browser ended up; ``source_url`` is what was
+    asked for. ``status_code`` is the daemon-reported document status, or 200
+    when an older daemon doesn't report one.
+    """
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.string.strip() if soup.title and soup.title.string else ""
     desc = soup.find("meta", attrs={"name": "description"})
@@ -407,12 +484,16 @@ def _html_to_scrapedata(
     lang_tag = soup.find("html")
     language = lang_tag.get("lang", "en") if lang_tag else "en"
 
+    landed = final_url or url
     metadata = {
-        "url": url,
+        "url": landed,
+        "source_url": url,
+        "redirected": landed != url,
         "title": title,
         "description": description,
         "language": language,
-        "status_code": 200,
+        "status_code": status_code if isinstance(status_code, int) else 200,
+        "status_code_reported": isinstance(status_code, int),
         "render_mode": "starsearch",
     }
     if egress is not None:
@@ -440,8 +521,7 @@ def _html_to_scrapedata(
             element.decompose()
     for tag in content_el.find_all(["script", "style", "nav", "footer", "header", "aside"]):
         tag.decompose()
-    for tag in content_el.find_all(class_=lambda c: c and any(
-            x in c.lower() for x in ["sidebar", "nav", "ad", "cookie", "popup", "modal"])):
+    for tag in content_el.find_all(class_=is_noise_class):
         tag.decompose()
 
     for fmt in formats:
@@ -486,7 +566,8 @@ async def scrape(
 
     Retries transient failures (CapacityExceeded under crawl load, a crashed
     session, a dropped connection) with backoff. Empty HTML (e.g. an SSRF-blocked
-    or genuinely blank page) is treated as permanent — no retry, returns None.
+    or genuinely blank page) is treated as permanent: no retry, raises
+    StarSearchEmptyPageError saying where the browser ended up.
     """
     addr = tcp_addr()
     if not addr:
@@ -498,6 +579,7 @@ async def scrape(
                 _action_type(action) == "screenshot"
                 for action in actions or []
             )
+            navigation: dict[str, Any] = {}
             html, screenshot_data, egress = await _fetch_page(
                 addr,
                 url,
@@ -510,9 +592,10 @@ async def scrape(
                 proxy=proxy,
                 locale=locale,
                 allow_private_network=allow_private_network,
+                navigation=navigation,
             )
             if not html:
-                return None
+                raise StarSearchEmptyPageError(url, navigation.get("final_url"), navigation.get("status"))
             return _html_to_scrapedata(
                 html,
                 url,
@@ -522,7 +605,13 @@ async def scrape(
                 exclude_tags=exclude_tags,
                 screenshot=screenshot_data,
                 egress=egress,
+                final_url=navigation.get("final_url"),
+                status_code=navigation.get("status"),
             )
+        except StarSearchEmptyPageError:
+            # Permanent: the page loaded and is empty. Retrying opens a new
+            # browser session for the same answer.
+            raise
         except Exception:
             if attempt == retries - 1:
                 raise
