@@ -68,8 +68,11 @@ async def _do_get_distill_status(job_id: str) -> DistillStatusResponse:
     if status == JobStatus.COMPLETED and job.get("result_json"):
         result_data = json.loads(job["result_json"])
 
+    # A failed job is not a success. Callers that only check `success` (the
+    # MCP adapter, Firecrawl-style clients) used to get success: true with
+    # data: null (Scriptorium blackreach#1). Batch status already did this.
     return DistillStatusResponse(
-        success=True,
+        success=status != JobStatus.FAILED,
         status=status,
         data=result_data,
         error=job.get("error"),
