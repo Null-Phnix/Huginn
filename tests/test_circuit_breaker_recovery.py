@@ -124,6 +124,85 @@ class TestIsOpenRecovers:
         await asyncio.sleep(0.06)
         assert not cb.is_open(D)
 
+    async def test_straggler_failure_does_not_reopen_half_open(self):
+        """Anubis review: a request that started before the half-open window
+        and fails late must not reopen the circuit. Only the probe decides."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0.05)
+        await _open(cb)
+        await asyncio.sleep(0.08)
+        assert cb.get_state(D) == CircuitState.HALF_OPEN
+
+        await cb.record_failure(D)  # straggler, holds no probe slot
+        assert cb.get_state(D) == CircuitState.HALF_OPEN
+        assert not cb.is_open(D)
+
+        async def ok():
+            return "page"
+
+        assert await cb.call(D, ok) == "page"
+        assert cb.get_state(D) == CircuitState.CLOSED
+
+    async def test_straggler_call_failing_during_probe_does_not_reopen(self):
+        """Same race through call(): a call admitted while CLOSED fails after
+        the circuit went half-open, while the real probe is still in flight."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0.05)
+        straggler_release = asyncio.Event()
+        probe_release = asyncio.Event()
+
+        async def slow_fail():
+            await straggler_release.wait()
+            raise RuntimeError("late timeout")
+
+        async def slow_ok():
+            await probe_release.wait()
+            return "ok"
+
+        straggler = asyncio.create_task(cb.call(D, slow_fail))
+        await asyncio.sleep(0)
+        await _open(cb)
+        await asyncio.sleep(0.08)
+
+        probe = asyncio.create_task(cb.call(D, slow_ok))
+        await asyncio.sleep(0)
+        straggler_release.set()
+        with pytest.raises(RuntimeError):
+            await straggler
+        assert cb.get_state(D) == CircuitState.HALF_OPEN
+
+        probe_release.set()
+        assert await probe == "ok"
+        assert cb.get_state(D) == CircuitState.CLOSED
+
+    async def test_straggler_success_does_not_close_half_open(self):
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0.05)
+        await _open(cb)
+        await asyncio.sleep(0.08)
+        assert cb.get_state(D) == CircuitState.HALF_OPEN
+        await cb.record_success(D)
+        assert cb.get_state(D) == CircuitState.HALF_OPEN
+
+    async def test_abandoned_probe_reporting_late_is_ignored(self):
+        """After a probe slot times out, the old probe's result is stale."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0.05)
+        await _open(cb)
+        await asyncio.sleep(0.08)
+        release = asyncio.Event()
+
+        async def late_fail():
+            await release.wait()
+            raise RuntimeError("finally gave up")
+
+        old_probe = asyncio.create_task(cb.call(D, late_fail))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0.08)  # slot times out, a new window starts
+        assert not cb.is_open(D)
+
+        release.set()
+        with pytest.raises(RuntimeError):
+            await old_probe
+        assert cb.get_state(D) == CircuitState.HALF_OPEN
+        assert not cb.is_open(D)
+
     async def test_retry_after_counts_down(self):
         cb = CircuitBreaker(failure_threshold=2, recovery_timeout=30)
         assert cb.retry_after(D) == 0.0
