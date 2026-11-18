@@ -68,14 +68,17 @@ class CircuitBreaker:
 
     # ── public API ─────────────────────────────────────────────────────────────
 
-    async def call(self, domain: str, fn, *args, failure_if=None, **kwargs):
+    async def call(self, domain: str, fn, *args, failure_if=None, host_ok_errors=(), **kwargs):
         """
         Execute ``fn(*args, **kwargs)`` through the circuit breaker for *domain*.
 
         Returns the result of fn() on success. An exception counts as a
         failure. When *failure_if* is given, a returned result for which
         ``failure_if(result)`` is true also counts as a failure (scrapers
-        return structured error results instead of raising).
+        return structured error results instead of raising). Exceptions that
+        are instances of *host_ok_errors* mean the host answered but the
+        page was unusable (empty page, unsupported option); they count as a
+        success for the host and are re-raised.
 
         Raises CircuitOpenError when the circuit is open, or when it is
         half-open and its probe slots are already taken.
@@ -94,8 +97,11 @@ class CircuitBreaker:
         # Allow the call
         try:
             result = await fn(*args, **kwargs)
-        except Exception:
-            await self._record_failure(domain)
+        except Exception as exc:
+            if host_ok_errors and isinstance(exc, host_ok_errors):
+                await self._record_success(domain)
+            else:
+                await self._record_failure(domain)
             raise
         if failure_if is not None and failure_if(result):
             await self._record_failure(domain)

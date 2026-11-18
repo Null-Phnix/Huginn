@@ -398,7 +398,46 @@ def _command_payload(session_id: str, req: BrowserSessionCommandRequest) -> dict
         payload["script"] = _require(req.script, "script", req.command)
     elif req.command == BrowserCommand.SET_COOKIES:
         payload["cookies"] = _require(req.cookies, "cookies", req.command)
+    elif req.command == BrowserCommand.GET_CONTENT and req.selector:
+        # Only the matching elements' outer HTML, instead of the whole page
+        # (which ran to millions of characters on shop pages, Scriptorium
+        # blackreach#2). Needs a StarSearch daemon that supports it; older
+        # daemons answer with the full page.
+        payload["selector"] = req.selector
     return payload
+
+
+def _select_content(result: Any, selector: str) -> Any:
+    """Narrow a get_content result to *selector* when the daemon didn't.
+
+    Newer StarSearch daemons filter in the page and report ``matches``.
+    Older ones ignore the selector and send the whole document, so filter
+    that here, so callers get the same shape from either.
+    """
+    if not isinstance(result, dict) or "matches" in result:
+        return result
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(result.get("html") or "", "html.parser")
+    try:
+        elements = soup.select(selector)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_selector",
+                "message": f"Invalid CSS selector {selector!r}: {exc}",
+                "layer": "huginn",
+                "retryable": False,
+            },
+        ) from exc
+    narrowed = dict(result)
+    narrowed["html"] = "\n".join(str(element) for element in elements)
+    narrowed["text"] = "\n".join(element.get_text(" ", strip=True) for element in elements)
+    narrowed["matches"] = len(elements)
+    narrowed["selector"] = selector
+    narrowed["filtered_by"] = "huginn"
+    return narrowed
 
 
 def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIRouter:
@@ -723,11 +762,14 @@ def create_browser_sessions_router(config: HuginnConfig, verify_api_key) -> APIR
             lease = metadata.get("proxy_lease")
             if lease and _proves_proxy_egress(req):
                 lease.report_success()
+            result = response.get("result")
+            if req.command == BrowserCommand.GET_CONTENT and req.selector:
+                result = _select_content(result, req.selector)
             return {
                 "success": True,
                 "id": session_id,
                 "command": req.command.value,
-                "result": response.get("result"),
+                "result": result,
                 "security": response.get("security") or {},
             }
 

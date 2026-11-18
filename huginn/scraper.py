@@ -22,6 +22,7 @@ from .domain_rate_limiter import DomainRateLimiter, get_domain_rate_limiter
 from .models import OutputFormat, ScrapeData
 from .pdf import extract_pdf_text
 from .selector_memory import SelectorMemory, get_selector_memory
+from .starsearch_scrape import StarSearchEmptyPageError, is_noise_class
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +277,11 @@ def classify_error(error: Exception) -> tuple:
 
 
 
+# Errors that mean the host answered but this page or request was unusable.
+# They don't count against the host's circuit breaker.
+_HOST_OK_ERRORS = (StarSearchEmptyPageError, UnsupportedStarSearchOptionError, UnsupportedRenderModeError)
+
+
 def _counts_against_domain(result: Optional[ScrapeData]) -> bool:
     """Should this returned scrape result count as a failure for the domain breaker?
 
@@ -428,6 +434,7 @@ class Scraper:
                 block_ads, remove_base64_images, change_tracking,
                 cookies, location,
                 failure_if=_counts_against_domain,
+                host_ok_errors=_HOST_OK_ERRORS,
             )
 
             # ── Layer 3 hooks: record outcome + selector memory ───────────
@@ -981,7 +988,7 @@ class Scraper:
         # Remove noise elements
         for tag in content_el.find_all(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
-        for tag in content_el.find_all(class_=lambda c: c and any(x in c.lower() for x in ["sidebar", "nav", "ad", "cookie", "popup", "modal"])):
+        for tag in content_el.find_all(class_=is_noise_class):
             tag.decompose()
 
         # Format outputs
