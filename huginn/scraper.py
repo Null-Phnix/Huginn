@@ -275,6 +275,27 @@ def classify_error(error: Exception) -> tuple:
     return ("unknown", 500)
 
 
+
+def _counts_against_domain(result: Optional[ScrapeData]) -> bool:
+    """Should this returned scrape result count as a failure for the domain breaker?
+
+    The breaker is per host, so it should only trip on signs that the *host*
+    is unhealthy or pushing back: 429 and 5xx. A 403 bot wall or a 404 is
+    about one page, and counting those let a few broken product URLs block
+    working pages on the same site (Scriptorium blackreach#3). Exceptions are
+    always counted by ``CircuitBreaker.call()``.
+    """
+    if result is None:
+        return True
+    metadata = result.metadata or {}
+    if metadata.get("circuit_open"):
+        return False
+    try:
+        status = int(metadata.get("status_code", 200))
+    except (TypeError, ValueError):
+        return True
+    return status == 429 or status >= 500
+
 class Scraper:
     """Scrapes a single URL and returns content in requested formats.
 
@@ -406,6 +427,7 @@ class Scraper:
                 render_mode, skip_tls_verification, summary, mobile,
                 block_ads, remove_base64_images, change_tracking,
                 cookies, location,
+                failure_if=_counts_against_domain,
             )
 
             # ── Layer 3 hooks: record outcome + selector memory ───────────
@@ -444,8 +466,9 @@ class Scraper:
                 }
             )
         except Exception:
-            # Record the failure so circuit breaker tracks it
-            await cb.record_failure(domain)
+            # cb.call() already counted this failure for the breaker. Callers
+            # used to count it again here and once more in the router, so one
+            # bad page counted three times toward the threshold.
             # Adaptive throttling: record failure so the rate multiplier
             # backs off for this domain.
             await rl.record_outcome(domain, success=False)

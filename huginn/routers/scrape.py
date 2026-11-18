@@ -68,7 +68,11 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
             )
         return ScrapeResponse(
             success=False,
-            error=f"Circuit breaker open for {domain}. Domain is temporarily blocked due to repeated failures.",
+            error=(
+                f"Circuit breaker open for {domain}. Domain is temporarily blocked due to repeated failures. "
+                f"Next probe allowed in {cb.retry_after(domain):.0f}s; "
+                "POST /v1/circuit-breakers/reset clears it now."
+            ),
             error_code=ErrorCode.CIRCUIT_OPEN,
         )
 
@@ -124,7 +128,6 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
             status, message = failure
             if proxy_lease and proxy_failure_likely(status, message):
                 proxy_lease.report_failure(message)
-            await cb.record_failure(domain)
             _replay_status = "error"
             _replay_error = message
             return ScrapeResponse(
@@ -144,7 +147,6 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
                 data,
                 extra=cache_context,
             )
-        await cb.record_success(domain)
         summary = None
         if req.summary:
             from ..llm import _summarize_text
@@ -175,7 +177,6 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
     except asyncio.TimeoutError:
         if proxy_lease:
             proxy_lease.report_failure(f"timed out after {req.timeout}ms")
-        await cb.record_failure(domain)
         _replay_status = "timeout"
         _replay_error = f"timed out after {req.timeout}ms"
         return ScrapeResponse(
@@ -194,7 +195,6 @@ async def _do_scrape(request: Request, req: ScrapeRequest, config: HuginnConfig)
     except Exception as e:
         if proxy_lease and proxy_failure_likely(message=str(e)):
             proxy_lease.report_failure(str(e))
-        await cb.record_failure(domain)
         error_code = _map_exception_to_error_code(e)
         _replay_status = "error"
         _replay_error = str(e)

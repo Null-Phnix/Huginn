@@ -381,7 +381,6 @@ class ResearchAgent:
                 only_main_content=True,
             )
 
-            await self.circuit_breaker.record_success(domain)
 
             source = ResearchSource(
                 url=url,
@@ -396,7 +395,6 @@ class ResearchAgent:
             return source
 
         except Exception as e:
-            await self.circuit_breaker.record_failure(domain)
             logger.debug(f"Failed to scrape {url}: {e}")
             return None
 

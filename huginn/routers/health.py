@@ -1,6 +1,8 @@
 """Health, readiness, and metrics endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from .. import __version__
 from ..metrics import get_per_endpoint_stats
@@ -26,6 +28,20 @@ def create_health_router(verify_api_key) -> APIRouter:
         status["healthy_endpoints"] = sum(1 for endpoint in endpoints if endpoint["healthy"])
         return status
 
+    async def domain_circuit_summary() -> dict:
+        # Counts only: /health is unauthenticated, so it must not list which
+        # hosts this server has been scraping. Names are on the authed
+        # GET /v1/circuit-breakers.
+        from ..circuit_breaker import get_circuit_breaker
+
+        stats = await get_circuit_breaker().get_stats()
+        states = [entry["state"] for entry in stats.values()]
+        return {
+            "tracked": len(states),
+            "open": states.count("open"),
+            "half_open": states.count("half_open"),
+        }
+
     @router.get("/health", tags=["Health"])
     async def health():
         """Comprehensive health check endpoint."""
@@ -40,6 +56,7 @@ def create_health_router(verify_api_key) -> APIRouter:
             "scheduler": "running" if (state.scheduler and state.scheduler._running) else "stopped",
             "starsearch": starsearch,
             "egress": proxy_status(),
+            "domain_circuits": await domain_circuit_summary(),
         }
 
     @router.get("/health/detailed", tags=["Health"])
@@ -89,6 +106,41 @@ def create_health_router(verify_api_key) -> APIRouter:
     async def liveness():
         """Kubernetes liveness probe."""
         return {"alive": True}
+
+    @router.get("/v1/circuit-breakers", tags=["Health"])
+    async def list_circuit_breakers(auth=Depends(verify_api_key)):
+        """Per-domain circuit breaker state.
+
+        ``open`` lists the domains currently refusing requests, each with
+        ``retry_after_seconds`` until the next probe is allowed.
+        """
+        from ..circuit_breaker import get_circuit_breaker
+
+        stats = await get_circuit_breaker().get_stats()
+        blocked = [
+            {"domain": domain, "state": entry["state"], "retry_after_seconds": entry["retry_after_seconds"]}
+            for domain, entry in sorted(stats.items())
+            if entry["state"] != "closed"
+        ]
+        return {"success": True, "open": blocked, "domains": stats}
+
+    @router.post("/v1/circuit-breakers/reset", tags=["Health"])
+    async def reset_circuit_breakers(
+        domain: Optional[str] = Body(None, embed=True, description="Host to reset, e.g. www.example.com. Omit to reset every domain."),
+        auth=Depends(verify_api_key),
+    ):
+        """Close the circuit for one domain (or all), clearing its failure count."""
+        from ..circuit_breaker import get_circuit_breaker
+
+        cb = get_circuit_breaker()
+        if domain is not None:
+            domain = domain.strip().lower()
+            if not domain:
+                raise HTTPException(status_code=422, detail="domain must not be empty")
+        before = await cb.get_stats()
+        await cb.reset(domain)
+        cleared = [domain] if domain is not None and domain in before else (sorted(before) if domain is None else [])
+        return {"success": True, "reset": cleared}
 
     @router.get("/v1/metrics", tags=["Health"])
     async def metrics(auth=Depends(verify_api_key)):

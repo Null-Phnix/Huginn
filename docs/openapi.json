@@ -113,6 +113,111 @@
         }
       }
     },
+    "/v1/circuit-breakers": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "List Circuit Breakers",
+        "description": "Per-domain circuit breaker state.\n\n``open`` lists the domains currently refusing requests, each with\n``retry_after_seconds`` until the next probe is allowed.",
+        "operationId": "list_circuit_breakers_v1_circuit_breakers_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/circuit-breakers/reset": {
+      "post": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Reset Circuit Breakers",
+        "description": "Close the circuit for one domain (or all), clearing its failure count.",
+        "operationId": "reset_circuit_breakers_v1_circuit_breakers_reset_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_reset_circuit_breakers_v1_circuit_breakers_reset_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/metrics": {
       "get": {
         "tags": [
@@ -3558,6 +3663,24 @@
           "wait_for_selector"
         ],
         "title": "ActionType"
+      },
+      "Body_reset_circuit_breakers_v1_circuit_breakers_reset_post": {
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain",
+            "description": "Host to reset, e.g. www.example.com. Omit to reset every domain."
+          }
+        },
+        "type": "object",
+        "title": "Body_reset_circuit_breakers_v1_circuit_breakers_reset_post"
       },
       "BrowserCommand": {
         "type": "string",
